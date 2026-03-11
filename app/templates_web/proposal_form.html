@@ -1,0 +1,850 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .proposal-page .card-head.tight-bottom { margin-bottom: 8px; }
+  .proposal-page .card-title.sm { font-size: 16px; }
+  .proposal-page .section-inline-card { margin: 0; }
+  .proposal-page .section-inline-title { font-size: 16px; }
+  .proposal-page .mt-12 { margin-top: 12px; }
+  .proposal-page .recent-proposals-wrap { display: none; }
+  .proposal-page .review-note-top { margin: 0; }
+  .proposal-page .review-note-bottom { margin: 6px 0 0; }
+
+  @media (max-width: 1024px) {
+    .proposal-page .stepper { gap: 6px; }
+    .proposal-page .step { font-size: 11px; }
+  }
+
+  @media (max-width: 768px) {
+    .proposal-page {
+      padding-bottom: 120px;
+    }
+    .proposal-page .card-head > .actions {
+      margin-top: 6px;
+    }
+    .proposal-page .table-wrap .btn {
+      min-height: 38px;
+      width: auto;
+    }
+    .proposal-page .remove-item,
+    .proposal-page .remove-schedule {
+      min-width: 38px;
+      min-height: 38px;
+      padding: 0;
+    }
+    .proposal-page .desktop-review-actions {
+      display: none;
+    }
+  }
+</style>
+
+<div class="proposal-page">
+<section class="page-header" id="step-overview">
+  {% if create_mode == "revision" and revision_source %}
+  <h1 class="page-title">Nova revisao da proposta {{ revision_source.numero }}/{{ revision_source.revisao }}</h1>
+  <p class="page-subtitle">Os dados foram pre-preenchidos para voce revisar apenas o que mudou e gerar a nova revisao rapidamente.</p>
+  {% else %}
+  <h1 class="page-title">Nova proposta comercial</h1>
+  <p class="page-subtitle">Fluxo otimizado para preencher cliente, servicos, valores, cronograma e condicoes sem friccao.</p>
+  {% endif %}
+
+  <div class="stepper" aria-label="Etapas da proposta">
+    <span class="step"><strong>1</strong>Cliente e contexto</span>
+    <span class="step"><strong>2</strong>Servicos e precos</span>
+    <span class="step"><strong>3</strong>Cronograma</span>
+    <span class="step"><strong>4</strong>Custos e fiscal</span>
+    <span class="step"><strong>5</strong>Revisao final</span>
+  </div>
+
+  <div class="meta-line">
+    <span class="badge">Campos com selo vermelho sao obrigatorios</span>
+    <span class="badge success">Data da proposta = data atual</span>
+  </div>
+</section>
+
+{% if warning %}
+<div class="warning">{{ warning }}</div>
+{% endif %}
+
+<section class="card mobile-collapsible" data-collapsed-mobile="true">
+  <button type="button" class="collapse-toggle" aria-expanded="false">
+    <span>Atalhos de produtividade</span>
+    <span class="icon">v</span>
+  </button>
+  <div class="collapse-content">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Produtividade</h2>
+      <p class="card-subtitle">Reaproveite historico do cliente para reduzir digitacao manual.</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn btn-secondary" id="btnLoadLast">Carregar ultima proposta do cliente</button>
+      <a href="/web/proposals" class="btn btn-ghost">Abrir historico completo</a>
+    </div>
+  </div>
+
+  <div id="recentProposalsSection" class="recent-proposals-wrap">
+    <div class="card-head tight-bottom">
+      <div>
+        <h3 class="card-title sm">Ultimas 10 propostas do cliente</h3>
+        <p class="card-subtitle">Clone uma proposta para acelerar criacao de variacoes.</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Numero</th>
+            <th>Data</th>
+            <th>Objeto</th>
+            <th>Total</th>
+            <th>Responsavel</th>
+            <th>Acoes</th>
+          </tr>
+        </thead>
+        <tbody id="recentProposalsBody">
+          <tr><td colspan="6" class="muted">Selecione um cliente para carregar historico.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+</section>
+
+<form method="post" action="/web/proposals/new" id="proposalForm" autocomplete="off">
+  <input type="hidden" name="mode" value="{{ create_mode or 'new' }}">
+  {% if base_proposal_id %}
+  <input type="hidden" name="base_proposal_id" value="{{ base_proposal_id }}">
+  {% endif %}
+
+  <section class="card mobile-collapsible" id="step-client" data-collapsed-mobile="false">
+    <button type="button" class="collapse-toggle" aria-expanded="true">
+      <span>1. Cliente e contexto comercial</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">1. Cliente e contexto comercial</h2>
+        <p class="card-subtitle">Defina base da proposta e contatos antes de incluir itens.</p>
+      </div>
+      <span class="badge primary" id="clientHint">Selecione um cliente para preencher contexto.</span>
+    </div>
+
+    <div class="form-grid-3">
+      <div class="field required">
+        <label>Cliente</label>
+        <select name="client_id" id="client_id" required>
+          <option value="">Selecione</option>
+          {% for client in clients %}
+          <option value="{{ client.id }}" {% if form_data.client_id|string == client.id|string %}selected{% endif %}>{{ client.razao_social }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field required">
+        <label>Responsavel interno</label>
+        <select name="user_id" required>
+          <option value="">Selecione</option>
+          {% for user in users %}
+          <option value="{{ user.id }}" {% if form_data.user_id|string == user.id|string %}selected{% endif %}>{{ user.nome }}{% if user.cargo %} - {{ user.cargo }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Atencao</label>
+        <input id="atencao" name="atencao" value="{{ form_data.atencao }}" placeholder="Nome da pessoa para quem a proposta sera enviada">
+      </div>
+    </div>
+
+    <div class="form-grid-3">
+      <div class="field">
+        <label>Referencia cliente/projeto</label>
+        <input name="ref_cliente" value="{{ form_data.ref_cliente }}" placeholder="Codigo interno do cliente ou projeto">
+      </div>
+      <div class="field">
+        <label>Canal</label>
+        <input name="canal" value="{{ form_data.canal }}" placeholder="Ex.: Email, Telefone, Visita tecnica">
+      </div>
+      <div class="field">
+        <label>Contato nome</label>
+        <input id="contato_nome" name="contato_nome" value="{{ form_data.contato_nome }}" placeholder="Nome do contato no cliente">
+      </div>
+    </div>
+
+    <div class="form-grid-3">
+      <div class="field">
+        <label>Contato data/hora</label>
+        <input name="contato_datahora" value="{{ form_data.contato_datahora }}" placeholder="Ex.: 10/03/2026 14:30">
+      </div>
+      <div class="field">
+        <label>Equipamento nome</label>
+        <input name="equipamento_nome" value="{{ form_data.equipamento_nome }}" placeholder="Equipamento principal da proposta">
+      </div>
+      <div class="field">
+        <label>Local do servico</label>
+        <input id="local_servico" name="local_servico" value="{{ form_data.local_servico }}" placeholder="Cidade/UF ou planta do cliente">
+      </div>
+    </div>
+
+    <div class="form-grid-2">
+      <div class="field">
+        <label>Objeto de fornecimento</label>
+        <select name="objeto_tipo" id="objeto_tipo">
+          <option value="manutencao_calibracao" {% if form_data.objeto_tipo == "manutencao_calibracao" %}selected{% endif %}>Manutencao e calibracao</option>
+          <option value="troca_pecas" {% if form_data.objeto_tipo == "troca_pecas" %}selected{% endif %}>Troca de pecas</option>
+          <option value="outro" {% if form_data.objeto_tipo == "outro" %}selected{% endif %}>Outro</option>
+        </select>
+      </div>
+      <div class="field" id="objeto_texto_wrap">
+        <label>Descricao customizada do objeto</label>
+        <input name="objeto_texto" id="objeto_texto" value="{{ form_data.objeto_texto }}" placeholder="Descreva o objeto quando necessario">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Equipamento / escopo tecnico</label>
+      <textarea name="equipamento_texto" placeholder="Detalhe o escopo tecnico para reduzir duvidas na aprovacao.">{{ form_data.equipamento_texto }}</textarea>
+    </div>
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" id="step-pricing" data-collapsed-mobile="false">
+    <button type="button" class="collapse-toggle" aria-expanded="true">
+      <span>2. Servicos e tabela de precos</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">2. Servicos e tabela de precos</h2>
+        <p class="card-subtitle">Edite linhas rapidamente e acompanhe subtotal em tempo real.</p>
+      </div>
+      <div class="actions">
+        <button type="button" id="addItem" class="btn btn-secondary">Adicionar item (Alt+1)</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="itemsTable">
+        <thead>
+          <tr>
+            <th style="width:6%;">#</th>
+            <th style="width:44%;">Descricao do servico/item</th>
+            <th style="width:10%;">Unidade</th>
+            <th style="width:12%;">Qtd</th>
+            <th style="width:14%;">Valor unitario</th>
+            <th style="width:14%;">Total linha</th>
+            <th style="width:6%;">Remover</th>
+          </tr>
+        </thead>
+        <tbody id="itemsBody">
+          {% for item in form_data.itens %}
+          <tr>
+            <td class="item-index">{{ loop.index }}</td>
+            <td><input name="item_descricao" value="{{ item.descricao }}" placeholder="Descricao detalhada"></td>
+            <td><input name="item_unidade" value="{{ item.unidade or 'UN' }}" placeholder="UN"></td>
+            <td><input name="item_qtd" value="{{ item.qtd }}" class="item-qtd" inputmode="decimal"></td>
+            <td><input name="item_valor_unit" value="{{ item.valor_unit }}" class="item-valor" inputmode="decimal"></td>
+            <td><input value="0,00" class="item-total" readonly></td>
+            <td><button type="button" class="btn btn-danger remove-item" aria-label="Remover item">X</button></td>
+          </tr>
+          {% else %}
+          <tr>
+            <td class="item-index">1</td>
+            <td><input name="item_descricao" value="" placeholder="Descricao detalhada"></td>
+            <td><input name="item_unidade" value="UN"></td>
+            <td><input name="item_qtd" value="1" class="item-qtd" inputmode="decimal"></td>
+            <td><input name="item_valor_unit" value="0" class="item-valor" inputmode="decimal"></td>
+            <td><input value="0,00" class="item-total" readonly></td>
+            <td><button type="button" class="btn btn-danger remove-item" aria-label="Remover item">X</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="form-grid-3 mt-12">
+      <div class="field">
+        <label>Total de linhas</label>
+        <input id="items_count" readonly>
+      </div>
+      <div class="field">
+        <label>Subtotal de itens</label>
+        <input id="items_subtotal" readonly>
+      </div>
+      <div class="field">
+        <label>Subtotal com adicionais</label>
+        <input id="subtotal_with_extras" readonly>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" id="step-schedule" data-collapsed-mobile="true">
+    <button type="button" class="collapse-toggle" aria-expanded="false">
+      <span>3. Cronograma de execucao</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">3. Cronograma de execucao</h2>
+        <p class="card-subtitle">Mantenha etapas claras para facilitar leitura no preview e no documento final.</p>
+      </div>
+      <div class="actions">
+        <button type="button" id="addScheduleRow" class="btn btn-secondary">Adicionar etapa (Alt+2)</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="scheduleTable">
+        <thead>
+          <tr>
+            <th style="width:6%;">#</th>
+            <th style="width:20%;">Dia / Etapa</th>
+            <th style="width:58%;">Descricao</th>
+            <th style="width:12%;">Horas de servico</th>
+            <th style="width:4%;">Remover</th>
+          </tr>
+        </thead>
+        <tbody id="scheduleBody">
+          {% for etapa in form_data.schedule_items %}
+          <tr>
+            <td class="schedule-index">{{ loop.index }}</td>
+            <td><input name="schedule_dia_label" value="{{ etapa.dia_label }}" placeholder="Ex.: Dia 1"></td>
+            <td><input name="schedule_descricao" value="{{ etapa.descricao }}" placeholder="Atividade prevista"></td>
+            <td><input name="schedule_horas_servico" value="{{ etapa.horas_servico }}" placeholder="Ex.: 8h"></td>
+            <td><button type="button" class="btn btn-danger remove-schedule" aria-label="Remover etapa">X</button></td>
+          </tr>
+          {% else %}
+          <tr>
+            <td class="schedule-index">1</td>
+            <td><input name="schedule_dia_label" value="" placeholder="Ex.: Dia 1"></td>
+            <td><input name="schedule_descricao" value="" placeholder="Atividade prevista"></td>
+            <td><input name="schedule_horas_servico" value="" placeholder="Ex.: 8h"></td>
+            <td><button type="button" class="btn btn-danger remove-schedule" aria-label="Remover etapa">X</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" id="step-fiscal" data-collapsed-mobile="true">
+    <button type="button" class="collapse-toggle" aria-expanded="false">
+      <span>4. Custos e condicoes fiscais</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">4. Deslocamento, alimentacao e condicoes fiscais</h2>
+        <p class="card-subtitle">Revise custos adicionais e condicoes comerciais para evitar retrabalho.</p>
+      </div>
+    </div>
+
+    <div class="form-grid-2">
+      <article class="card section-inline-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title section-inline-title">Deslocamento tecnico</h3>
+            <p class="card-subtitle">KM total e custo sao calculados automaticamente.</p>
+          </div>
+        </div>
+        <div class="form-grid-2">
+          <div class="field">
+            <label>KM ida</label>
+            <input name="km_ida" id="km_ida" value="{{ form_data.km_ida }}" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label>KM volta</label>
+            <input name="km_volta" id="km_volta" value="{{ form_data.km_volta }}" inputmode="decimal">
+          </div>
+        </div>
+        <div class="form-grid-2">
+          <div class="field">
+            <label>KM total</label>
+            <input id="km_total" readonly>
+          </div>
+          <div class="field">
+            <label>Valor por KM</label>
+            <input name="km_valor" id="km_valor" value="{{ form_data.km_valor }}" inputmode="decimal">
+          </div>
+        </div>
+        <div class="field">
+          <label>Total deslocamento</label>
+          <input id="desloc_total" readonly>
+        </div>
+      </article>
+
+      <article class="card section-inline-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title section-inline-title">Alimentacao e condicoes</h3>
+            <p class="card-subtitle">Campos obrigatorios para fechamento comercial.</p>
+          </div>
+        </div>
+
+        <div class="form-grid-3">
+          <div class="field">
+            <label>Tecnicos</label>
+            <input name="alim_tecnicos" id="alim_tecnicos" value="{{ form_data.alim_tecnicos }}" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label>Refeicoes</label>
+            <input name="alim_refeicoes" id="alim_refeicoes" value="{{ form_data.alim_refeicoes }}" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label>Valor unitario refeicao</label>
+            <input name="alim_valor" id="alim_valor" value="{{ form_data.alim_valor }}" inputmode="decimal">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Total alimentacao</label>
+          <input id="alim_total" readonly>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="field">
+            <label>Condicao de pagamento (dias)</label>
+            <input name="condicao_pagamento_dias" id="condicao_pagamento_dias" type="number" min="0" step="1" value="{{ form_data.condicao_pagamento_dias }}">
+          </div>
+          <div class="field">
+            <label>Imposto (%)</label>
+            <input name="imposto_percentual" id="imposto_percentual" type="number" min="0" step="0.01" value="{{ form_data.imposto_percentual }}">
+          </div>
+        </div>
+      </article>
+    </div>
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" id="step-review" data-collapsed-mobile="false">
+    <button type="button" class="collapse-toggle" aria-expanded="true">
+      <span>5. Revisao final e geracao</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">5. Revisao final e geracao</h2>
+        <p class="card-subtitle">Confira total e gere a proposta. Atalho: Ctrl+Enter.</p>
+      </div>
+    </div>
+
+    <div class="proposal-total-box">
+      <p class="muted review-note-top">Total geral da proposta</p>
+      <p class="value" id="valor_total_text">R$ 0,00</p>
+      <p class="muted review-note-bottom">Imposto e condicao de pagamento sao mantidos no documento final para leitura do cliente.</p>
+    </div>
+
+    <div class="actions mt-12 desktop-review-actions">
+      {% if create_mode == "revision" %}
+      <button type="submit" class="btn btn-success" id="submitProposalBtn">Salvar e gerar revisao</button>
+      {% else %}
+      <button type="submit" class="btn btn-success" id="submitProposalBtn">Salvar e gerar proposta</button>
+      {% endif %}
+      <a class="btn btn-secondary" href="/web/proposals">Cancelar</a>
+    </div>
+    </div>
+  </section>
+
+  <div class="mobile-bottom-actions">
+    {% if create_mode == "revision" %}
+    <button type="submit" class="btn btn-success">Salvar e gerar revisao</button>
+    {% else %}
+    <button type="submit" class="btn btn-success">Salvar e gerar proposta</button>
+    {% endif %}
+    <a class="btn btn-secondary" href="/web/proposals">Cancelar</a>
+  </div>
+</form>
+</div>
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Navegacao rapida</h3>
+  <div class="actions">
+    <a class="btn btn-ghost" href="#step-client">1. Cliente</a>
+    <a class="btn btn-ghost" href="#step-pricing">2. Precos</a>
+    <a class="btn btn-ghost" href="#step-schedule">3. Cronograma</a>
+    <a class="btn btn-ghost" href="#step-fiscal">4. Fiscal</a>
+    <a class="btn btn-ghost" href="#step-review">5. Gerar</a>
+  </div>
+</section>
+
+<section class="aside-card">
+  <h3>Resumo em tempo real</h3>
+  <div class="form-grid-1">
+    <div class="field">
+      <label>Itens</label>
+      <input id="aside_items_total" readonly>
+    </div>
+    <div class="field">
+      <label>Deslocamento</label>
+      <input id="aside_desloc_total" readonly>
+    </div>
+    <div class="field">
+      <label>Alimentacao</label>
+      <input id="aside_alim_total" readonly>
+    </div>
+    <div class="field">
+      <label>Total geral</label>
+      <input id="aside_grand_total" readonly>
+    </div>
+  </div>
+</section>
+
+<section class="aside-card">
+  <h3>Atalhos de teclado</h3>
+  <ul>
+    <li>Alt+1: adicionar item.</li>
+    <li>Alt+2: adicionar etapa do cronograma.</li>
+    <li>Ctrl+Enter: salvar proposta.</li>
+  </ul>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function parseNumberBR(value) {
+    if (!value) return 0;
+    let normalized = String(value).trim().replace(/\s/g, "");
+    const hasComma = normalized.includes(",");
+    const hasDot = normalized.includes(".");
+
+    if (hasComma && hasDot) {
+      if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
+        normalized = normalized.replace(/\./g, "").replace(",", ".");
+      } else {
+        normalized = normalized.replace(/,/g, "");
+      }
+    } else if (hasComma) {
+      normalized = normalized.replace(",", ".");
+    }
+
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function formatBR(value) {
+    return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function formatBRL(value) {
+    return `R$ ${formatBR(value)}`;
+  }
+
+  function formatDate(dateText) {
+    if (!dateText) return "-";
+    const parts = String(dateText).split("-");
+    if (parts.length !== 3) return dateText;
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+
+  function escapeAttr(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  function updateItemIndexes() {
+    document.querySelectorAll("#itemsBody .item-index").forEach((cell, index) => {
+      cell.innerText = String(index + 1);
+    });
+    const countField = document.getElementById("items_count");
+    if (countField) {
+      countField.value = String(document.querySelectorAll("#itemsBody tr").length);
+    }
+  }
+
+  function updateScheduleIndexes() {
+    document.querySelectorAll("#scheduleBody .schedule-index").forEach((cell, index) => {
+      cell.innerText = String(index + 1);
+    });
+  }
+
+  function computeItems() {
+    let total = 0;
+
+    document.querySelectorAll("#itemsBody tr").forEach((row) => {
+      const qtd = parseNumberBR(row.querySelector(".item-qtd")?.value);
+      const valor = parseNumberBR(row.querySelector(".item-valor")?.value);
+      const lineTotal = qtd * valor;
+      total += lineTotal;
+      const out = row.querySelector(".item-total");
+      if (out) out.value = formatBR(lineTotal);
+    });
+
+    document.getElementById("items_subtotal").value = formatBRL(total);
+    document.getElementById("aside_items_total").value = formatBRL(total);
+    return total;
+  }
+
+  function computeLogistics() {
+    const kmIda = parseNumberBR(document.getElementById("km_ida").value);
+    const kmVolta = parseNumberBR(document.getElementById("km_volta").value);
+    const kmValor = parseNumberBR(document.getElementById("km_valor").value);
+    const refeicoes = parseNumberBR(document.getElementById("alim_refeicoes").value);
+    const alimValor = parseNumberBR(document.getElementById("alim_valor").value);
+
+    const kmTotal = kmIda + kmVolta;
+    const deslocTotal = kmTotal * kmValor;
+    const alimTotal = refeicoes * alimValor;
+
+    document.getElementById("km_total").value = formatBR(kmTotal);
+    document.getElementById("desloc_total").value = formatBRL(deslocTotal);
+    document.getElementById("alim_total").value = formatBRL(alimTotal);
+
+    document.getElementById("aside_desloc_total").value = formatBRL(deslocTotal);
+    document.getElementById("aside_alim_total").value = formatBRL(alimTotal);
+
+    return { deslocTotal, alimTotal };
+  }
+
+  function recompute() {
+    const itensTotal = computeItems();
+    const logistics = computeLogistics();
+    const total = itensTotal + logistics.deslocTotal + logistics.alimTotal;
+
+    document.getElementById("subtotal_with_extras").value = formatBRL(total);
+    document.getElementById("valor_total_text").innerText = formatBRL(total);
+    document.getElementById("aside_grand_total").value = formatBRL(total);
+  }
+
+  function addItemRow(values = {}) {
+    const tbody = document.getElementById("itemsBody");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="item-index">0</td>
+      <td><input name="item_descricao" value="${escapeAttr(values.descricao)}" placeholder="Descricao detalhada"></td>
+      <td><input name="item_unidade" value="${escapeAttr(values.unidade || "UN")}" placeholder="UN"></td>
+      <td><input name="item_qtd" value="${escapeAttr(values.qtd || "1")}" class="item-qtd" inputmode="decimal"></td>
+      <td><input name="item_valor_unit" value="${escapeAttr(values.valor_unit || "0")}" class="item-valor" inputmode="decimal"></td>
+      <td><input value="0,00" class="item-total" readonly></td>
+      <td><button type="button" class="btn btn-danger remove-item" aria-label="Remover item">X</button></td>
+    `;
+    tbody.appendChild(tr);
+    updateItemIndexes();
+  }
+
+  function addScheduleRow(values = {}) {
+    const tbody = document.getElementById("scheduleBody");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="schedule-index">0</td>
+      <td><input name="schedule_dia_label" value="${escapeAttr(values.dia_label || "")}" placeholder="Ex.: Dia 1"></td>
+      <td><input name="schedule_descricao" value="${escapeAttr(values.descricao || "")}" placeholder="Atividade prevista"></td>
+      <td><input name="schedule_horas_servico" value="${escapeAttr(values.horas_servico || "")}" placeholder="Ex.: 8h"></td>
+      <td><button type="button" class="btn btn-danger remove-schedule" aria-label="Remover etapa">X</button></td>
+    `;
+    tbody.appendChild(tr);
+    updateScheduleIndexes();
+  }
+
+  function renderRecentProposals(proposals) {
+    const section = document.getElementById("recentProposalsSection");
+    const tbody = document.getElementById("recentProposalsBody");
+    section.style.display = "block";
+
+    if (!proposals || proposals.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="muted">Nenhuma proposta recente encontrada para este cliente.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = proposals.map((proposal) => `
+      <tr>
+        <td><strong>${proposal.numero}/${proposal.revisao}</strong></td>
+        <td>${formatDate(proposal.data_geracao)}</td>
+        <td>${proposal.objeto_texto || "-"}</td>
+        <td><strong>${formatBRL(parseNumberBR(proposal.valor_total))}</strong></td>
+        <td>${proposal.responsavel_nome || "-"}</td>
+        <td>
+          <button type="button" class="btn btn-secondary clone-proposal-btn" data-proposal-id="${proposal.id}">Clonar</button>
+        </td>
+      </tr>
+    `).join("");
+  }
+
+  async function fetchRecentProposals(clientId) {
+    const section = document.getElementById("recentProposalsSection");
+    const tbody = document.getElementById("recentProposalsBody");
+
+    if (!clientId) {
+      section.style.display = "none";
+      return;
+    }
+
+    section.style.display = "block";
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">Carregando...</td></tr>';
+
+    try {
+      const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/recent-proposals`);
+      if (!response.ok) {
+        throw new Error("Falha ao carregar propostas recentes.");
+      }
+      const proposals = await response.json();
+      renderRecentProposals(proposals);
+    } catch (err) {
+      tbody.innerHTML = '<tr><td colspan="6" class="muted">Nao foi possivel carregar o historico agora.</td></tr>';
+    }
+  }
+
+  async function cloneProposal(proposalId) {
+    try {
+      const response = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/clone`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error("Falha ao clonar proposta.");
+      }
+      const payload = await response.json();
+      if (payload.redirect_url) {
+        window.location.href = payload.redirect_url;
+      } else {
+        alert("Proposta clonada, mas sem URL de redirecionamento.");
+      }
+    } catch (err) {
+      alert("Nao foi possivel clonar a proposta selecionada.");
+    }
+  }
+
+  async function autofillClientContext(clientId) {
+    const hint = document.getElementById("clientHint");
+    if (!clientId) {
+      hint.textContent = "Selecione um cliente para preencher contexto.";
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}`);
+      if (!response.ok) {
+        throw new Error("Falha ao carregar dados do cliente.");
+      }
+
+      const client = await response.json();
+      const atencaoField = document.getElementById("atencao");
+      const contatoField = document.getElementById("contato_nome");
+      const localField = document.getElementById("local_servico");
+
+      if (atencaoField && !String(atencaoField.value || "").trim()) {
+        atencaoField.value = client.contato_padrao || "";
+      }
+      if (contatoField && !String(contatoField.value || "").trim()) {
+        contatoField.value = client.contato_padrao || "";
+      }
+      if (localField && !String(localField.value || "").trim()) {
+        localField.value = client.cidade_uf || "";
+      }
+
+      hint.textContent = `Cliente selecionado: ${client.razao_social}`;
+    } catch (err) {
+      hint.textContent = "Cliente selecionado, mas sem autofill disponivel no momento.";
+    }
+  }
+
+  function syncObjetoField() {
+    const tipo = document.getElementById("objeto_tipo").value;
+    const wrap = document.getElementById("objeto_texto_wrap");
+    const field = document.getElementById("objeto_texto");
+
+    wrap.style.display = tipo === "outro" ? "block" : "none";
+    field.placeholder = tipo === "outro" ? "Descreva o objeto" : "Opcional";
+  }
+
+  function setupShortcuts() {
+    document.addEventListener("keydown", (event) => {
+      if (event.altKey && event.key === "1") {
+        event.preventDefault();
+        addItemRow();
+        recompute();
+        return;
+      }
+
+      if (event.altKey && event.key === "2") {
+        event.preventDefault();
+        addScheduleRow();
+        return;
+      }
+
+      if (event.ctrlKey && event.key === "Enter") {
+        event.preventDefault();
+        document.getElementById("submitProposalBtn").click();
+      }
+    });
+  }
+
+  document.getElementById("addItem").addEventListener("click", () => {
+    addItemRow();
+    recompute();
+  });
+
+  document.getElementById("addScheduleRow").addEventListener("click", () => {
+    addScheduleRow();
+  });
+
+  document.getElementById("itemsBody").addEventListener("click", (ev) => {
+    if (ev.target.classList.contains("remove-item")) {
+      const rows = document.querySelectorAll("#itemsBody tr");
+      if (rows.length === 1) return;
+      ev.target.closest("tr").remove();
+      updateItemIndexes();
+      recompute();
+    }
+  });
+
+  document.getElementById("scheduleBody").addEventListener("click", (ev) => {
+    if (ev.target.classList.contains("remove-schedule")) {
+      const rows = document.querySelectorAll("#scheduleBody tr");
+      if (rows.length === 1) return;
+      ev.target.closest("tr").remove();
+      updateScheduleIndexes();
+    }
+  });
+
+  document.getElementById("recentProposalsBody").addEventListener("click", (ev) => {
+    const button = ev.target.closest(".clone-proposal-btn");
+    if (!button) return;
+    const proposalId = button.getAttribute("data-proposal-id");
+    if (!proposalId) return;
+    cloneProposal(proposalId);
+  });
+
+  document.getElementById("proposalForm").addEventListener("input", recompute);
+
+  document.getElementById("client_id").addEventListener("change", (ev) => {
+    const clientId = ev.target.value;
+    fetchRecentProposals(clientId);
+    autofillClientContext(clientId);
+  });
+
+  document.getElementById("btnLoadLast").addEventListener("click", () => {
+    const clientId = document.getElementById("client_id").value;
+    if (!clientId) {
+      alert("Selecione um cliente antes de carregar a ultima proposta.");
+      return;
+    }
+    window.location.href = `/web/proposals/new?client_id=${encodeURIComponent(clientId)}&load_last=1`;
+  });
+
+  document.getElementById("objeto_tipo").addEventListener("change", syncObjetoField);
+
+  const initialClientId = document.getElementById("client_id").value;
+  if (initialClientId) {
+    fetchRecentProposals(initialClientId);
+    autofillClientContext(initialClientId);
+  }
+
+  updateItemIndexes();
+  updateScheduleIndexes();
+  syncObjetoField();
+  setupShortcuts();
+  recompute();
+</script>
+{% endblock %}

@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">{% if client %}Editar cliente{% else %}Novo cliente{% endif %}</h1>
+  <p class="page-subtitle">Preencha dados comerciais de forma padronizada para facilitar preenchimento automatico de propostas.</p>
+  <div class="meta-line">
+    <span class="badge primary">{{ "Edicao" if client else "Cadastro" }}</span>
+    <span class="badge">Campo com selo vermelho = obrigatorio</span>
+  </div>
+</section>
+
+<section class="card">
+  <form method="post" action="{{ action_url }}" autocomplete="off">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">1. Dados principais</h2>
+        <p class="card-subtitle">Informacoes usadas diretamente em propostas e documentos.</p>
+      </div>
+    </div>
+
+    <div class="form-grid-3">
+      <div class="field required">
+        <label>Razao social</label>
+        <input name="razao_social" value="{{ client.razao_social if client else '' }}" required placeholder="Ex.: Empresa XYZ LTDA">
+      </div>
+      <div class="field">
+        <label>CNPJ</label>
+        <input name="cnpj" value="{{ client.cnpj if client else '' }}" placeholder="00.000.000/0000-00">
+      </div>
+      <div class="field">
+        <label>Contato padrao</label>
+        <input name="contato_padrao" value="{{ client.contato_padrao if client else '' }}" placeholder="Nome da pessoa responsavel">
+      </div>
+    </div>
+
+    <div class="card-head mt-8">
+      <div>
+        <h2 class="card-title">2. Endereco e contato</h2>
+        <p class="card-subtitle">Use formato consistente para facilitar busca e emissao de propostas.</p>
+      </div>
+    </div>
+
+    <div class="form-grid-3">
+      <div class="field">
+        <label>Endereco linha 1</label>
+        <input name="endereco_linha1" value="{{ client.endereco_linha1 if client else '' }}" placeholder="Rua, numero, bairro">
+      </div>
+      <div class="field">
+        <label>Endereco linha 2</label>
+        <input name="endereco_linha2" value="{{ client.endereco_linha2 if client else '' }}" placeholder="Complemento">
+      </div>
+      <div class="field">
+        <label>CEP</label>
+        <input name="cep" value="{{ client.cep if client else '' }}" placeholder="00000-000">
+      </div>
+    </div>
+
+    <div class="form-grid-4">
+      <div class="field">
+        <label>Cidade / UF</label>
+        <input name="cidade_uf" value="{{ client.cidade_uf if client else '' }}" placeholder="Recife/PE">
+      </div>
+      <div class="field">
+        <label>Pais</label>
+        <input name="pais" value="{{ client.pais if client else 'Brasil' }}">
+      </div>
+      <div class="field">
+        <label>Caixa postal</label>
+        <input name="caixa_postal" value="{{ client.caixa_postal if client else '' }}">
+      </div>
+      <div class="field">
+        <label>Telefone</label>
+        <input name="telefone" value="{{ client.telefone if client else '' }}" placeholder="(00) 0000-0000">
+      </div>
+    </div>
+
+    <div class="form-grid-2">
+      <div class="field">
+        <label>Site</label>
+        <input name="site" value="{{ client.site if client else '' }}" placeholder="https://">
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-success">Salvar cliente</button>
+      <a href="/web/clients" class="btn btn-secondary">Voltar para lista</a>
+      <a href="/web/proposals/new" class="btn btn-ghost">Criar proposta</a>
+    </div>
+  </form>
+</section>
+
+{% if client and proposals %}
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Ultimas propostas deste cliente</h2>
+      <p class="card-subtitle">Base para reaproveitar valores e acelerar novas emissoes.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Numero</th>
+          <th>Data</th>
+          <th>Total</th>
+          <th>Acoes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in proposals %}
+        <tr>
+          <td><strong>{{ p.numero }}/{{ p.revisao }}</strong></td>
+          <td>{{ format_date_br(p.data_geracao) }}</td>
+          <td><strong>{{ format_brl(p.valor_total) }}</strong></td>
+          <td><a class="btn btn-ghost" href="/web/proposals/{{ p.id }}">Abrir</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">Sem propostas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Checklist</h3>
+  <ul>
+    <li>Razao social valida.</li>
+    <li>Contato padrao atualizado.</li>
+    <li>Cidade/UF preenchida para propostas externas.</li>
+  </ul>
+</section>
+{% if client %}
+<section class="aside-card">
+  <h3>Acoes</h3>
+  <div class="actions">
+    <a class="btn btn-primary" href="/web/proposals/new?client_id={{ client.id }}">Nova proposta para este cliente</a>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

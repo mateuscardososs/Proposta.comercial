@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">Painel de produtividade comercial</h1>
+  <p class="page-subtitle">Acompanhe volume de cadastros e inicie propostas com o menor numero de cliques.</p>
+  <div class="meta-line">
+    <span class="badge primary">Fluxo: Cliente -> Servicos -> Precos -> Cronograma -> Geracao</span>
+    <span class="badge">Uso interno AD Balancas</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Indicadores gerais</h2>
+      <p class="card-subtitle">Visao rapida para decidir o proximo passo no sistema.</p>
+    </div>
+    <div class="actions">
+      <a class="btn btn-primary" href="/web/proposals/new">Nova proposta</a>
+      <a class="btn btn-secondary" href="/web/proposals">Abrir historico</a>
+    </div>
+  </div>
+  <div class="kpi-grid">
+    <article class="kpi-card">
+      <p class="kpi-label">Clientes ativos</p>
+      <p class="kpi-value">{{ total_clients }}</p>
+      <p class="kpi-note">Base disponivel para novas propostas.</p>
+    </article>
+    <article class="kpi-card">
+      <p class="kpi-label">Usuarios internos</p>
+      <p class="kpi-value">{{ total_users }}</p>
+      <p class="kpi-note">Equipe habilitada para emissao.</p>
+    </article>
+    <article class="kpi-card">
+      <p class="kpi-label">Propostas emitidas</p>
+      <p class="kpi-value">{{ total_proposals }}</p>
+      <p class="kpi-note">Historico consolidado no banco.</p>
+    </article>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Ultimas propostas</h2>
+      <p class="card-subtitle">Acesso rapido para revisao, duplicacao e consulta de valores.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Numero</th>
+          <th>Data</th>
+          <th>Cliente</th>
+          <th>Responsavel</th>
+          <th>Total</th>
+          <th>Acoes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in last_proposals %}
+        <tr>
+          <td><strong>{{ p.numero }}/{{ p.revisao }}</strong></td>
+          <td>{{ format_date_br(p.data_geracao) }}</td>
+          <td>{{ p.client.razao_social }}</td>
+          <td>{{ p.user.nome }}</td>
+          <td><strong>{{ format_brl(p.valor_total) }}</strong></td>
+          <td><a class="btn btn-ghost" href="/web/proposals/{{ p.id }}">Abrir</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="muted">Sem propostas ainda.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Inicio rapido</h3>
+  <div class="actions">
+    <a class="btn btn-primary" href="/web/proposals/new">Criar proposta</a>
+    <a class="btn btn-secondary" href="/web/clients/new">Cadastrar cliente</a>
+  </div>
+</section>
+<section class="aside-card">
+  <h3>Ordem recomendada</h3>
+  <ul>
+    <li>Confirme cliente e responsavel interno.</li>
+    <li>Monte itens e revise totais automaticamente.</li>
+    <li>Finalize cronograma, impostos e pagamento.</li>
+  </ul>
+</section>
+{% endblock %}

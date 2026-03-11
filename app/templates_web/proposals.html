@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">Historico de propostas</h1>
+  <p class="page-subtitle">Consulte, duplique e abra revisoes com foco em velocidade de atendimento.</p>
+  <div class="meta-line">
+    <span class="badge primary">Catalogo completo</span>
+    <span class="badge">Organizado por data mais recente</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Lista de propostas</h2>
+      <p class="card-subtitle">Use o filtro para localizar por numero, cliente ou responsavel.</p>
+    </div>
+    <div class="actions">
+      <input id="proposalSearch" class="search-input" type="search" placeholder="Filtrar propostas..." aria-label="Filtrar propostas">
+      <a class="btn btn-primary" href="/web/proposals/new">Nova proposta</a>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Numero</th>
+          <th>Cliente</th>
+          <th>Data</th>
+          <th>Responsavel</th>
+          <th>Pagamento</th>
+          <th>Imposto</th>
+          <th>Valor total</th>
+          <th>Acoes</th>
+        </tr>
+      </thead>
+      <tbody id="proposalRows">
+        {% for proposal in proposals %}
+        <tr data-search="{{ (proposal.numero|string) ~ '/' ~ (proposal.revisao|string) ~ ' ' ~ proposal.client.razao_social ~ ' ' ~ proposal.user.nome }}">
+          <td><strong>{{ proposal.numero }}/{{ proposal.revisao }}</strong></td>
+          <td>{{ proposal.client.razao_social }}</td>
+          <td>{{ format_date_br(proposal.data_geracao) }}</td>
+          <td>{{ proposal.user.nome }}</td>
+          <td><span class="badge">{{ proposal.condicao_pagamento_dias }} dias</span></td>
+          <td><span class="badge warning">{{ proposal.imposto_percentual }}%</span></td>
+          <td><strong>{{ format_brl(proposal.valor_total) }}</strong></td>
+          <td>
+            <div class="actions">
+              <a class="btn btn-ghost" href="/web/proposals/{{ proposal.id }}">Visualizar</a>
+              <form method="post" action="/web/proposals/{{ proposal.id }}/duplicate">
+                <button class="btn btn-secondary" type="submit">Duplicar</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="muted">Nenhuma proposta cadastrada.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted mt-12" id="proposalSearchFeedback"></p>
+</section>
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Acoes rapidas</h3>
+  <div class="actions">
+    <a class="btn btn-primary" href="/web/proposals/new">Criar proposta</a>
+    <a class="btn btn-secondary" href="/web/clients">Abrir clientes</a>
+  </div>
+</section>
+<section class="aside-card">
+  <h3>Boas praticas</h3>
+  <ul>
+    <li>Prefira duplicar propostas similares para reduzir retrabalho.</li>
+    <li>Valide imposto e condicao de pagamento antes de reenviar ao cliente.</li>
+  </ul>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const searchInput = document.getElementById("proposalSearch");
+  const feedback = document.getElementById("proposalSearchFeedback");
+  const rows = Array.from(document.querySelectorAll("#proposalRows tr[data-search]"));
+
+  function runSearch() {
+    const term = (searchInput.value || "").trim().toLowerCase();
+    let visible = 0;
+    rows.forEach((row) => {
+      const content = (row.getAttribute("data-search") || "").toLowerCase();
+      const match = !term || content.includes(term);
+      row.style.display = match ? "" : "none";
+      if (match) visible += 1;
+    });
+
+    if (!term) {
+      feedback.innerText = "";
+      return;
+    }
+    feedback.innerText = `${visible} proposta(s) encontrada(s) para "${term}".`;
+  }
+
+  searchInput.addEventListener("input", runSearch);
+</script>
+{% endblock %}

@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .detail-page .kpi-value.sm { font-size: 24px; }
+  .detail-page .kpi-card.total {
+    border-color: rgba(29, 143, 110, 0.4);
+    background: #edf9f4;
+  }
+  .detail-page .kpi-value.total {
+    font-size: 28px;
+    color: #135540;
+  }
+</style>
+<div class="detail-page">
+  <section class="page-header">
+    <h1 class="page-title">Proposta {{ proposal.numero }}/{{ proposal.revisao }}</h1>
+    <p class="page-subtitle">Preview operacional da proposta com foco em leitura rapida antes de envio ao cliente.</p>
+    <div class="meta-line">
+      <span class="badge primary">Gerada em {{ format_date_br(proposal.data_geracao) }}</span>
+      <span class="badge">Cliente: {{ proposal.client.razao_social }}</span>
+    </div>
+  </section>
+
+  {% if warning %}
+  <div class="warning">{{ warning }}</div>
+  {% endif %}
+
+  <section class="card mobile-collapsible" data-collapsed-mobile="false">
+    <button type="button" class="collapse-toggle" aria-expanded="true">
+      <span>Acoes da proposta</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Acoes da proposta</h2>
+          <p class="card-subtitle">Baixe documentos, duplique para nova proposta ou abra revisao.</p>
+        </div>
+      </div>
+
+      <div class="actions">
+        {% if docx_url %}
+        <a class="btn btn-primary" href="{{ docx_url }}" target="_blank">Baixar DOCX</a>
+        {% endif %}
+        {% if pdf_url %}
+        <a class="btn btn-success" href="{{ pdf_url }}" target="_blank">Baixar PDF</a>
+        {% endif %}
+        <form method="post" action="/web/proposals/{{ proposal.id }}/duplicate">
+          <button class="btn btn-secondary" type="submit">Duplicar</button>
+        </form>
+        <form method="post" action="/web/proposals/{{ proposal.id }}/revision">
+          <button class="btn btn-warning" type="submit">Nova revisao</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" data-collapsed-mobile="true">
+    <button type="button" class="collapse-toggle" aria-expanded="false">
+      <span>Resumo comercial</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Resumo comercial</h2>
+          <p class="card-subtitle">Dados base usados no cabecalho da proposta final.</p>
+        </div>
+      </div>
+
+      <div class="form-grid-3">
+        <div class="field">
+          <label>Cliente</label>
+          <input readonly value="{{ proposal.client.razao_social }}">
+        </div>
+        <div class="field">
+          <label>Atencao</label>
+          <input readonly value="{{ proposal.atencao or '-' }}">
+        </div>
+        <div class="field">
+          <label>Responsavel no cliente</label>
+          <input readonly value="{{ proposal.contato_nome or proposal.atencao or proposal.client.contato_padrao or '-' }}">
+        </div>
+      </div>
+
+      <div class="form-grid-3">
+        <div class="field">
+          <label>Ref. cliente</label>
+          <input readonly value="{{ proposal.ref_cliente or '-' }}">
+        </div>
+        <div class="field">
+          <label>Canal</label>
+          <input readonly value="{{ proposal.canal or '-' }}">
+        </div>
+        <div class="field">
+          <label>Contato</label>
+          <input readonly value="{{ proposal.contato_nome or '-' }} {% if proposal.contato_datahora %}({{ proposal.contato_datahora }}){% endif %}">
+        </div>
+      </div>
+
+      <div class="form-grid-2">
+        <div class="field">
+          <label>Equipamento</label>
+          <input readonly value="{{ proposal.equipamento_nome or '-' }}">
+        </div>
+        <div class="field">
+          <label>Local do servico</label>
+          <input readonly value="{{ proposal.local_servico or '-' }}">
+        </div>
+      </div>
+
+      <div class="form-grid-3">
+        <div class="field">
+          <label>Condicao de pagamento</label>
+          <input readonly value="{{ proposal.condicao_pagamento_dias }} dias">
+        </div>
+        <div class="field">
+          <label>Imposto</label>
+          <input readonly value="{{ proposal.imposto_percentual }}%">
+        </div>
+        <div class="field">
+          <label>Emissor interno</label>
+          <input readonly value="{{ proposal.user.nome }}{% if proposal.user.cargo %} ({{ proposal.user.cargo }}){% endif %}">
+        </div>
+      </div>
+
+      {% if proposal.equipamento_texto %}
+      <div class="field">
+        <label>Descricao tecnica</label>
+        <textarea readonly>{{ proposal.equipamento_texto }}</textarea>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" data-collapsed-mobile="true">
+    <button type="button" class="collapse-toggle" aria-expanded="false">
+      <span>Itens e servicos</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Itens e servicos</h2>
+          <p class="card-subtitle">Tabela com hierarquia clara para validar quantidade, preco unitario e total.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Descricao</th>
+              <th>Unidade</th>
+              <th>Quantidade</th>
+              <th>Valor unitario</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in proposal.items %}
+            <tr>
+              <td>{{ item.ordem }}</td>
+              <td>{{ item.descricao }}</td>
+              <td>{{ item.unidade }}</td>
+              <td>{{ item.qtd }}</td>
+              <td>{{ format_brl(item.valor_unit) }}</td>
+              <td><strong>{{ format_brl(item.total) }}</strong></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="muted">Sem itens.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" data-collapsed-mobile="true">
+    <button type="button" class="collapse-toggle" aria-expanded="false">
+      <span>Cronograma</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Cronograma</h2>
+          <p class="card-subtitle">Visualizacao das etapas como no documento final.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Dia/Etapa</th>
+              <th>Descricao</th>
+              <th>Horas de servico</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for etapa in proposal.schedule_items %}
+            <tr>
+              <td>{{ etapa.ordem }}</td>
+              <td>{{ etapa.dia_label or "-" }}</td>
+              <td>{{ etapa.descricao or "-" }}</td>
+              <td>{{ etapa.horas_servico or "-" }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="muted">Sem cronograma cadastrado.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" data-collapsed-mobile="false">
+    <button type="button" class="collapse-toggle" aria-expanded="true">
+      <span>Resumo financeiro</span>
+      <span class="icon">v</span>
+    </button>
+    <div class="collapse-content">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Resumo financeiro da proposta</h2>
+          <p class="card-subtitle">Conferencia final de custos e total geral.</p>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Deslocamento</p>
+          <p class="kpi-value sm">{{ format_brl(proposal.desloc_total) }}</p>
+          <p class="kpi-note">{{ proposal.km_total }} km totais | {{ format_brl(proposal.km_valor) }} por km</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Alimentacao</p>
+          <p class="kpi-value sm">{{ format_brl(proposal.alim_total) }}</p>
+          <p class="kpi-note">{{ proposal.alim_refeicoes }} refeicoes | {{ format_brl(proposal.alim_valor) }} unitario</p>
+        </article>
+        <article class="kpi-card total">
+          <p class="kpi-label">Total geral</p>
+          <p class="kpi-value total">{{ format_brl(proposal.valor_total) }}</p>
+          <p class="kpi-note">Valor final da proposta.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Resumo rapido</h3>
+  <div class="form-grid-1">
+    <div class="field">
+      <label>Proposta</label>
+      <input readonly value="{{ proposal.numero }}/{{ proposal.revisao }}">
+    </div>
+    <div class="field">
+      <label>Cliente</label>
+      <input readonly value="{{ proposal.client.razao_social }}">
+    </div>
+    <div class="field">
+      <label>Total</label>
+      <input readonly value="{{ format_brl(proposal.valor_total) }}">
+    </div>
+  </div>
+</section>
+<section class="aside-card">
+  <h3>Navegacao</h3>
+  <div class="actions">
+    <a class="btn btn-ghost" href="/web/proposals">Voltar ao historico</a>
+    <a class="btn btn-primary" href="/web/proposals/new?client_id={{ proposal.client_id }}">Nova proposta para cliente</a>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">Clientes</h1>
+  <p class="page-subtitle">Mantenha os dados de cliente organizados para acelerar a criacao de propostas.</p>
+  <div class="meta-line">
+    <span class="badge primary">Cadastro mestre</span>
+    <span class="badge">Base para autofill de proposta</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Lista de clientes</h2>
+      <p class="card-subtitle">Filtre por razao social, CNPJ, cidade ou contato padrao.</p>
+    </div>
+    <div class="actions">
+      <input id="clientSearch" class="search-input" type="search" placeholder="Filtrar clientes..." aria-label="Filtrar clientes">
+      <a class="btn btn-primary" href="/web/clients/new">Novo cliente</a>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Razao social</th>
+          <th>CNPJ</th>
+          <th>Cidade/UF</th>
+          <th>Contato padrao</th>
+          <th>Acoes</th>
+        </tr>
+      </thead>
+      <tbody id="clientRows">
+        {% for client in clients %}
+        <tr data-search="{{ client.razao_social }} {{ client.cnpj }} {{ client.cidade_uf }} {{ client.contato_padrao }}">
+          <td><strong>{{ client.razao_social }}</strong></td>
+          <td>{{ client.cnpj or "-" }}</td>
+          <td>{{ client.cidade_uf or "-" }}</td>
+          <td>{{ client.contato_padrao or "-" }}</td>
+          <td>
+            <a class="btn btn-ghost" href="/web/clients/{{ client.id }}">Visualizar / editar</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">Nenhum cliente cadastrado.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted mt-12" id="clientSearchFeedback"></p>
+</section>
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Atalhos</h3>
+  <div class="actions">
+    <a class="btn btn-primary" href="/web/clients/new">Novo cliente</a>
+    <a class="btn btn-secondary" href="/web/proposals/new">Nova proposta</a>
+  </div>
+</section>
+<section class="aside-card">
+  <h3>Qualidade de dados</h3>
+  <ul>
+    <li>Padronize CNPJ e cidade/UF para busca consistente.</li>
+    <li>Preencha contato padrao para evitar retrabalho na proposta.</li>
+  </ul>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const searchInput = document.getElementById("clientSearch");
+  const feedback = document.getElementById("clientSearchFeedback");
+  const rows = Array.from(document.querySelectorAll("#clientRows tr[data-search]"));
+
+  function runClientSearch() {
+    const term = (searchInput.value || "").trim().toLowerCase();
+    let visible = 0;
+    rows.forEach((row) => {
+      const content = (row.getAttribute("data-search") || "").toLowerCase();
+      const match = !term || content.includes(term);
+      row.style.display = match ? "" : "none";
+      if (match) visible += 1;
+    });
+    feedback.innerText = term ? `${visible} cliente(s) encontrado(s).` : "";
+  }
+
+  searchInput.addEventListener("input", runClientSearch);
+</script>
+{% endblock %}
