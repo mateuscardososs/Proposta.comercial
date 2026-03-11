@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .user-form-page .align-end {
+    display: flex;
+    align-items: flex-end;
+  }
+  .user-form-page .checkbox-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: none;
+    font-size: 14px;
+    letter-spacing: 0;
+  }
+  .user-form-page .checkbox-inline input[type="checkbox"] {
+    width: auto;
+  }
+</style>
+<div class="user-form-page">
+<section class="page-header">
+  <h1 class="page-title">Novo usuario interno</h1>
+  <p class="page-subtitle">Cadastre um novo emissor com dados minimos e claros para reduzir erros de acesso.</p>
+  <div class="meta-line">
+    <span class="badge primary">Cadastro rapido</span>
+    <span class="badge">Senha inicial pode ser alterada depois</span>
+  </div>
+</section>
+
+<section class="card">
+  {% if error %}
+  <div class="warning mt-12">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/web/users/new" autocomplete="off">
+    <div class="form-grid-3">
+      <div class="field required">
+        <label>Nome</label>
+        <input name="nome" required placeholder="Nome completo">
+      </div>
+      <div class="field">
+        <label>Cargo</label>
+        <input name="cargo" placeholder="Ex.: Comercial, Engenharia">
+      </div>
+      <div class="field required">
+        <label>Email</label>
+        <input type="email" name="email" required placeholder="usuario@empresa.com">
+      </div>
+    </div>
+
+    <div class="form-grid-3">
+      <div class="field">
+        <label>Senha inicial</label>
+        <input type="password" id="senha" name="senha" value="123456">
+        <p class="hint">Padrao atual: 123456.</p>
+      </div>
+      <div class="field align-end">
+        <label class="checkbox-inline">
+          <input type="checkbox" name="ativo" id="ativo" checked>
+          Usuario ativo
+        </label>
+      </div>
+      <div class="field align-end">
+        <button type="button" class="btn btn-ghost" id="togglePassword">Mostrar/ocultar senha</button>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-success">Salvar usuario</button>
+      <a class="btn btn-secondary" href="/web/users">Voltar</a>
+    </div>
+  </form>
+</section>
+</div>
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Checklist de cadastro</h3>
+  <ul>
+    <li>Email deve ser unico.</li>
+    <li>Defina cargo para melhorar rastreabilidade.</li>
+    <li>Ative somente usuarios autorizados.</li>
+  </ul>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const senha = document.getElementById("senha");
+  document.getElementById("togglePassword").addEventListener("click", () => {
+    senha.type = senha.type === "password" ? "text" : "password";
+  });
+</script>
+{% endblock %}

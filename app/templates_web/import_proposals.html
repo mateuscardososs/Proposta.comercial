@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .import-page .upload-dropzone {
+    border: 2px dashed #9eb8d6;
+    border-radius: 12px;
+    background: #f7fbff;
+    padding: 18px;
+    text-align: center;
+  }
+  .import-page .upload-dropzone.dragover {
+    border-color: #0d5a9d;
+    background: #eaf3ff;
+  }
+  .import-page .upload-dropzone p {
+    margin: 0;
+  }
+  .import-page .upload-dropzone .drop-main {
+    font-weight: 700;
+    color: #20496f;
+  }
+  .import-page .upload-dropzone .drop-sub {
+    margin-top: 6px;
+    font-size: 13px;
+    color: #537092;
+  }
+  .import-page .selected-files {
+    margin-top: 10px;
+    font-size: 13px;
+    color: #355372;
+    word-break: break-word;
+  }
+  .import-page .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    overflow: hidden;
+  }
+  @media (max-width: 768px) {
+    .import-page .upload-dropzone {
+      padding: 14px;
+    }
+  }
+</style>
+<div class="import-page">
+  <section class="page-header">
+    <h1 class="page-title">Importar propostas PDF (legado)</h1>
+    <p class="page-subtitle">Gere preview, confira dados extraidos e confirme a importacao apenas quando estiver seguro.</p>
+    <div class="meta-line">
+      <span class="badge warning">Fluxo assistido: preview obrigatorio antes de confirmar</span>
+    </div>
+  </section>
+
+  <section class="card mobile-collapsible" data-collapsed-mobile="false">
+    <button type="button" class="collapse-toggle" aria-expanded="true">
+      <span>Configuracao de importacao</span>
+      <span class="icon">?</span>
+    </button>
+    <div class="collapse-content">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Configuracao da importacao</h2>
+          <p class="card-subtitle">Selecione responsavel interno e os arquivos PDF.</p>
+        </div>
+      </div>
+
+      <div class="form-grid-2">
+        <div class="field">
+          <label>Responsavel interno da importacao</label>
+          <select id="import_user_id">
+            {% for user in users %}
+            <option value="{{ user.id }}" {% if default_user_id and user.id == default_user_id %}selected{% endif %}>
+              {{ user.nome }}{% if user.cargo %} - {{ user.cargo }}{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="field required">
+          <label>Arquivos PDF</label>
+          <div class="upload-dropzone" id="uploadDropzone">
+            <p class="drop-main">Arraste PDFs aqui ou selecione no botao</p>
+            <p class="drop-sub">Suporta multiplos arquivos .pdf</p>
+            <div class="actions mt-12 justify-center">
+              <button type="button" class="btn btn-secondary" id="chooseFilesBtn">Selecionar arquivos</button>
+            </div>
+            <p class="selected-files" id="selectedFilesText">Nenhum arquivo selecionado.</p>
+          </div>
+          <input class="sr-only" type="file" id="import_files" accept=".pdf,application/pdf" multiple>
+          <p class="hint">Selecione um ou varios arquivos de uma vez.</p>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" id="btnPreview">Gerar preview</button>
+        <button type="button" class="btn btn-success" id="btnConfirm" disabled>Confirmar importacao</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="importStatusCard" style="display:none;">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">Status da operacao</h2>
+      </div>
+    </div>
+    <div id="importStatus"></div>
+  </section>
+
+  <section class="card mobile-collapsible" id="previewCard" data-collapsed-mobile="false" style="display:none;">
+    <button type="button" class="collapse-toggle" aria-expanded="true">
+      <span>Preview extraido</span>
+      <span class="icon">?</span>
+    </button>
+    <div class="collapse-content">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Preview extraido</h2>
+          <p class="card-subtitle">Valide os dados antes de confirmar a importacao.</p>
+        </div>
+      </div>
+      <div id="previewContent" class="content-stack"></div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Boas praticas</h3>
+  <ul>
+    <li>Sempre rode preview e confira itens/cronograma.</li>
+    <li>Use lote pequeno quando a qualidade do PDF for baixa.</li>
+    <li>Nao confirme importacao com avisos criticos.</li>
+  </ul>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const filesInput = document.getElementById("import_files");
+  const previewButton = document.getElementById("btnPreview");
+  const confirmButton = document.getElementById("btnConfirm");
+  const userSelect = document.getElementById("import_user_id");
+  const statusCard = document.getElementById("importStatusCard");
+  const statusContainer = document.getElementById("importStatus");
+  const previewCard = document.getElementById("previewCard");
+  const previewContent = document.getElementById("previewContent");
+  const chooseFilesBtn = document.getElementById("chooseFilesBtn");
+  const uploadDropzone = document.getElementById("uploadDropzone");
+  const selectedFilesText = document.getElementById("selectedFilesText");
+
+  let previewReady = false;
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function setStatus(message, isError = false) {
+    statusCard.style.display = "block";
+    statusContainer.innerHTML = `<div class="${isError ? "warning" : "badge success"}">${escapeHtml(message)}</div>`;
+  }
+
+  function updateSelectedFilesText() {
+    const files = Array.from(filesInput.files || []);
+    if (!files.length) {
+      selectedFilesText.textContent = "Nenhum arquivo selecionado.";
+      return;
+    }
+
+    if (files.length === 1) {
+      selectedFilesText.textContent = `1 arquivo selecionado: ${files[0].name}`;
+      return;
+    }
+
+    const names = files.slice(0, 3).map((f) => f.name).join(", ");
+    const extra = files.length > 3 ? ` +${files.length - 3} arquivo(s)` : "";
+    selectedFilesText.textContent = `${files.length} arquivos: ${names}${extra}`;
+  }
+
+  function setInputFiles(fileList) {
+    if (!fileList || !fileList.length) return;
+    const dt = new DataTransfer();
+    Array.from(fileList).forEach((file) => dt.items.add(file));
+    filesInput.files = dt.files;
+  }
+
+  function formatPreviewResult(result) {
+    if (!result.preview) {
+      return `
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${escapeHtml(result.filename)}</h3>
+              <p class="card-subtitle">Arquivo com falha de processamento.</p>
+            </div>
+          </div>
+          <div class="warning">${escapeHtml(result.message || "Falha ao processar arquivo.")}</div>
+        </article>
+      `;
+    }
+
+    const preview = result.preview;
+    const itemsRows = (preview.items || []).map((item, index) => `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(item.descricao)}</td>
+        <td>${escapeHtml(item.unidade)}</td>
+        <td>${escapeHtml(item.qtd)}</td>
+        <td>${escapeHtml(item.valor_unit)}</td>
+      </tr>
+    `).join("");
+
+    const scheduleRows = (preview.schedule_rows || []).map((row, index) => `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(row.dia_label)}</td>
+        <td>${escapeHtml(row.descricao)}</td>
+        <td>${escapeHtml(row.horas_servico)}</td>
+      </tr>
+    `).join("");
+
+    const warnings = (preview.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
+    const matchedClient = preview.matched_client_name
+      ? `Cliente vinculado: ${escapeHtml(preview.matched_client_name)} (#${preview.matched_client_id})`
+      : "Cliente nao encontrado na base: sera criado no momento da confirmacao.";
+
+    return `
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">${escapeHtml(result.filename)}</h3>
+            <p class="card-subtitle">${matchedClient}</p>
+          </div>
+          <span class="badge primary">Preview pronto</span>
+        </div>
+
+        <div class="form-grid-3">
+          <div class="field"><label>Cliente</label><input readonly value="${escapeHtml(preview.client_name)}"></div>
+          <div class="field"><label>Atencao</label><input readonly value="${escapeHtml(preview.atencao || "-")}"></div>
+          <div class="field"><label>Objeto</label><input readonly value="${escapeHtml(preview.objeto_texto || "-")}"></div>
+        </div>
+        <div class="form-grid-2">
+          <div class="field"><label>Condicao pagamento</label><input readonly value="${escapeHtml(preview.condicao_pagamento_dias)} dias"></div>
+          <div class="field"><label>Imposto</label><input readonly value="${escapeHtml(preview.imposto_percentual)}%"></div>
+        </div>
+
+        ${warnings ? `<div class="warning"><strong>Avisos de parsing:</strong><ul>${warnings}</ul></div>` : ""}
+
+        <h4 class="mt-12">Itens detectados</h4>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Descricao</th><th>Unidade</th><th>Qtd</th><th>Valor unit.</th></tr>
+            </thead>
+            <tbody>
+              ${itemsRows || '<tr><td colspan="5" class="muted">Nenhum item identificado.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+
+        <h4 class="mt-12">Cronograma detectado</h4>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Dia/Etapa</th><th>Descricao</th><th>Horas</th></tr>
+            </thead>
+            <tbody>
+              ${scheduleRows || '<tr><td colspan="4" class="muted">Nenhuma linha de cronograma identificada.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    `;
+  }
+
+  async function runImport(confirmImport) {
+    const files = filesInput.files;
+    if (!files || files.length === 0) {
+      setStatus("Selecione ao menos um arquivo PDF.", true);
+      return null;
+    }
+
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("files", file);
+    }
+
+    const selectedUser = userSelect.value;
+    if (selectedUser) {
+      formData.append("user_id", selectedUser);
+    }
+    formData.append("confirm", confirmImport ? "true" : "false");
+
+    setStatus(confirmImport ? "Importando propostas..." : "Gerando preview...");
+
+    const response = await fetch("/api/import-proposals", {
+      method: "POST",
+      body: formData,
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "Falha na importacao.");
+    }
+    return payload;
+  }
+
+  previewButton.addEventListener("click", async () => {
+    previewReady = false;
+    confirmButton.disabled = true;
+    previewCard.style.display = "none";
+
+    try {
+      const payload = await runImport(false);
+      if (!payload) return;
+
+      const results = payload.results || [];
+      const successCount = results.filter((result) => result.success).length;
+      const failCount = results.length - successCount;
+
+      setStatus(`Preview concluido. Arquivos: ${results.length}. Sucesso: ${successCount}. Falhas: ${failCount}.`);
+      previewContent.innerHTML = results.map(formatPreviewResult).join("");
+      previewCard.style.display = "block";
+      previewReady = successCount > 0;
+      confirmButton.disabled = !previewReady;
+    } catch (err) {
+      setStatus(err.message || "Falha ao gerar preview.", true);
+    }
+  });
+
+  confirmButton.addEventListener("click", async () => {
+    if (!previewReady) {
+      setStatus("Gere o preview antes de confirmar a importacao.", true);
+      return;
+    }
+
+    confirmButton.disabled = true;
+    try {
+      const payload = await runImport(true);
+      if (!payload) return;
+      const imported = payload.imported || 0;
+      const failed = (payload.processed || 0) - imported;
+      setStatus(`Importacao concluida. Importadas: ${imported}. Falhas: ${failed}.`);
+      previewContent.innerHTML = (payload.results || []).map(formatPreviewResult).join("");
+      previewCard.style.display = "block";
+      previewReady = false;
+    } catch (err) {
+      setStatus(err.message || "Falha ao confirmar importacao.", true);
+    }
+  });
+
+  chooseFilesBtn.addEventListener("click", () => filesInput.click());
+  filesInput.addEventListener("change", updateSelectedFilesText);
+
+  uploadDropzone.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    uploadDropzone.classList.add("dragover");
+  });
+
+  uploadDropzone.addEventListener("dragleave", () => {
+    uploadDropzone.classList.remove("dragover");
+  });
+
+  uploadDropzone.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    uploadDropzone.classList.remove("dragover");
+    const dropped = ev.dataTransfer?.files;
+    if (!dropped || !dropped.length) return;
+    setInputFiles(dropped);
+    updateSelectedFilesText();
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">Usuarios internos</h1>
+  <p class="page-subtitle">Gerencie quem pode emitir propostas e manter o fluxo comercial atualizado.</p>
+  <div class="meta-line">
+    <span class="badge primary">Controle de acesso operacional</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Equipe cadastrada</h2>
+      <p class="card-subtitle">Use o filtro para localizar rapidamente um usuario.</p>
+    </div>
+    <div class="actions">
+      <input id="userSearch" class="search-input" type="search" placeholder="Filtrar usuarios..." aria-label="Filtrar usuarios">
+      <a class="btn btn-primary" href="/web/users/new">Novo usuario</a>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Nome</th>
+          <th>Cargo</th>
+          <th>Email</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="userRows">
+        {% for user in users %}
+        <tr data-search="{{ user.nome }} {{ user.cargo }} {{ user.email }}">
+          <td><strong>{{ user.nome }}</strong></td>
+          <td>{{ user.cargo or "-" }}</td>
+          <td>{{ user.email }}</td>
+          <td>
+            {% if user.ativo %}
+            <span class="badge success">Ativo</span>
+            {% else %}
+            <span class="badge warning">Inativo</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">Nenhum usuario cadastrado.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted mt-12" id="userSearchFeedback"></p>
+</section>
+{% endblock %}
+
+{% block side_actions %}
+<section class="aside-card">
+  <h3>Atalhos</h3>
+  <div class="actions">
+    <a class="btn btn-primary" href="/web/users/new">Cadastrar usuario</a>
+    <a class="btn btn-secondary" href="/web/proposals/new">Nova proposta</a>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const userSearch = document.getElementById("userSearch");
+  const feedback = document.getElementById("userSearchFeedback");
+  const rows = Array.from(document.querySelectorAll("#userRows tr[data-search]"));
+
+  function runUserSearch() {
+    const term = (userSearch.value || "").trim().toLowerCase();
+    let visible = 0;
+    rows.forEach((row) => {
+      const content = (row.getAttribute("data-search") || "").toLowerCase();
+      const match = !term || content.includes(term);
+      row.style.display = match ? "" : "none";
+      if (match) visible += 1;
+    });
+    feedback.innerText = term ? `${visible} usuario(s) encontrado(s).` : "";
+  }
+
+  userSearch.addEventListener("input", runUserSearch);
+</script>
+{% endblock %}
