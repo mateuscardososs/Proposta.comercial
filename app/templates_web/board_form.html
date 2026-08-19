@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-inner">
+    <h1 class="page-title">{% if task %}Editar Tarefa{% else %}Nova Tarefa{% endif %}</h1>
+    <p class="page-subtitle">Preencha as informações do card do Kanban.</p>
+  </div>
+</div>
+
+<div class="card" style="margin-top: 14px;">
+  <form action="{{ action_url }}" method="post">
+    <div class="form-grid-1">
+      <div class="field required">
+        <label for="titulo">Título da Tarefa</label>
+        <input type="text" id="titulo" name="titulo" value="{{ task.titulo if task else '' }}" required autofocus>
+      </div>
+    </div>
+
+    <div class="form-grid-2 mt-12">
+      <div class="field">
+        <label for="status">Coluna / Status</label>
+        <select id="status" name="status">
+          <option value="a_fazer" {% if task and task.status == 'a_fazer' %}selected{% endif %}>A Fazer</option>
+          <option value="em_andamento" {% if task and task.status == 'em_andamento' %}selected{% endif %}>Em Andamento</option>
+          <option value="aguardando_cliente" {% if task and task.status == 'aguardando_cliente' %}selected{% endif %}>Aguardando Cliente</option>
+          <option value="concluido" {% if task and task.status == 'concluido' %}selected{% endif %}>Concluído</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="prazo">Prazo (Data limite)</label>
+        <input type="date" id="prazo" name="prazo" value="{{ task.prazo.strftime('%Y-%m-%d') if task and task.prazo else '' }}">
+      </div>
+    </div>
+
+    <div class="form-grid-1 mt-12">
+      <div class="field">
+        <label for="descricao">Descrição (opcional)</label>
+        <textarea id="descricao" name="descricao">{{ task.descricao if task else '' }}</textarea>
+      </div>
+    </div>
+
+    <h3 style="margin: 20px 0 10px; font-size: 14px; border-bottom: 1px solid var(--line); padding-bottom: 5px;">Vínculos (Opcionais)</h3>
+
+    <div class="form-grid-3">
+      <div class="field">
+        <label for="client_id">Cliente</label>
+        <select id="client_id" name="client_id">
+          <option value="">-- Sem vínculo --</option>
+          {% for c in clients %}
+          <option value="{{ c.id }}" {% if task and task.client_id == c.id %}selected{% endif %}>{{ c.razao_social }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="proposal_id">Proposta</label>
+        <select id="proposal_id" name="proposal_id">
+          <option value="">-- Sem vínculo --</option>
+          {% for p in proposals %}
+          <option value="{{ p.id }}" {% if task and task.proposal_id == p.id %}selected{% endif %}>#{{ p.numero }}/{{ p.revisao }} - {{ p.client.razao_social if p.client else 'N/A' }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="user_id">Responsável</label>
+        <select id="user_id" name="user_id">
+          <option value="">-- Sem vínculo --</option>
+          {% for u in users %}
+          <option value="{{ u.id }}" {% if task and task.user_id == u.id %}selected{% endif %}>{{ u.nome }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="actions mt-12" style="justify-content: flex-end; margin-top: 20px;">
+      <a href="/web/board" class="btn btn-ghost">Cancelar</a>
+      <button type="submit" class="btn btn-primary">Salvar Tarefa</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

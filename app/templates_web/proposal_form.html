@@ -442,6 +442,11 @@
       <p class="muted review-note-bottom">Imposto e condicao de pagamento sao mantidos no documento final para leitura do cliente.</p>
     </div>
 
+    <div class="field mt-12" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: var(--surface-muted); border: 1px solid var(--line); border-radius: var(--radius-sm);">
+      <input type="checkbox" id="create_kanban_card" name="create_kanban_card" value="1" style="width: auto; margin: 0;">
+      <label for="create_kanban_card" style="margin: 0; text-transform: none; font-size: 14px;">Criar card no Quadro de Tarefas automaticamente</label>
+    </div>
+
     <div class="actions mt-12 desktop-review-actions">
       {% if create_mode == "revision" %}
       <button type="submit" class="btn btn-success" id="submitProposalBtn">Salvar e gerar revisao</button>

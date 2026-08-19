@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine, ensure_schema_compatibility
 from app.models import User
-from app.routers import clients, imports, pages, proposals, users
+from app.routers import board, clients, imports, pages, proposals, users
 from app.services.storage_service import ensure_directory
 
 settings = get_settings()
@@ -60,3 +60,4 @@ app.include_router(clients.router)
 app.include_router(users.router)
 app.include_router(proposals.router)
 app.include_router(imports.router)
+app.include_router(board.router)

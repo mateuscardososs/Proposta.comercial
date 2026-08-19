@@ -232,3 +232,43 @@ class ImportProposalsResponse(BaseModel):
     processed: int
     imported: int
     results: list[ImportProposalFileResult]
+
+
+class TaskBase(BaseModel):
+    titulo: str
+    descricao: str = ""
+    status: str = "a_fazer"
+    client_id: int | None = None
+    proposal_id: int | None = None
+    user_id: int | None = None
+    prazo: date | None = None
+
+
+class TaskCreate(TaskBase):
+    pass
+
+
+class TaskUpdate(BaseModel):
+    titulo: str | None = None
+    descricao: str | None = None
+    status: str | None = None
+    client_id: int | None = None
+    proposal_id: int | None = None
+    user_id: int | None = None
+    prazo: date | None = None
+    ordem: int | None = None
+
+
+class TaskRead(ORMModel, TaskBase):
+    id: int
+    ordem: int
+    created_at: datetime
+    updated_at: datetime
+    client: ClientRead | None = None
+    proposal: ProposalSummary | None = None
+    user: UserRead | None = None
+
+
+class TaskMove(BaseModel):
+    status: str
+    ordem: int

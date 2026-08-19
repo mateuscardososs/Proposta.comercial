@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import get_settings
 from app.db import get_db
 from app.models import Client, Proposal, User
-from app.schemas import ProposalCreate, ProposalItemCreate, ScheduleItemCreate, UserCreate
-from app.services import proposal_service, suggestion_service
+from app.schemas import ProposalCreate, ProposalItemCreate, ScheduleItemCreate, TaskCreate, UserCreate
+from app.services import board_service, proposal_service, suggestion_service
 from app.routers.users import hash_password
 from app.utils.currency import format_brl
 from app.utils.dates import format_date_br
@@ -492,6 +492,18 @@ async def proposal_new_submit(request: Request, db: Session = Depends(get_db)) -
             base_proposal_id=base_proposal_id,
         )
         _, pdf_error = proposal_service.generate_documents(db, proposal_id=created.id, settings=settings)
+
+        if form.get("create_kanban_card") == "1":
+            task_payload = TaskCreate(
+                titulo=f"Proposta #{created.numero}/{created.revisao} - {created.client.razao_social if created.client else 'Cliente'}",
+                descricao=f"Gerada automaticamente.\nObjeto: {created.objeto_texto}",
+                status="aguardando_cliente",
+                client_id=created.client_id,
+                proposal_id=created.id,
+                user_id=created.user_id,
+                prazo=None,
+            )
+            board_service.create_task(db, task_payload)
     except (ValueError, FileNotFoundError) as exc:
         return RedirectResponse(
             url=_build_new_proposal_redirect_url(request, warning=str(exc), revision_from=base_proposal_id),
