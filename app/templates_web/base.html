@@ -759,6 +759,7 @@
       </div>
       <nav class="nav" id="siteNav">
         <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Inicio</a>
+        <a href="/web/board" class="{% if request.url.path.startswith('/web/board') %}active{% endif %}">Quadro</a>
         <a href="/web/proposals/new" class="{% if request.url.path.startswith('/web/proposals/new') %}active{% endif %}">Nova proposta</a>
         <a href="/web/proposals" class="{% if request.url.path.startswith('/web/proposals') and not request.url.path.startswith('/web/proposals/new') %}active{% endif %}">Propostas</a>
         <a href="/web/clients" class="{% if request.url.path.startswith('/web/clients') %}active{% endif %}">Clientes</a>

@@ -39,6 +39,10 @@ class Client(Base, TimestampMixin):
         back_populates="client",
         cascade="all, delete-orphan",
     )
+    tasks: Mapped[list["Task"]] = relationship(
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
 
 
 class User(Base, TimestampMixin):
@@ -52,6 +56,7 @@ class User(Base, TimestampMixin):
     ativo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     proposals: Mapped[list["Proposal"]] = relationship(back_populates="user")
+    tasks: Mapped[list["Task"]] = relationship(back_populates="user")
 
 
 class Proposal(Base, TimestampMixin):
@@ -106,6 +111,10 @@ class Proposal(Base, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="ProposalScheduleItem.ordem",
     )
+    tasks: Mapped[list["Task"]] = relationship(
+        back_populates="proposal",
+        cascade="all, delete-orphan",
+    )
 
 
 class ProposalItem(Base):
@@ -136,3 +145,23 @@ class ProposalScheduleItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     proposal: Mapped[Proposal] = relationship(back_populates="schedule_items")
+
+
+class Task(Base, TimestampMixin):
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    titulo: Mapped[str] = mapped_column(String(255), nullable=False)
+    descricao: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="a_fazer", nullable=False)
+    
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
+    proposal_id: Mapped[int | None] = mapped_column(ForeignKey("proposals.id"), nullable=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    
+    prazo: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ordem: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    client: Mapped[Client | None] = relationship(back_populates="tasks")
+    proposal: Mapped[Proposal | None] = relationship(back_populates="tasks")
+    user: Mapped[User | None] = relationship(back_populates="tasks")
