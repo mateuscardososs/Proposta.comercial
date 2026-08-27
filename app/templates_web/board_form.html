@@ -23,6 +23,7 @@
         <select id="status" name="status">
           <option value="a_fazer" {% if task and task.status == 'a_fazer' %}selected{% endif %}>A Fazer</option>
           <option value="em_andamento" {% if task and task.status == 'em_andamento' %}selected{% endif %}>Em Andamento</option>
+          <option value="servico_feito_falta_nota_pedido" {% if task and task.status == 'servico_feito_falta_nota_pedido' %}selected{% endif %}>Serviços Feitos — Falta Nota/Pedido</option>
           <option value="aguardando_cliente" {% if task and task.status == 'aguardando_cliente' %}selected{% endif %}>Aguardando Cliente</option>
           <option value="concluido" {% if task and task.status == 'concluido' %}selected{% endif %}>Concluído</option>
         </select>
