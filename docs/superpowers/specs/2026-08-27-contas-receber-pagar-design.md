@@ -65,8 +65,8 @@ Não serão alterados `app/routers/pages.py`, `app/services/proposal_service.py`
 
 - `tipo`: `String`, obrigatório;
 - `descricao`: `String`, obrigatório;
-- `client_id`: FK opcional para `clients.id`;
-- `proposal_id`: FK opcional para `proposals.id`;
+- `client_id`: FK opcional para `clients.id`, com `ondelete="SET NULL"`;
+- `proposal_id`: FK opcional para `proposals.id`, com `ondelete="SET NULL"`;
 - `fornecedor`: `String`, opcional;
 - `valor`: `Numeric(14, 2)`, obrigatório e maior que zero;
 - `data_emissao`: `Date`, obrigatório, com default `date.today`;
@@ -75,7 +75,7 @@ Não serão alterados `app/routers/pages.py`, `app/services/proposal_service.py`
 - `data_pagamento`: `Date`, opcional;
 - timestamps fornecidos por `TimestampMixin`.
 
-Os relacionamentos com `Client` e `Proposal` serão unidirecionais a partir de `Lancamento`, sem novas coleções nos models existentes e sem `delete-orphan`. Excluir um cliente ou proposta não deve excluir silenciosamente um registro financeiro; a política de exclusão continuará limitada pelo comportamento das FKs do banco.
+Os relacionamentos com `Client` e `Proposal` serão unidirecionais a partir de `Lancamento`, sem novas coleções nos models existentes e sem `delete-orphan`. As duas FKs serão anuláveis e usarão explicitamente `ForeignKey(..., ondelete="SET NULL")`. Assim, excluir um cliente ou proposta preserva o lançamento e remove apenas o vínculo de referência, sem bloquear a exclusão nem apagar o registro financeiro.
 
 ## Regras de validação
 
