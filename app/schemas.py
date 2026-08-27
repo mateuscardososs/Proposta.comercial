@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
 class ORMModel(BaseModel):
@@ -272,3 +273,48 @@ class TaskRead(ORMModel, TaskBase):
 class TaskMove(BaseModel):
     status: str
     ordem: int
+
+
+TipoLancamento = Literal["receber", "pagar"]
+StatusLancamento = Literal["pendente", "pago"]
+DescricaoLancamento = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+]
+ValorLancamento = Annotated[
+    Decimal,
+    Field(gt=Decimal("0.00"), max_digits=14, decimal_places=2),
+]
+
+
+class LancamentoBase(BaseModel):
+    descricao: DescricaoLancamento
+    client_id: int | None = None
+    proposal_id: int | None = None
+    fornecedor: str | None = Field(default=None, max_length=255)
+    valor: ValorLancamento
+    data_emissao: date = Field(default_factory=date.today)
+    data_vencimento: date
+    status: StatusLancamento = "pendente"
+    data_pagamento: date | None = None
+
+
+class LancamentoCreate(LancamentoBase):
+    tipo: TipoLancamento
+
+
+class LancamentoUpdate(LancamentoBase):
+    pass
+
+
+class LancamentoRead(ORMModel, LancamentoBase):
+    id: int
+    tipo: TipoLancamento
+    created_at: datetime
+    updated_at: datetime
+    client: ClientRead | None = None
+    proposal: ProposalSummary | None = None
+
+
+class LancamentoMove(BaseModel):
+    status: StatusLancamento

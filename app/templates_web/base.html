@@ -241,6 +241,20 @@
       background: #fff1e8;
     }
 
+    .badge.danger {
+      border-color: rgba(178, 51, 62, 0.3);
+      color: #8b202b;
+      background: #fdecee;
+    }
+
+    .alert.error {
+      border: 1px solid rgba(178, 51, 62, 0.3);
+      border-radius: var(--radius-sm);
+      background: #fdecee;
+      color: #8b202b;
+      padding: 10px 12px;
+    }
+
     .card {
       background: var(--surface);
       border: 1px solid var(--line);
@@ -620,6 +634,121 @@
       gap: 6px;
     }
 
+    .kanban-board {
+      display: grid;
+      grid-template-columns: repeat(var(--kanban-columns, 4), minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 10px;
+      align-items: start;
+    }
+
+    .kanban-column {
+      background: var(--surface-muted);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      display: flex;
+      flex-direction: column;
+      min-height: 400px;
+      max-height: calc(100vh - 120px);
+    }
+
+    .kanban-column-title {
+      margin: 0;
+      padding: 12px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-soft);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .kanban-dropzone {
+      padding: 10px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .kanban-dropzone.drag-over {
+      background: rgba(13, 90, 157, 0.05);
+      border-radius: 8px;
+    }
+
+    .kanban-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      box-shadow: 0 2px 4px rgba(12, 28, 48, 0.04);
+      cursor: grab;
+      transition: box-shadow 0.2s, transform 0.2s;
+    }
+
+    .kanban-card:active { cursor: grabbing; }
+
+    .kanban-card.dragging {
+      opacity: 0.5;
+      transform: scale(0.98);
+    }
+
+    .kanban-card.is-overdue {
+      border-color: var(--danger);
+      background: #fff2f3;
+      box-shadow: 0 2px 8px rgba(178, 51, 62, 0.12);
+    }
+
+    .kanban-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .kanban-card-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    .kanban-card-title a { text-decoration: none; }
+
+    .kanban-card-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--text-soft);
+    }
+
+    .kanban-card-meta > div {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .kanban-card-meta strong { color: var(--text); }
+
+    .kanban-error {
+      display: none;
+      color: var(--danger);
+      margin: 10px 0 0;
+      padding: 9px 11px;
+      border: 1px solid rgba(178, 51, 62, 0.3);
+      border-radius: var(--radius-sm);
+      background: #fdecee;
+    }
+
+    .kanban-error.visible { display: block; }
+
     .app-footer {
       border-top: 1px solid var(--line);
       margin-top: 6px;
@@ -638,6 +767,7 @@
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .form-grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .form-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .kanban-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       table { min-width: 600px; }
       .topbar-inner { padding: 10px 0; }
       .menu-toggle { display: inline-flex; }
@@ -667,6 +797,7 @@
       .card,
       .aside-card { padding: 12px; }
       .page-title { font-size: 22px; }
+      .kanban-board { grid-template-columns: minmax(0, 1fr); }
       .form-grid-2,
       .form-grid-3,
       .form-grid-4,
@@ -760,6 +891,8 @@
       <nav class="nav" id="siteNav">
         <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Inicio</a>
         <a href="/web/board" class="{% if request.url.path.startswith('/web/board') %}active{% endif %}">Quadro</a>
+        <a href="/web/contas-a-receber" class="{% if request.url.path.startswith('/web/contas-a-receber') %}active{% endif %}">Contas a Receber</a>
+        <a href="/web/contas-a-pagar" class="{% if request.url.path.startswith('/web/contas-a-pagar') %}active{% endif %}">Contas a Pagar</a>
         <a href="/web/proposals/new" class="{% if request.url.path.startswith('/web/proposals/new') %}active{% endif %}">Nova proposta</a>
         <a href="/web/proposals" class="{% if request.url.path.startswith('/web/proposals') and not request.url.path.startswith('/web/proposals/new') %}active{% endif %}">Propostas</a>
         <a href="/web/clients" class="{% if request.url.path.startswith('/web/clients') %}active{% endif %}">Clientes</a>

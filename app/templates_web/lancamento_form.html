@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">
+    {% if entry %}Editar{% else %}Novo{% endif %}
+    {{ 'recebimento' if tipo == 'receber' else 'pagamento' }}
+  </h1>
+  <p class="page-subtitle">Preencha os dados do lançamento financeiro manualmente.</p>
+</section>
+
+{% if error %}
+<div class="alert error" role="alert">{{ error }}</div>
+{% endif %}
+
+<section class="card">
+  <form action="{{ action_url }}" method="post" autocomplete="off">
+    <div class="form-grid-1">
+      <div class="field required">
+        <label for="descricao">Descrição</label>
+        <input id="descricao" name="descricao" maxlength="255" required autofocus
+               value="{{ form_data.descricao }}"
+               placeholder="{{ 'Ex.: Manutenção de balança' if tipo == 'receber' else 'Ex.: Combustível da viagem' }}">
+      </div>
+    </div>
+
+    <div class="form-grid-3 mt-12">
+      <div class="field required">
+        <label for="valor">Valor</label>
+        <input id="valor" name="valor" inputmode="decimal" required value="{{ form_data.valor }}" placeholder="0,00">
+      </div>
+      <div class="field required">
+        <label for="data_emissao">Data de emissão</label>
+        <input id="data_emissao" name="data_emissao" type="date" required value="{{ form_data.data_emissao }}">
+      </div>
+      <div class="field required">
+        <label for="data_vencimento">Data de vencimento</label>
+        <input id="data_vencimento" name="data_vencimento" type="date" required value="{{ form_data.data_vencimento }}">
+      </div>
+    </div>
+
+    <div class="form-grid-2 mt-12">
+      <div class="field">
+        <label for="status">Status</label>
+        <select id="status" name="status">
+          <option value="pendente" {% if form_data.status == 'pendente' %}selected{% endif %}>Pendente</option>
+          <option value="pago" {% if form_data.status == 'pago' %}selected{% endif %}>Pago</option>
+        </select>
+      </div>
+      <div class="field" id="paymentDateField" {% if not entry and form_data.status != 'pago' %}hidden{% endif %}>
+        <label for="data_pagamento">Data de pagamento</label>
+        <input id="data_pagamento" name="data_pagamento" type="date" value="{{ form_data.data_pagamento }}">
+      </div>
+    </div>
+
+    <h2 class="card-title mt-12">Referências opcionais</h2>
+    <div class="form-grid-2 mt-12">
+      {% if tipo == 'receber' %}
+      <div class="field">
+        <label for="client_id">Cliente</label>
+        <select id="client_id" name="client_id">
+          <option value="">Sem cliente vinculado</option>
+          {% for client in clients %}
+          <option value="{{ client.id }}" {% if form_data.client_id|int == client.id %}selected{% endif %}>
+            {{ client.razao_social }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <div class="field">
+        <label for="fornecedor">Fornecedor</label>
+        <input id="fornecedor" name="fornecedor" maxlength="255"
+               value="{{ form_data.fornecedor }}" placeholder="Nome livre do fornecedor">
+      </div>
+      {% endif %}
+
+      <div class="field">
+        <label for="proposal_id">Proposta de referência</label>
+        <select id="proposal_id" name="proposal_id">
+          <option value="">Sem proposta vinculada</option>
+          {% for proposal in proposals %}
+          <option value="{{ proposal.id }}" {% if form_data.proposal_id|int == proposal.id %}selected{% endif %}>
+            #{{ proposal.numero }}/{{ proposal.revisao }}{% if proposal.client %} — {{ proposal.client.razao_social }}{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="actions mt-12" style="justify-content: flex-end;">
+      <a href="{{ config.board_url }}" class="btn btn-ghost">Cancelar</a>
+      <button type="submit" class="btn btn-primary">Salvar lançamento</button>
+    </div>
+  </form>
+</section>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const statusField = document.getElementById('status');
+    const paymentDateField = document.getElementById('paymentDateField');
+    const syncPaymentDateVisibility = () => {
+      paymentDateField.hidden = statusField.value !== 'pago';
+    };
+    statusField.addEventListener('change', syncPaymentDateVisibility);
+    syncPaymentDateVisibility();
+  });
+</script>
+{% endblock %}
