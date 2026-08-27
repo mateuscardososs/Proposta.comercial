@@ -23,6 +23,7 @@ def board_page(request: Request, db: Session = Depends(get_db)) -> object:
     board_data = {
         "a_fazer": [],
         "em_andamento": [],
+        "servico_feito_falta_nota_pedido": [],
         "aguardando_cliente": [],
         "concluido": [],
     }

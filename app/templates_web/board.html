@@ -14,10 +14,11 @@
 <p class="kanban-error" data-kanban-error role="alert"></p>
 
 <div class="kanban-board" data-kanban-board data-ordered="true"
-     data-endpoint-template="/api/tasks/{id}/move" style="--kanban-columns: 4;">
+     data-endpoint-template="/api/tasks/{id}/move" style="--kanban-columns: 5;">
   {% set columns = [
     ('a_fazer', 'A Fazer', ''),
     ('em_andamento', 'Em Andamento', ''),
+    ('servico_feito_falta_nota_pedido', 'Serviços Feitos — Falta Nota/Pedido', 'primary'),
     ('aguardando_cliente', 'Aguardando Cliente', 'warning'),
     ('concluido', 'Concluído', 'success')
   ] %}
