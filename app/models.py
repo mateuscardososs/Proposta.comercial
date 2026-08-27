@@ -165,3 +165,32 @@ class Task(Base, TimestampMixin):
     client: Mapped[Client | None] = relationship(back_populates="tasks")
     proposal: Mapped[Proposal | None] = relationship(back_populates="tasks")
     user: Mapped[User | None] = relationship(back_populates="tasks")
+
+
+class Lancamento(Base, TimestampMixin):
+    __tablename__ = "lancamentos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    descricao: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    client_id: Mapped[int | None] = mapped_column(
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    proposal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("proposals.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    fornecedor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    valor: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    data_emissao: Mapped[date] = mapped_column(Date, default=date.today, nullable=False)
+    data_vencimento: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pendente", nullable=False, index=True)
+    data_pagamento: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    client: Mapped[Client | None] = relationship()
+    proposal: Mapped[Proposal | None] = relationship()
