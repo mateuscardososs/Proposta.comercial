@@ -78,5 +78,14 @@
       <button type="submit" class="btn btn-primary">Salvar Tarefa</button>
     </div>
   </form>
+
+  {% if task %}
+  <div class="actions mt-12" style="border-top: 1px solid var(--line); padding-top: 14px;">
+    <form action="/web/board/{{ task.id }}/delete" method="post"
+          onsubmit="return window.confirm('Tem certeza que deseja excluir esta atividade? Esta ação não pode ser desfeita.');">
+      <button type="submit" class="btn btn-danger">Excluir atividade</button>
+    </form>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

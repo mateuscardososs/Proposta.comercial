@@ -34,7 +34,11 @@ def board_page(request: Request, db: Session = Depends(get_db)) -> object:
         else:
             board_data["a_fazer"].append(task)
 
-    return render_template(request, "board.html", {"board_data": board_data})
+    return render_template(
+        request,
+        "board.html",
+        {"board_data": board_data, "full_width": True},
+    )
 
 
 @router.get("/web/board/new", name="web_board_new")
@@ -52,6 +56,7 @@ def board_new_page(request: Request, db: Session = Depends(get_db)) -> object:
             "users": users,
             "proposals": proposals,
             "action_url": "/web/board/new",
+            "full_width": True,
         },
     )
 
@@ -103,6 +108,7 @@ def board_edit_page(task_id: int, request: Request, db: Session = Depends(get_db
             "users": users,
             "proposals": proposals,
             "action_url": f"/web/board/{task_id}/edit",
+            "full_width": True,
         },
     )
 
@@ -131,6 +137,19 @@ async def board_edit_submit(task_id: int, request: Request, db: Session = Depend
         return RedirectResponse(url=request.url_for("web_board"), status_code=status.HTTP_303_SEE_OTHER)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/web/board/{task_id}/delete", name="web_board_delete")
+def board_delete_submit(
+    task_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    board_service.delete_task(db, task_id)
+    return RedirectResponse(
+        url=request.url_for("web_board"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @router.post("/api/tasks/{task_id}/move", response_model=TaskRead)
