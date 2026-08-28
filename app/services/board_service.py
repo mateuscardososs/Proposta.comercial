@@ -66,6 +66,21 @@ def update_task(db: Session, task_id: int, payload: TaskUpdate) -> Task:
     return task
 
 
+def delete_task(db: Session, task_id: int) -> None:
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    task_status = task.status
+    task_order = task.ordem
+    db.delete(task)
+    db.query(Task).filter(
+        Task.status == task_status,
+        Task.ordem > task_order,
+    ).update({"ordem": Task.ordem - 1}, synchronize_session=False)
+    db.commit()
+
+
 def move_task(db: Session, task_id: int, payload: TaskMove) -> Task:
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
