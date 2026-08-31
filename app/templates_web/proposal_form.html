@@ -108,6 +108,14 @@
       </table>
     </div>
   </div>
+  <div id="lastWordProposalPanel" class="section-inline-card mt-12" hidden>
+    <h3 class="section-inline-title">Última proposta em Word</h3>
+    <p id="lastWordProposalText" class="muted"></p>
+    <div id="lastWordProposalActions" class="actions" hidden>
+      <a id="lastWordDownloadLink" class="btn btn-secondary" href="#">Baixar última proposta em Word</a>
+      <a id="lastWordReuploadLink" class="btn btn-ghost" href="#">Reenviar Word editado</a>
+    </div>
+  </div>
   </div>
 </section>
 
@@ -754,6 +762,36 @@
     }
   }
 
+  async function loadLastWordProposal(clientId) {
+    const panel = document.getElementById("lastWordProposalPanel");
+    const message = document.getElementById("lastWordProposalText");
+    const actions = document.getElementById("lastWordProposalActions");
+    const downloadLink = document.getElementById("lastWordDownloadLink");
+    const reuploadLink = document.getElementById("lastWordReuploadLink");
+    panel.hidden = true;
+    actions.hidden = true;
+    if (!clientId) return;
+
+    try {
+      const response = await fetch(`/api/proposals/clients/${encodeURIComponent(clientId)}/last`);
+      if (!response.ok) throw new Error("Falha ao consultar a última proposta.");
+      const proposal = await response.json();
+      if (!proposal) return;
+      panel.hidden = false;
+      if (!proposal.docx_path) {
+        message.textContent = `A proposta ${proposal.numero}/${proposal.revisao} não possui arquivo Word disponível.`;
+        return;
+      }
+      message.textContent = `Proposta ${proposal.numero}/${proposal.revisao}, gerada em ${formatDate(proposal.data_geracao)}.`;
+      downloadLink.href = `/web/proposals/${proposal.id}/baixar-word`;
+      reuploadLink.href = `/web/proposals/${proposal.id}/reenviar-word`;
+      actions.hidden = false;
+    } catch (error) {
+      panel.hidden = false;
+      message.textContent = "Não foi possível consultar a última proposta agora.";
+    }
+  }
+
   function syncObjetoField() {
     const tipo = document.getElementById("objeto_tipo").value;
     const wrap = document.getElementById("objeto_texto_wrap");
@@ -827,6 +865,7 @@
     const clientId = ev.target.value;
     fetchRecentProposals(clientId);
     autofillClientContext(clientId);
+    loadLastWordProposal(clientId);
   });
 
   document.getElementById("btnLoadLast").addEventListener("click", () => {
@@ -844,6 +883,7 @@
   if (initialClientId) {
     fetchRecentProposals(initialClientId);
     autofillClientContext(initialClientId);
+    loadLastWordProposal(initialClientId);
   }
 
   updateItemIndexes();

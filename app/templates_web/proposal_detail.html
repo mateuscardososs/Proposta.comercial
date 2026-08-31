@@ -14,10 +14,17 @@
 <div class="detail-page">
   <section class="page-header">
     <h1 class="page-title">Proposta {{ proposal.numero }}/{{ proposal.revisao }}</h1>
-    <p class="page-subtitle">Preview operacional da proposta com foco em leitura rapida antes de envio ao cliente.</p>
+    <p class="page-subtitle">{% if proposal.origem == "sistema" %}Preview operacional da proposta com foco em leitura rapida antes de envio ao cliente.{% else %}Proposta documental registrada a partir de arquivo oficial.{% endif %}</p>
     <div class="meta-line">
       <span class="badge primary">Gerada em {{ format_date_br(proposal.data_geracao) }}</span>
       <span class="badge">Cliente: {{ proposal.client.razao_social }}</span>
+      {% if proposal.origem == "reupload_editado" %}
+      <span class="badge warning">Word reenviado</span>
+      {% elif proposal.origem == "upload_externo" %}
+      <span class="badge primary">Upload externo</span>
+      {% else %}
+      <span class="badge success">Sistema</span>
+      {% endif %}
     </div>
   </section>
 
@@ -39,22 +46,26 @@
       </div>
 
       <div class="actions">
-        {% if docx_url %}
-        <a class="btn btn-primary" href="{{ docx_url }}" target="_blank">Baixar DOCX</a>
+        {% if proposal.docx_path %}
+        <a class="btn btn-primary" href="/web/proposals/{{ proposal.id }}/baixar-word">Baixar em Word para editar</a>
+        <a class="btn btn-secondary" href="/web/proposals/{{ proposal.id }}/reenviar-word">Reenviar Word editado</a>
         {% endif %}
         {% if pdf_url %}
         <a class="btn btn-success" href="{{ pdf_url }}" target="_blank">Baixar PDF</a>
         {% endif %}
+        {% if proposal.origem == "sistema" %}
         <form method="post" action="/web/proposals/{{ proposal.id }}/duplicate">
           <button class="btn btn-secondary" type="submit">Duplicar</button>
         </form>
         <form method="post" action="/web/proposals/{{ proposal.id }}/revision">
           <button class="btn btn-warning" type="submit">Nova revisao</button>
         </form>
+        {% endif %}
       </div>
     </div>
   </section>
 
+  {% if proposal.origem == "sistema" %}
   <section class="card mobile-collapsible" data-collapsed-mobile="true">
     <button type="button" class="collapse-toggle" aria-expanded="false">
       <span>Resumo comercial</span>
@@ -247,6 +258,28 @@
       </div>
     </div>
   </section>
+  {% else %}
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">Proposta documental</h2>
+        <p class="card-subtitle">O arquivo anexado é a fonte oficial desta proposta.</p>
+      </div>
+    </div>
+    <div class="form-grid-3">
+      <div class="field"><label>Cliente</label><input readonly value="{{ proposal.client.razao_social }}"></div>
+      <div class="field"><label>Responsável interno</label><input readonly value="{{ proposal.user.nome }}"></div>
+      <div class="field"><label>Data</label><input readonly value="{{ format_date_br(proposal.data_geracao) }}"></div>
+    </div>
+    <div class="kpi-grid">
+      <article class="kpi-card total">
+        <p class="kpi-label">Valor confirmado</p>
+        <p class="kpi-value total">{{ format_brl(proposal.valor_total) }}</p>
+        <p class="kpi-note">Consulte o Word ou PDF oficial para os detalhes.</p>
+      </article>
+    </div>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}
 

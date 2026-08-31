@@ -67,6 +67,12 @@ class Proposal(Base, TimestampMixin):
     numero: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     revisao: Mapped[str] = mapped_column(String(2), nullable=False, default="00")
     data_geracao: Mapped[date] = mapped_column(Date, nullable=False, default=date.today)
+    origem: Mapped[str] = mapped_column(
+        String(30),
+        default="sistema",
+        server_default="sistema",
+        nullable=False,
+    )
 
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)

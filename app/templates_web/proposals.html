@@ -17,6 +17,7 @@
     </div>
     <div class="actions">
       <input id="proposalSearch" class="search-input" type="search" placeholder="Filtrar propostas..." aria-label="Filtrar propostas">
+      <a class="btn btn-secondary" href="/web/proposals/upload-externo">Upload externo</a>
       <a class="btn btn-primary" href="/web/proposals/new">Nova proposta</a>
     </div>
   </div>
@@ -29,6 +30,7 @@
           <th>Cliente</th>
           <th>Data</th>
           <th>Responsavel</th>
+          <th>Origem</th>
           <th>Pagamento</th>
           <th>Imposto</th>
           <th>Valor total</th>
@@ -42,6 +44,15 @@
           <td>{{ proposal.client.razao_social }}</td>
           <td>{{ format_date_br(proposal.data_geracao) }}</td>
           <td>{{ proposal.user.nome }}</td>
+          <td>
+            {% if proposal.origem == "reupload_editado" %}
+            <span class="badge warning">Word reenviado</span>
+            {% elif proposal.origem == "upload_externo" %}
+            <span class="badge primary">Upload externo</span>
+            {% else %}
+            <span class="badge success">Sistema</span>
+            {% endif %}
+          </td>
           <td><span class="badge">{{ proposal.condicao_pagamento_dias }} dias</span></td>
           <td><span class="badge warning">{{ proposal.imposto_percentual }}%</span></td>
           <td><strong>{{ format_brl(proposal.valor_total) }}</strong></td>
@@ -55,7 +66,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="muted">Nenhuma proposta cadastrada.</td></tr>
+        <tr><td colspan="9" class="muted">Nenhuma proposta cadastrada.</td></tr>
         {% endfor %}
       </tbody>
     </table>

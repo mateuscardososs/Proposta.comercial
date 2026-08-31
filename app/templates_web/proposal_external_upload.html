@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">Upload externo de proposta</h1>
+  <p class="page-subtitle">Registre uma proposta criada fora do sistema a partir de um arquivo Word ou PDF.</p>
+  <div class="meta-line">
+    <span class="badge primary">Confirmação humana obrigatória</span>
+    <span class="badge">PDF escaneado pode exigir preenchimento manual</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Documento e dados da proposta</h2>
+      <p class="card-subtitle">A análise apenas sugere dados; cliente e valor continuam editáveis.</p>
+    </div>
+  </div>
+  <form id="externalUploadForm" method="post" enctype="multipart/form-data" action="/web/proposals/upload-externo">
+    <div class="field required">
+      <label for="externalFile">Arquivo .docx ou .pdf</label>
+      <input id="externalFile" name="file" type="file" accept=".docx,.pdf" required>
+    </div>
+    <div class="form-grid-2">
+      <div class="field required">
+        <label for="externalClient">Cliente</label>
+        <select id="externalClient" name="client_id" required>
+          <option value="">Selecione</option>
+          {% for client in clients %}<option value="{{ client.id }}">{{ client.razao_social }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field required">
+        <label for="externalUser">Responsável interno</label>
+        <select id="externalUser" name="user_id" required>
+          <option value="">Selecione</option>
+          {% for user in users %}<option value="{{ user.id }}" {% if user.id == default_user_id %}selected{% endif %}>{{ user.nome }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-grid-2">
+      <div class="field required">
+        <label for="externalDate">Data da proposta</label>
+        <input id="externalDate" name="data_geracao" type="date" value="{{ today.isoformat() }}" required>
+      </div>
+      <div class="field required">
+        <label for="externalTotal">Valor total confirmado</label>
+        <input id="externalTotal" name="valor_total" inputmode="decimal" placeholder="0,00" required>
+      </div>
+    </div>
+    <div id="externalWarnings" class="warning" hidden></div>
+    <p id="externalStatus" class="muted">Selecione um arquivo e analise antes de registrar.</p>
+    <div class="actions">
+      <button id="analyzeExternalButton" class="btn btn-secondary" type="button">Analisar arquivo</button>
+      <button id="confirmExternalButton" class="btn btn-primary" type="submit" disabled>Confirmar e registrar proposta</button>
+      <a class="btn btn-ghost" href="/web/proposals">Cancelar</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const externalFile = document.getElementById("externalFile");
+  const externalClient = document.getElementById("externalClient");
+  const externalUser = document.getElementById("externalUser");
+  const externalDate = document.getElementById("externalDate");
+  const externalTotal = document.getElementById("externalTotal");
+  const externalStatus = document.getElementById("externalStatus");
+  const externalWarnings = document.getElementById("externalWarnings");
+  const confirmExternalButton = document.getElementById("confirmExternalButton");
+  let externalPreviewSucceeded = false;
+
+  function validExternalValue(value) {
+    return /^\s*\d+(?:\.\d{3})*(?:,\d{1,2})?\s*$/.test(value || "");
+  }
+  function updateExternalConfirmation() {
+    confirmExternalButton.disabled = !(
+      externalPreviewSucceeded && externalClient.value && externalUser.value &&
+      externalDate.value && validExternalValue(externalTotal.value)
+    );
+  }
+  function showExternalWarnings(warnings) {
+    externalWarnings.replaceChildren();
+    if (!warnings || warnings.length === 0) {
+      externalWarnings.hidden = true;
+      return;
+    }
+    warnings.forEach((message) => {
+      const line = document.createElement("p");
+      line.textContent = message;
+      externalWarnings.appendChild(line);
+    });
+    externalWarnings.hidden = false;
+  }
+
+  document.getElementById("analyzeExternalButton").addEventListener("click", async () => {
+    if (!externalFile.files.length) {
+      externalStatus.textContent = "Selecione um arquivo .docx ou .pdf.";
+      return;
+    }
+    externalPreviewSucceeded = false;
+    updateExternalConfirmation();
+    externalStatus.textContent = "Analisando arquivo...";
+    const previewData = new FormData();
+    previewData.append("file", externalFile.files[0]);
+    try {
+      const response = await fetch("/api/proposal-files/upload-externo/preview", {method: "POST", body: previewData});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Não foi possível analisar o arquivo.");
+      externalClient.value = result.suggested_client_id === null ? "" : String(result.suggested_client_id);
+      if (result.suggested_valor_total !== null) {
+        externalTotal.value = Number(result.suggested_valor_total).toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      }
+      showExternalWarnings(result.warnings);
+      externalPreviewSucceeded = true;
+      externalStatus.textContent = "Análise concluída. Confira todos os campos antes de registrar.";
+    } catch (error) {
+      externalStatus.textContent = error.message;
+      showExternalWarnings([]);
+    }
+    updateExternalConfirmation();
+  });
+
+  externalFile.addEventListener("change", () => { externalPreviewSucceeded = false; updateExternalConfirmation(); });
+  [externalClient, externalUser, externalDate, externalTotal].forEach((field) => field.addEventListener("input", updateExternalConfirmation));
+</script>
+{% endblock %}
