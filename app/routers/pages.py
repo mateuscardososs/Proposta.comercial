@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import Client, Proposal, User
 from app.schemas import ProposalCreate, ProposalItemCreate, ScheduleItemCreate, TaskCreate, UserCreate
-from app.services import board_service, proposal_service, suggestion_service
+from app.services import board_service, dashboard_service, proposal_service, suggestion_service
 from app.routers.users import hash_password
 from app.utils.currency import format_brl
 from app.utils.dates import format_date_br
@@ -172,25 +172,11 @@ def _required_positive_int(value: object, label: str) -> int:
 
 @router.get("/", name="web_index")
 def index(request: Request, db: Session = Depends(get_db)) -> object:
-    total_clients = db.query(Client).count()
-    total_users = db.query(User).count()
-    total_proposals = db.query(Proposal).count()
-    last_proposals = (
-        db.query(Proposal)
-        .options(joinedload(Proposal.client), joinedload(Proposal.user))
-        .order_by(Proposal.id.desc())
-        .limit(5)
-        .all()
-    )
+    summary = dashboard_service.get_dashboard_summary(db)
     return render_template(
         request,
         "index.html",
-        {
-            "total_clients": total_clients,
-            "total_users": total_users,
-            "total_proposals": total_proposals,
-            "last_proposals": last_proposals,
-        },
+        {"summary": summary, "full_width": True},
     )
 
 
