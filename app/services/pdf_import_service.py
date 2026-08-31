@@ -17,6 +17,10 @@ class PDFImportError(RuntimeError):
     pass
 
 
+class PDFNoTextError(PDFImportError):
+    pass
+
+
 @dataclass
 class ParsedProposalItem:
     descricao: str
@@ -147,10 +151,12 @@ def _extract_text_pymupdf(file_bytes: bytes) -> str:
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     errors: list[str] = []
+    empty_results = 0
     try:
         text = _extract_text_pdfplumber(file_bytes)
         if text:
             return text
+        empty_results += 1
         errors.append("pdfplumber returned empty text")
     except Exception as exc:
         errors.append(f"pdfplumber error: {exc}")
@@ -159,10 +165,13 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         text = _extract_text_pymupdf(file_bytes)
         if text:
             return text
+        empty_results += 1
         errors.append("pymupdf returned empty text")
     except Exception as exc:
         errors.append(f"pymupdf error: {exc}")
 
+    if empty_results:
+        raise PDFNoTextError("PDF sem texto extraível.")
     raise PDFImportError("Failed to extract text from PDF: " + " | ".join(errors))
 
 

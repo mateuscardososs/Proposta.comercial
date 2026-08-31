@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import get_settings
@@ -42,36 +43,46 @@ class Base(DeclarativeBase):
     pass
 
 
-def ensure_schema_compatibility() -> None:
-    if not settings.database_url.startswith("sqlite"):
+def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
+    inspector = inspect(target_engine)
+    if "proposals" not in inspector.get_table_names():
         return
 
-    with engine.begin() as conn:
-        tables = {
-            str(row[0])
-            for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
-        }
-        if "proposals" not in tables:
-            return
-
-        proposal_columns = {
-            str(row[1])
-            for row in conn.execute(text("PRAGMA table_info('proposals')"))
-        }
-        if "condicao_pagamento_dias" not in proposal_columns:
+    proposal_columns = {
+        str(column["name"])
+        for column in inspector.get_columns("proposals")
+    }
+    with target_engine.begin() as conn:
+        if target_engine.dialect.name == "sqlite" and "condicao_pagamento_dias" not in proposal_columns:
             conn.execute(
                 text(
                     "ALTER TABLE proposals "
                     "ADD COLUMN condicao_pagamento_dias INTEGER NOT NULL DEFAULT 0"
                 )
             )
-        if "imposto_percentual" not in proposal_columns:
+        if target_engine.dialect.name == "sqlite" and "imposto_percentual" not in proposal_columns:
             conn.execute(
                 text(
                     "ALTER TABLE proposals "
                     "ADD COLUMN imposto_percentual NUMERIC(7,2) NOT NULL DEFAULT 0"
                 )
             )
+        if "origem" not in proposal_columns:
+            if target_engine.dialect.name == "postgresql":
+                statement = (
+                    "ALTER TABLE proposals ADD COLUMN IF NOT EXISTS "
+                    "origem VARCHAR(30) NOT NULL DEFAULT 'sistema'"
+                )
+            else:
+                statement = (
+                    "ALTER TABLE proposals ADD COLUMN "
+                    "origem VARCHAR(30) NOT NULL DEFAULT 'sistema'"
+                )
+            conn.execute(text(statement))
+
+
+def ensure_schema_compatibility() -> None:
+    ensure_schema_compatibility_for_engine(engine)
 
 
 def get_db() -> Generator[Session, None, None]:

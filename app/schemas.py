@@ -11,6 +11,9 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+ProposalOrigin = Literal["sistema", "reupload_editado", "upload_externo"]
+
+
 class ClientBase(BaseModel):
     razao_social: str
     cnpj: str = ""
@@ -129,6 +132,7 @@ class ProposalRead(ORMModel):
     numero: int
     revisao: str
     data_geracao: date
+    origem: ProposalOrigin
     client_id: int
     user_id: int
     atencao: str
@@ -166,6 +170,7 @@ class ProposalSummary(ORMModel):
     numero: int
     revisao: str
     data_geracao: date
+    origem: ProposalOrigin
     client_id: int
     user_id: int
     valor_total: Decimal
@@ -189,6 +194,23 @@ class ProposalCloneResponse(BaseModel):
     numero: int
     revisao: str
     redirect_url: str
+
+
+class WordReuploadPreviewResponse(BaseModel):
+    filename: str
+    valor_total: Decimal | None
+    marker_found: bool
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ExternalUploadPreviewResponse(BaseModel):
+    filename: str
+    file_type: Literal["docx", "pdf"]
+    suggested_client_id: int | None = None
+    suggested_client_name: str | None = None
+    client_confidence: float | None = None
+    suggested_valor_total: Decimal | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ImportProposalItemPreview(BaseModel):

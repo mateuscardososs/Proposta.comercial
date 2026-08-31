@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine, ensure_schema_compatibility
 from app.models import User
-from app.routers import board, clients, financeiro, imports, pages, proposals, users
+from app.routers import board, clients, financeiro, imports, pages, proposal_files, proposals, users
 from app.services.storage_service import ensure_directory
 
 settings = get_settings()
@@ -55,6 +55,7 @@ app.state.templates = Jinja2Templates(directory=str(templates_dir))
 
 app.mount("/output", StaticFiles(directory=str(settings.output_dir)), name="output")
 
+app.include_router(proposal_files.router)
 app.include_router(pages.router)
 app.include_router(clients.router)
 app.include_router(users.router)

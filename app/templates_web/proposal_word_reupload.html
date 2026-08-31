@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">Reenviar Word editado</h1>
+  <p class="page-subtitle">Envie o documento alterado para criar uma nova revisão da proposta {{ proposal.numero }}/{{ proposal.revisao }}.</p>
+  <div class="meta-line">
+    <span class="badge primary">Cliente: {{ proposal.client.razao_social }}</span>
+    <span class="badge">A proposta anterior será preservada</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Arquivo Word</h2>
+      <p class="card-subtitle">Baixe a versão atual, edite no Word e envie o mesmo arquivo em formato .docx.</p>
+    </div>
+    <a class="btn btn-secondary" href="{{ download_url }}">Baixar versão atual</a>
+  </div>
+
+  <form id="wordReuploadForm" method="post" enctype="multipart/form-data" action="/web/proposals/{{ proposal.id }}/reenviar-word">
+    <div class="form-grid-2">
+      <div class="field required">
+        <label for="wordFile">Documento .docx</label>
+        <input id="wordFile" name="file" type="file" accept=".docx" required>
+      </div>
+      <div class="field required">
+        <label for="wordTotal">Valor total confirmado</label>
+        <input id="wordTotal" name="valor_total" inputmode="decimal" placeholder="0,00" required>
+      </div>
+    </div>
+    <div id="wordWarnings" class="warning" hidden></div>
+    <p id="wordStatus" class="muted">Selecione o arquivo e clique em analisar. Se o marcador não existir, digite o valor manualmente.</p>
+    <div class="actions">
+      <button id="analyzeWordButton" class="btn btn-secondary" type="button">Analisar arquivo</button>
+      <button id="confirmWordButton" class="btn btn-primary" type="submit" disabled>Confirmar e criar revisão</button>
+      <a class="btn btn-ghost" href="/web/proposals/{{ proposal.id }}">Cancelar</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const wordForm = document.getElementById("wordReuploadForm");
+  const wordFile = document.getElementById("wordFile");
+  const wordTotal = document.getElementById("wordTotal");
+  const wordStatus = document.getElementById("wordStatus");
+  const wordWarnings = document.getElementById("wordWarnings");
+  const analyzeWordButton = document.getElementById("analyzeWordButton");
+  const confirmWordButton = document.getElementById("confirmWordButton");
+  let previewSucceeded = false;
+
+  function validBrazilianValue(value) {
+    return /^\s*\d+(?:\.\d{3})*(?:,\d{1,2})?\s*$/.test(value || "");
+  }
+
+  function updateWordConfirmation() {
+    confirmWordButton.disabled = !(previewSucceeded && validBrazilianValue(wordTotal.value));
+  }
+
+  function showWordWarnings(warnings) {
+    wordWarnings.replaceChildren();
+    if (!warnings || warnings.length === 0) {
+      wordWarnings.hidden = true;
+      return;
+    }
+    warnings.forEach((message) => {
+      const line = document.createElement("p");
+      line.textContent = message;
+      wordWarnings.appendChild(line);
+    });
+    wordWarnings.hidden = false;
+  }
+
+  analyzeWordButton.addEventListener("click", async () => {
+    if (!wordFile.files.length) {
+      wordStatus.textContent = "Selecione um arquivo .docx.";
+      return;
+    }
+    previewSucceeded = false;
+    updateWordConfirmation();
+    wordStatus.textContent = "Analisando arquivo...";
+    const previewData = new FormData();
+    previewData.append("file", wordFile.files[0]);
+    try {
+      const response = await fetch(`/api/proposal-files/{{ proposal.id }}/word-preview`, {
+        method: "POST",
+        body: previewData,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Não foi possível analisar o arquivo.");
+      if (result.valor_total !== null) {
+        wordTotal.value = Number(result.valor_total).toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      }
+      showWordWarnings(result.warnings);
+      previewSucceeded = true;
+      wordStatus.textContent = result.marker_found
+        ? "Valor localizado. Confira antes de criar a revisão."
+        : "Digite o valor total manualmente e confirme.";
+    } catch (error) {
+      wordStatus.textContent = error.message;
+      showWordWarnings([]);
+    }
+    updateWordConfirmation();
+  });
+
+  wordFile.addEventListener("change", () => {
+    previewSucceeded = false;
+    updateWordConfirmation();
+  });
+  wordTotal.addEventListener("input", updateWordConfirmation);
+  wordForm.addEventListener("submit", (event) => {
+    if (confirmWordButton.disabled) event.preventDefault();
+  });
+</script>
+{% endblock %}
