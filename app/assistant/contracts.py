@@ -162,3 +162,28 @@ class AssistantHistory(BaseModel):
 
 class AssistantConfirmationRequest(BaseModel):
     confirmation_token: str = Field(min_length=20, max_length=100)
+
+
+class VoiceStatus(BaseModel):
+    enabled: bool
+    text_available: bool = True
+    transcription_available: bool
+    synthesis_available: bool
+    message: str
+    max_duration_seconds: float = Field(gt=0)
+    max_upload_bytes: int = Field(gt=0)
+    silence_ms: int = Field(gt=0)
+    idle_timeout_seconds: int = Field(gt=0)
+
+
+class VoiceTranscriptionResponse(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    language: str = Field(max_length=20)
+    language_probability: float = Field(ge=0, le=1)
+    audio_duration_seconds: float = Field(gt=0)
+    transcription_seconds: float = Field(ge=0)
+
+
+class VoiceSpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    kind: Literal["text", "confirmation", "clarification", "success", "error"] = "text"
