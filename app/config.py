@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+VOICE_MODEL_DIR = BASE_DIR / ".models" / "assistant_voice"
 
 
 def _default_libreoffice_cmd() -> str:
@@ -42,6 +43,20 @@ class Settings(BaseSettings):
     assistant_timezone: str = "America/Recife"
     assistant_context_messages: int = 12
     assistant_request_lease_seconds: int = 120
+    voice_enabled: bool = True
+    voice_model_dir: Path = VOICE_MODEL_DIR
+    voice_whisper_model: str = "small"
+    voice_whisper_device: str = "cpu"
+    voice_whisper_compute_type: str = "int8"
+    voice_language: str = "pt"
+    voice_piper_model_path: Path = VOICE_MODEL_DIR / "pt_BR-faber-medium.onnx"
+    voice_max_upload_bytes: int = 8 * 1024 * 1024
+    voice_min_duration_seconds: float = 0.25
+    voice_max_duration_seconds: float = 30.0
+    voice_transcription_timeout_seconds: float = 60.0
+    voice_synthesis_timeout_seconds: float = 30.0
+    voice_silence_ms: int = 1200
+    voice_idle_timeout_seconds: int = 120
 
 
 @lru_cache
