@@ -51,8 +51,10 @@ def _ensure_default_user() -> None:
 
 
 templates_dir = Path(__file__).resolve().parent / "templates_web"
+static_dir = Path(__file__).resolve().parent / "static"
 app.state.templates = Jinja2Templates(directory=str(templates_dir))
 
+app.mount("/assets", StaticFiles(directory=str(static_dir)), name="assets")
 app.mount("/output", StaticFiles(directory=str(settings.output_dir)), name="output")
 
 app.include_router(proposal_files.router)
