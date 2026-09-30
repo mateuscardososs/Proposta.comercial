@@ -127,6 +127,11 @@ class AssistantService:
             elif isinstance(command, TaskQueryCommand):
                 reply = self._query_tasks(conversation.id, command, current_date)
             elif isinstance(command, TaskCreateCommand):
+                command = self._ground_task_creation(
+                    conversation.id,
+                    clean_message,
+                    command,
+                )
                 reply = self._prepare_task(
                     conversation.id,
                     clean_request_id,
@@ -600,6 +605,52 @@ class AssistantService:
                 f"- #{task.id} {task.titulo} — {STATUS_LABELS.get(task.status, task.status)} — {deadline}{suffix}"
             )
         return AssistantReply(conversation_id=conversation_id, kind="text", message="\n".join(lines))
+
+    def _ground_task_creation(
+        self,
+        conversation_id: int,
+        source_message: str,
+        command: TaskCreateCommand,
+    ) -> TaskCreateCommand:
+        if command.due_date is None or self._message_mentions_date(source_message):
+            return command
+        clarification = (
+            self.db.query(AssistantAction)
+            .filter(
+                AssistantAction.conversation_id == conversation_id,
+                AssistantAction.action_type == "create_task",
+                AssistantAction.status == "needs_clarification",
+            )
+            .order_by(AssistantAction.id.desc())
+            .first()
+        )
+        preserved_due_date = None
+        if clarification is not None:
+            preserved_due_date = clarification.arguments_json.get("due_date")
+        return command.model_copy(update={"due_date": preserved_due_date})
+
+    @staticmethod
+    def _message_mentions_date(message: str) -> bool:
+        normalized = normalize_text(message)
+        relative_terms = (
+            "hoje",
+            "amanha",
+            "dia seguinte",
+            "esta semana",
+            "nesta semana",
+            "fim da semana",
+            "segunda",
+            "terca",
+            "quarta",
+            "quinta",
+            "sexta",
+            "sabado",
+            "domingo",
+            "sem prazo",
+        )
+        return any(term in normalized for term in relative_terms) or bool(
+            re.search(r"\b(?:em|daqui a)\s+\d{1,3}\s+dias?\b|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b\d{4}-\d{2}-\d{2}\b", normalized)
+        )
 
     @staticmethod
     def _conversation_reply(
