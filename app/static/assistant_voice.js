@@ -45,10 +45,17 @@ export class VoiceSessionController {
       this._beginListening(generation);
     } catch (_error) {
       if (generation !== this.generation) return;
+      const microphoneWasGranted = Boolean(this.stream);
+      this.capture?.cancel();
+      this.capture = null;
+      releaseStream(this.stream);
+      this.stream = null;
       this.active = false;
       this._setState("idle");
       this.options.onError?.(new Error(
-        "Nao foi possivel acessar o microfone. Verifique a permissao do navegador."
+        microphoneWasGranted
+          ? "O navegador permitiu o microfone, mas nao conseguiu gravar neste formato."
+          : "Nao foi possivel acessar o microfone. Verifique a permissao do navegador."
       ));
     }
   }
@@ -107,12 +114,12 @@ export class VoiceSessionController {
       const reply = await this.options.sendText(transcript.text);
       if (!this._isCurrent(generation)) return;
       this.lastReply = reply;
+      this.lastAudioBlob = null;
       this.options.onReply?.(reply);
       await this._requestSpeech(reply, generation);
     } catch (error) {
       if (!this._isCurrent(generation)) return;
-      this._setState("error");
-      this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
+      this._failSession(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -164,7 +171,11 @@ export class VoiceSessionController {
   }
 
   async repeatSpeech() {
-    if (!this.active || !this.lastAudioBlob || this.state === "listening") return;
+    if (!this.active || !this.lastAudioBlob) return;
+    if (this.capture) {
+      this.capture.cancel();
+      this.capture = null;
+    }
     this._startPlayback(this.lastAudioBlob, this.generation);
   }
 
@@ -183,6 +194,19 @@ export class VoiceSessionController {
     releaseStream(this.stream);
     this.stream = null;
     this._setState("idle");
+  }
+
+  _failSession(error) {
+    ++this.generation;
+    this.active = false;
+    this.capture?.cancel();
+    this.capture = null;
+    this.currentAudio?.stop();
+    this.currentAudio = null;
+    releaseStream(this.stream);
+    this.stream = null;
+    this._setState("error");
+    this.options.onError?.(error);
   }
 
   _clearListeningTimers() {
@@ -213,6 +237,13 @@ export function createBrowserCapture(stream, onLevel) {
   const samples = new Uint8Array(analyser.fftSize);
   source.connect(analyser);
   let animationFrame = 0;
+  let contextClosed = false;
+
+  function closeContext() {
+    if (contextClosed) return;
+    contextClosed = true;
+    Promise.resolve(context.close()).catch(() => {});
+  }
 
   recorder.addEventListener("dataavailable", (event) => {
     if (event.data?.size) chunks.push(event.data);
@@ -220,7 +251,7 @@ export function createBrowserCapture(stream, onLevel) {
   recorder.addEventListener("stop", () => {
     stopped = true;
     cancelAnimationFrame(animationFrame);
-    context.close();
+    closeContext();
     resolveStop(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" }));
   });
 
@@ -249,7 +280,7 @@ export function createBrowserCapture(stream, onLevel) {
       if (recorder.state !== "inactive") recorder.stop();
       stopped = true;
       cancelAnimationFrame(animationFrame);
-      context.close();
+      closeContext();
     },
   };
 }
@@ -280,7 +311,15 @@ export function createBrowserAudio(blob) {
   }, { once: true });
   return {
     async play() {
-      await element.play();
+      try {
+        await element.play();
+      } catch (error) {
+        if (!settled) {
+          settled = true;
+          URL.revokeObjectURL(url);
+        }
+        throw error;
+      }
       return playback;
     },
     stop() {
