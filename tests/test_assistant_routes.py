@@ -24,6 +24,13 @@ def test_assistant_page_uses_existing_shell_and_local_warning():
     assert "Somente neste computador" in response.text
     assert 'id="assistant-message"' in response.text
     assert 'id="assistant-send"' in response.text
+    assert 'id="voice-start"' in response.text
+    assert 'id="voice-finish"' in response.text
+    assert 'id="voice-stop"' in response.text
+    assert 'id="voice-repeat"' in response.text
+    assert 'id="voice-end"' in response.text
+    assert 'src="/assets/assistant_voice.js"' not in response.text
+    assert 'from "/assets/assistant_voice.js"' in response.text
     assert 'href="/web/assistente" class="active"' in response.text
 
 

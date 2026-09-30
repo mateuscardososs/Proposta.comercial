@@ -120,6 +120,38 @@
     padding: 14px;
   }
 
+  .assistant-voice {
+    border-top: 1px solid var(--line);
+    background: var(--surface-muted);
+    padding: 12px 14px;
+  }
+
+  .assistant-voice-head,
+  .assistant-voice-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .assistant-voice-head {
+    justify-content: space-between;
+    margin-bottom: 9px;
+  }
+
+  .assistant-voice-title {
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .assistant-voice-state {
+    color: var(--text-soft);
+    font-size: 12px;
+  }
+
+  .assistant-voice-state[data-state="listening"] { color: var(--brand); }
+  .assistant-voice-state[data-state="error"] { color: #8b202b; }
+
   .assistant-composer-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -171,7 +203,7 @@
     <h1 class="page-title">Assistente operacional</h1>
     <p class="page-subtitle">Consulte prazos e prepare tarefas em linguagem natural. Toda criacao pede confirmacao antes de entrar no quadro.</p>
     <div class="meta-line">
-      <span class="badge primary">Texto agora, voz depois</span>
+      <span class="badge primary">Texto e voz local</span>
       <span class="badge">Fuso America/Recife</span>
     </div>
   </section>
@@ -189,6 +221,20 @@
       </div>
     </div>
 
+    <div class="assistant-voice" id="assistant-voice" aria-label="Conversa por voz">
+      <div class="assistant-voice-head">
+        <span class="assistant-voice-title">Conversa por voz</span>
+        <span class="assistant-voice-state" id="voice-state" data-state="idle" role="status">Verificando componentes locais...</span>
+      </div>
+      <div class="assistant-voice-actions">
+        <button class="btn btn-primary" id="voice-start" type="button" disabled>Iniciar conversa</button>
+        <button class="btn btn-ghost" id="voice-finish" type="button" disabled>Encerrar fala</button>
+        <button class="btn btn-ghost" id="voice-stop" type="button" disabled>Interromper audio</button>
+        <button class="btn btn-ghost" id="voice-repeat" type="button" disabled>Repetir audio</button>
+        <button class="btn btn-ghost" id="voice-end" type="button" disabled>Encerrar conversa</button>
+      </div>
+    </div>
+
     <form class="assistant-composer" id="assistant-form">
       <div class="assistant-composer-row">
         <div class="field">
@@ -203,7 +249,9 @@
   </section>
 </div>
 
-<script>
+<script type="module">
+  import { VoiceSessionController, createBrowserAudio, createBrowserCapture } from "/assets/assistant_voice.js";
+
   (function () {
     const form = document.getElementById("assistant-form");
     const input = document.getElementById("assistant-message");
@@ -211,9 +259,17 @@
     const history = document.getElementById("assistant-history");
     const empty = document.getElementById("assistant-empty");
     const status = document.getElementById("assistant-status");
+    const voiceStart = document.getElementById("voice-start");
+    const voiceFinish = document.getElementById("voice-finish");
+    const voiceStop = document.getElementById("voice-stop");
+    const voiceRepeat = document.getElementById("voice-repeat");
+    const voiceEnd = document.getElementById("voice-end");
+    const voiceState = document.getElementById("voice-state");
     const initialConversation = new URLSearchParams(window.location.search).get("conversation_id");
     let conversationId = initialConversation ? Number(initialConversation) : null;
     let busy = false;
+    let voiceController = null;
+    let voiceReady = false;
 
     function requestId() {
       if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
@@ -287,6 +343,29 @@
       return payload;
     }
 
+    async function sendMessage(message) {
+      if (busy) throw new Error("O assistente ainda esta processando a solicitacao anterior.");
+      const id = requestId();
+      appendMessage("user", message, "text", {});
+      setBusy(true, "Consultando o assistente local...");
+      try {
+        const response = await fetch("/api/assistant/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, request_id: id, conversation_id: conversationId }),
+        });
+        const payload = await responseJson(response);
+        updateConversation(payload.conversation_id);
+        appendMessage("assistant", payload.message, payload.kind, payload);
+        return payload;
+      } catch (error) {
+        appendMessage("assistant", error.message, "error", {});
+        throw error;
+      } finally {
+        setBusy(false, "");
+      }
+    }
+
     async function runAction(actionId, confirmationToken, action, controls) {
       if (busy) return;
       controls.querySelectorAll("button").forEach((button) => { button.disabled = true; });
@@ -327,23 +406,12 @@
       if (busy) return;
       const message = input.value.trim();
       if (!message) return;
-      const id = requestId();
-      appendMessage("user", message, "text", {});
       input.value = "";
-      setBusy(true, "Consultando o assistente local...");
       try {
-        const response = await fetch("/api/assistant/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, request_id: id, conversation_id: conversationId }),
-        });
-        const payload = await responseJson(response);
-        updateConversation(payload.conversation_id);
-        appendMessage("assistant", payload.message, payload.kind, payload);
-      } catch (error) {
-        appendMessage("assistant", error.message, "error", {});
+        await sendMessage(message);
+      } catch (_error) {
+        // sendMessage already renders the user-safe error.
       } finally {
-        setBusy(false, "");
         input.focus();
       }
     });
@@ -355,7 +423,100 @@
       }
     });
 
+    const voiceLabels = {
+      idle: "Conversa encerrada.",
+      requesting: "Solicitando acesso ao microfone...",
+      listening: "Ouvindo. Fale naturalmente; o silencio encerra a fala.",
+      transcribing: "Transcrevendo localmente...",
+      processing: "Consultando o assistente local...",
+      speaking: "Reproduzindo a resposta...",
+      error: "A voz encontrou um problema. O texto continua disponivel.",
+    };
+
+    function renderVoiceState(state) {
+      const active = voiceController?.active || false;
+      voiceState.dataset.state = state;
+      voiceState.textContent = voiceLabels[state] || state;
+      voiceStart.disabled = !voiceReady || active;
+      voiceFinish.disabled = state !== "listening";
+      voiceStop.disabled = state !== "speaking";
+      voiceRepeat.disabled = !active || (!voiceController?.lastAudioBlob && !voiceController?.lastReply);
+      voiceEnd.disabled = !active;
+    }
+
+    async function transcribe(blob) {
+      const body = new FormData();
+      body.append("audio", blob, "fala.webm");
+      const response = await fetch("/api/assistant/voice/transcriptions", { method: "POST", body });
+      return responseJson(response);
+    }
+
+    async function synthesize(reply) {
+      const response = await fetch("/api/assistant/voice/speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: reply.message, kind: reply.kind }),
+      });
+      if (!response.ok) {
+        let detail = "Nao foi possivel gerar o audio local.";
+        try { detail = (await response.json()).detail || detail; } catch (_error) {}
+        throw new Error(detail);
+      }
+      return response.blob();
+    }
+
+    async function configureVoice() {
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder || !(window.AudioContext || window.webkitAudioContext)) {
+        voiceState.textContent = "Este navegador nao oferece os recursos locais de audio necessarios.";
+        voiceState.dataset.state = "error";
+        return;
+      }
+      try {
+        const response = await fetch("/api/assistant/voice/status");
+        const configuration = await responseJson(response);
+        voiceReady = configuration.enabled && configuration.transcription_available && configuration.synthesis_available;
+        voiceController = new VoiceSessionController({
+          getStream: () => navigator.mediaDevices.getUserMedia({ audio: true }),
+          captureFactory: createBrowserCapture,
+          transcribe,
+          sendText,
+          synthesize,
+          audioFactory: createBrowserAudio,
+          silenceMs: configuration.silence_ms,
+          maxUtteranceMs: configuration.max_duration_seconds * 1000,
+          idleTimeoutMs: configuration.idle_timeout_seconds * 1000,
+          onState: renderVoiceState,
+          onError: (error) => {
+            renderVoiceState("error");
+            voiceState.textContent = error.message;
+            voiceState.dataset.state = "error";
+          },
+        });
+        if (voiceReady) {
+          voiceState.textContent = "Pronto para uma conversa local por voz.";
+          voiceStart.disabled = false;
+        } else {
+          voiceState.textContent = configuration.message;
+          voiceState.dataset.state = "error";
+        }
+      } catch (error) {
+        voiceState.textContent = error.message;
+        voiceState.dataset.state = "error";
+      }
+    }
+
+    voiceStart.addEventListener("click", () => voiceController?.start());
+    voiceFinish.addEventListener("click", () => voiceController?.finishUtterance());
+    voiceStop.addEventListener("click", () => voiceController?.stopPlayback());
+    voiceRepeat.addEventListener("click", () => {
+      if (voiceController?.lastAudioBlob) voiceController.repeatSpeech();
+      else voiceController?.retrySpeech();
+    });
+    voiceEnd.addEventListener("click", () => voiceController?.stop());
+    window.addEventListener("pagehide", () => voiceController?.stop());
+
     loadHistory();
+    configureVoice();
   })();
 </script>
 {% endblock %}
