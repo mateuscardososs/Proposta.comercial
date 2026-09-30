@@ -7,7 +7,11 @@ import wave
 
 from fastapi.testclient import TestClient
 
-from app.assistant.voice.provider import SynthesizedAudio, TranscriptionResult
+from app.assistant.voice.provider import (
+    SynthesizedAudio,
+    TranscriptionResult,
+    VoiceUnavailableError,
+)
 from app.main import app
 
 
@@ -104,6 +108,64 @@ def test_transcription_route_rejects_invalid_audio_before_model():
     assert response.status_code == 422
     assert transcriber.calls == 0
     assert "audio valido" in response.json()["detail"]
+
+
+def test_transcription_route_rejects_oversized_upload_before_model():
+    from app.routers.assistant import get_voice_transcriber
+
+    transcriber = FakeTranscriber()
+    app.dependency_overrides[get_voice_transcriber] = lambda: transcriber
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/assistant/voice/transcriptions",
+                files={"audio": ("large.wav", b"0" * (8 * 1024 * 1024 + 1), "audio/wav")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 413
+    assert transcriber.calls == 0
+
+
+def test_transcription_route_removes_raw_temporary_audio(tmp_path, monkeypatch):
+    import app.routers.assistant as assistant_router
+
+    transcriber = FakeTranscriber()
+    monkeypatch.setattr(assistant_router.tempfile, "tempdir", str(tmp_path))
+    app.dependency_overrides[assistant_router.get_voice_transcriber] = lambda: transcriber
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/assistant/voice/transcriptions",
+                files={"audio": ("speech.wav", _wav_bytes(), "audio/wav")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_transcription_route_reports_local_model_failure():
+    from app.routers.assistant import get_voice_transcriber
+
+    class FailingTranscriber:
+        def transcribe(self, _path):
+            raise VoiceUnavailableError("O modelo local de transcricao falhou.")
+
+    app.dependency_overrides[get_voice_transcriber] = FailingTranscriber
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/assistant/voice/transcriptions",
+                files={"audio": ("speech.wav", _wav_bytes(), "audio/wav")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert "modelo local" in response.json()["detail"]
 
 
 def test_speech_route_returns_wav_without_interpreting_again():

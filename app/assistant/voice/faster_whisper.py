@@ -21,6 +21,7 @@ class FasterWhisperTranscriber:
         device: str,
         compute_type: str,
         language: str,
+        initial_prompt: str = "",
         model_loader: ModelLoader | None = None,
     ) -> None:
         self.model_name = model_name
@@ -28,6 +29,7 @@ class FasterWhisperTranscriber:
         self.device = device
         self.compute_type = compute_type
         self.language = language
+        self.initial_prompt = initial_prompt.strip()
         self.model_loader = model_loader or _load_whisper_model
         self._model: Any | None = None
         self._lock = threading.Lock()
@@ -44,6 +46,7 @@ class FasterWhisperTranscriber:
                     vad_filter=True,
                     vad_parameters={"min_silence_duration_ms": 500},
                     condition_on_previous_text=False,
+                    initial_prompt=self.initial_prompt or None,
                 )
                 segments = list(segments_iterator)
             except VoiceUnavailableError:
@@ -110,4 +113,5 @@ def _load_whisper_model(
         device=device,
         compute_type=compute_type,
         download_root=str(cache_dir),
+        local_files_only=True,
     )

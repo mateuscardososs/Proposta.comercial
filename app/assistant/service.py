@@ -102,7 +102,8 @@ class AssistantService:
 
         current_date = self._local_now().date()
         try:
-            command = self._direct_control_command(clean_message)
+            direct_control = self._direct_control_command(clean_message)
+            command = direct_control
             if command is None:
                 if self.provider is None:
                     raise ProviderUnavailableError("Provedor nao configurado.")
@@ -111,7 +112,18 @@ class AssistantService:
                     today=current_date,
                     timezone=self.timezone_name,
                 )
-            if isinstance(command, TaskQueryCommand):
+            if direct_control is None and isinstance(
+                command, (ConfirmActionCommand, CancelActionCommand)
+            ):
+                reply = AssistantReply(
+                    conversation_id=conversation.id,
+                    kind="clarification",
+                    message=(
+                        "Nao entendi essa confirmacao com seguranca. "
+                        "Diga 'Pode criar' para confirmar ou 'Cancela' para cancelar."
+                    ),
+                )
+            elif isinstance(command, TaskQueryCommand):
                 reply = self._query_tasks(conversation.id, command, current_date)
             elif isinstance(command, TaskCreateCommand):
                 reply = self._prepare_task(

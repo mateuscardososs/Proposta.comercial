@@ -49,7 +49,12 @@ class Settings(BaseSettings):
     voice_whisper_device: str = "cpu"
     voice_whisper_compute_type: str = "int8"
     voice_language: str = "pt"
+    voice_whisper_initial_prompt: str = (
+        "Crie uma tarefa. Pode criar. Sim, confirmo. Nao, cancela."
+    )
     voice_piper_model_path: Path = VOICE_MODEL_DIR / "pt_BR-faber-medium.onnx"
+    voice_piper_noise_scale: float | None = None
+    voice_piper_noise_w_scale: float | None = None
     voice_max_upload_bytes: int = 8 * 1024 * 1024
     voice_min_duration_seconds: float = 0.25
     voice_max_duration_seconds: float = 30.0

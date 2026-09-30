@@ -1,6 +1,6 @@
 # Assistente operacional local — arquitetura e plano de implementacao
 
-> **Status:** primeira entrega aprovada e implementada na branch local `docs/assistente-local-plano` em 2026-09-30. Este documento permanece como registro das decisoes e dos limites da entrega.
+> **Status:** texto e opcao 1 de voz local implementados na branch local `docs/assistente-local-plano` em 2026-09-30. O desenho detalhado da voz esta em `docs/superpowers/specs/2026-09-30-assistente-voz-local-design.md` e a evidencia em `docs/assistente/validacao-voz-local.md`.
 
 **Objetivo:** criar, primeiro, uma conversa por texto com IA local capaz de consultar prioridades e criar tarefas reais no quadro; depois reutilizar o mesmo nucleo para entrada e saida por voz.
 
@@ -330,7 +330,7 @@ O registro de acao e uma tabela nova. Como o projeto nao usa migracoes, `create_
 
 **Saida verificavel:** relatorio de acuracia e latencia no equipamento de destino, com modelo e quantizacao fixados.
 
-### Etapa 6 — base para voz, somente depois do texto aceito
+### Etapa 6 — voz local opcional — implementada
 
 - Manter a API interna recebendo texto; STT sera apenas outro produtor de texto.
 - Manter a resposta textual; TTS sera apenas outro consumidor dessa resposta.
@@ -338,6 +338,14 @@ O registro de acao e uma tabela nova. Como o projeto nao usa migracoes, `create_
 - Adicionar botao de gravar, cancelamento, estado visual e confirmacao falada/visual sem mudar as regras de tarefa.
 
 **Saida verificavel:** ativar ou desativar audio nao muda interpretador, regras nem persistencia.
+
+Implementacao entregue: captura via `MediaRecorder`, VAD local no navegador,
+faster-whisper e Piper atras de protocolos, executor limitado fora do event loop,
+validacao de container/tamanho/duracao, politica especial para comandos curtos,
+reproducao interrompivel e protecao contra retomada depois de encerrar. A transcricao
+usa o mesmo endpoint textual e o mesmo `AssistantService`; nao existe segundo caminho
+de criacao. Teste humano no navegador e teste de desempenho no Ryzen permanecem como
+criterios de aceite operacional, nao como mudanca de arquitetura.
 
 ## 11. Criterios de aceitacao da primeira entrega
 

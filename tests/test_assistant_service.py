@@ -351,6 +351,28 @@ def test_text_confirmation_creates_once_and_repeated_confirmation_reconciles(db)
     assert len(provider.calls) == 1
 
 
+def test_model_cannot_turn_unrecognized_text_into_confirmation(db):
+    provider = QueueProvider(
+        TaskCreateCommand(title="Preparar relatorio"),
+        ConfirmActionCommand(),
+    )
+    service = AssistantService(db, provider, now=_now)
+    preview = service.handle_message(
+        message="Crie a tarefa preparar relatorio",
+        request_id="guard-preview",
+    )
+
+    reply = service.handle_message(
+        message="Ojectiva",
+        request_id="guard-ambiguous-audio",
+        conversation_id=preview.conversation_id,
+    )
+
+    assert reply.kind == "clarification"
+    assert "Pode criar" in reply.message
+    assert db.query(Task).count() == 0
+
+
 def test_text_cancellation_cancels_pending_draft_without_creating_task(db):
     provider = QueueProvider(TaskCreateCommand(title="Ligar para Beta"))
     service = AssistantService(db, provider, now=_now)

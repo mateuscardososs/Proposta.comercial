@@ -2,9 +2,26 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from io import BytesIO
 import wave
 
 import pytest
+
+
+def test_installed_faster_whisper_can_decode_valid_wav(tmp_path):
+    pytest.importorskip("faster_whisper")
+    from faster_whisper.audio import decode_audio
+
+    audio_path = tmp_path / "compatibility.wav"
+    with wave.open(str(audio_path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16000)
+        output.writeframes(b"\x00\x00" * 8000)
+
+    samples = decode_audio(str(audio_path))
+
+    assert samples.shape == (8000,)
 
 
 class FakeWhisperModel:
@@ -17,6 +34,9 @@ class FakeWhisperModel:
         assert options["language"] == "pt"
         assert options["beam_size"] == 1
         assert options["vad_filter"] is True
+        assert options["initial_prompt"] == (
+            "Crie uma tarefa. Pode criar. Sim, confirmo. Nao, cancela."
+        )
         segments = [
             SimpleNamespace(text=" Pode", no_speech_prob=0.05, avg_logprob=-0.2),
             SimpleNamespace(text=" criar.", no_speech_prob=0.15, avg_logprob=-0.4),
@@ -41,6 +61,7 @@ def test_faster_whisper_loads_once_and_returns_evidence(tmp_path):
         device="cpu",
         compute_type="int8",
         language="pt",
+        initial_prompt="Crie uma tarefa. Pode criar. Sim, confirmo. Nao, cancela.",
         model_loader=loader,
     )
     audio_path = tmp_path / "speech.wav"
@@ -61,8 +82,9 @@ def test_faster_whisper_loads_once_and_returns_evidence(tmp_path):
 
 
 class FakePiperVoice:
-    def synthesize_wav(self, text, wav_file):
+    def synthesize_wav(self, text, wav_file, syn_config=None):
         assert text == "Tarefa criada com sucesso."
+        assert syn_config == {"noise_scale": 0.0, "noise_w_scale": 0.0}
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(22050)
@@ -82,7 +104,13 @@ def test_piper_loads_once_and_returns_wav(tmp_path):
         loads.append((path, config_path))
         return FakePiperVoice()
 
-    synthesizer = PiperSpeechSynthesizer(model_path=model_path, voice_loader=loader)
+    synthesizer = PiperSpeechSynthesizer(
+        model_path=model_path,
+        voice_loader=loader,
+        noise_scale=0.0,
+        noise_w_scale=0.0,
+        synthesis_config_factory=lambda **options: options,
+    )
 
     first = synthesizer.synthesize("Tarefa criada com sucesso.")
     second = synthesizer.synthesize("Tarefa criada com sucesso.")

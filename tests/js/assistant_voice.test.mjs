@@ -63,6 +63,15 @@ test("permission failure returns to idle with a useful error", async () => {
 });
 
 
+test("recorder startup failure releases the granted microphone", async () => {
+  const sample = harness({ captureFactory: () => { throw new Error("unsupported"); } });
+  await sample.controller.start();
+  assert.equal(sample.controller.active, false);
+  assert.equal(sample.tracks[0].stopped, 1);
+  assert.match(sample.errors.at(-1), /gravar/i);
+});
+
+
 test("silence after speech automatically finishes the utterance", async () => {
   const sample = harness();
   await sample.controller.start();
@@ -104,6 +113,16 @@ test("ending a session releases tracks and ignores late transcription", async ()
 });
 
 
+test("transcription failure releases the microphone and permits a fresh session", async () => {
+  const sample = harness({ transcribe: async () => { throw new Error("stt offline"); } });
+  await sample.controller.start();
+  await sample.controller.finishUtterance();
+  assert.equal(sample.controller.active, false);
+  assert.equal(sample.tracks[0].stopped, 1);
+  assert.equal(sample.controller.state, "error");
+});
+
+
 test("speech retry does not resend the assistant request", async () => {
   let sends = 0;
   let speechCalls = 0;
@@ -115,10 +134,29 @@ test("speech retry does not resend the assistant request", async () => {
       return new Blob(["wav"]);
     },
   });
+  sample.controller.lastAudioBlob = new Blob(["old-response"]);
   await sample.controller.start();
   await sample.controller.finishUtterance();
+  assert.equal(sample.controller.lastAudioBlob, null, "old audio must not mask a failed new reply");
   await sample.controller.retrySpeech();
   assert.equal(sends, 1);
   assert.equal(speechCalls, 2);
+  sample.controller.stop();
+});
+
+
+test("repeating audio suspends a newly resumed capture", async () => {
+  const sample = harness();
+  await sample.controller.start();
+  await sample.controller.finishUtterance();
+  sample.audios[0].stop();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(sample.controller.state, "listening");
+
+  await sample.controller.repeatSpeech();
+
+  assert.equal(sample.captures[1].cancelled, true);
+  assert.equal(sample.audios.length, 2);
   sample.controller.stop();
 });

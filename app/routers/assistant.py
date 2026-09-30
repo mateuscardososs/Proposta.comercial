@@ -66,12 +66,18 @@ def _configured_voice_transcriber() -> AudioTranscriber:
         device=settings.voice_whisper_device,
         compute_type=settings.voice_whisper_compute_type,
         language=settings.voice_language,
+        initial_prompt=settings.voice_whisper_initial_prompt,
     )
 
 
 @lru_cache
 def _configured_voice_synthesizer() -> SpeechSynthesizer:
-    return PiperSpeechSynthesizer(model_path=get_settings().voice_piper_model_path)
+    settings = get_settings()
+    return PiperSpeechSynthesizer(
+        model_path=settings.voice_piper_model_path,
+        noise_scale=settings.voice_piper_noise_scale,
+        noise_w_scale=settings.voice_piper_noise_w_scale,
+    )
 
 
 def get_voice_transcriber() -> AudioTranscriber:

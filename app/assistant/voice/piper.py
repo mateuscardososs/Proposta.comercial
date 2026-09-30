@@ -12,6 +12,7 @@ from app.assistant.voice.provider import SynthesizedAudio, VoiceUnavailableError
 
 
 VoiceLoader = Callable[[Path, Path], Any]
+SynthesisConfigFactory = Callable[..., Any]
 
 
 class PiperSpeechSynthesizer:
@@ -20,10 +21,16 @@ class PiperSpeechSynthesizer:
         *,
         model_path: Path,
         voice_loader: VoiceLoader | None = None,
+        noise_scale: float | None = None,
+        noise_w_scale: float | None = None,
+        synthesis_config_factory: SynthesisConfigFactory | None = None,
     ) -> None:
         self.model_path = model_path
         self.config_path = Path(f"{model_path}.json")
         self.voice_loader = voice_loader or _load_piper_voice
+        self.noise_scale = noise_scale
+        self.noise_w_scale = noise_w_scale
+        self.synthesis_config_factory = synthesis_config_factory or _load_synthesis_config
         self._voice: Any | None = None
         self._lock = threading.Lock()
 
@@ -37,7 +44,13 @@ class PiperSpeechSynthesizer:
             buffer = BytesIO()
             try:
                 with wave.open(buffer, "wb") as wav_file:
-                    voice.synthesize_wav(clean_text, wav_file)
+                    synthesis_config = None
+                    if self.noise_scale is not None or self.noise_w_scale is not None:
+                        synthesis_config = self.synthesis_config_factory(
+                            noise_scale=self.noise_scale,
+                            noise_w_scale=self.noise_w_scale,
+                        )
+                    voice.synthesize_wav(clean_text, wav_file, syn_config=synthesis_config)
             except Exception as exc:
                 raise VoiceUnavailableError(
                     "A sintese de voz local falhou."
@@ -71,3 +84,13 @@ def _load_piper_voice(model_path: Path, config_path: Path) -> Any:
             "Instale as dependencias opcionais de voz para usar a sintese."
         ) from exc
     return PiperVoice.load(str(model_path), config_path=str(config_path), use_cuda=False)
+
+
+def _load_synthesis_config(**options: float | None) -> Any:
+    try:
+        from piper import SynthesisConfig
+    except ImportError as exc:
+        raise VoiceUnavailableError(
+            "Instale as dependencias opcionais de voz para usar a sintese."
+        ) from exc
+    return SynthesisConfig(**options)
