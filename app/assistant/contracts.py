@@ -67,6 +67,19 @@ class UnsupportedCommand(BaseModel):
     )
 
 
+class ConversationCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["responder_conversa"] = "responder_conversa"
+    message: str = Field(
+        min_length=1,
+        max_length=800,
+        description=(
+            "Resposta natural em portugues, sem alegar consultas ou alteracoes que nao ocorreram."
+        ),
+    )
+
+
 class ConfirmActionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -122,6 +135,7 @@ AssistantCommand = Annotated[
     TaskQueryCommand
     | TaskCreateCommand
     | UnsupportedCommand
+    | ConversationCommand
     | ConfirmActionCommand
     | CancelActionCommand
     | TaskDraftCorrectionCommand,

@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.assistant.contracts import (
     CancelActionCommand,
+    ConversationCommand,
     ConfirmActionCommand,
     TaskDraftCorrectionCommand,
     assistant_command_adapter,
@@ -42,3 +43,20 @@ def test_commands_reject_unexpected_fields():
 def test_task_draft_correction_requires_an_explicit_change():
     with pytest.raises(ValidationError):
         TaskDraftCorrectionCommand()
+
+
+def test_conversation_command_accepts_a_natural_validated_reply():
+    command = assistant_command_adapter.validate_python(
+        {
+            "tool": "responder_conversa",
+            "message": "Boa tarde! Posso consultar e criar tarefas no quadro.",
+        }
+    )
+
+    assert isinstance(command, ConversationCommand)
+
+
+@pytest.mark.parametrize("message", ["", "x" * 801])
+def test_conversation_command_rejects_empty_or_excessive_replies(message):
+    with pytest.raises(ValidationError):
+        ConversationCommand(message=message)
