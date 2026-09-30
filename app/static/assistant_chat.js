@@ -83,6 +83,22 @@ export async function responseJson(response) {
 }
 
 
+export async function fetchWithTimeout(fetchImpl, url, options = {}, timeoutMs = 95000) {
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...options, signal: abortController.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("A operação demorou demais. Tente novamente.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
 export function bootstrapAssistantChat(root = document) {
   const form = root.getElementById("assistant-form");
   if (!form) return null;
@@ -169,20 +185,21 @@ export function bootstrapAssistantChat(root = document) {
   async function runAction(details, action, controls) {
     if (controller.busy) return;
     controls.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    controller._setBusy(true);
     setBusy(true, action === "confirm" ? "Salvando a tarefa..." : "Cancelando...");
     try {
-      const response = await window.fetch(`/api/assistant/actions/${details.action_id}/${action}`, {
+      const response = await fetchWithTimeout(window.fetch.bind(window), `/api/assistant/actions/${details.action_id}/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirmation_token: details.confirmation_token }),
-      });
+      }, 95000);
       const payload = await responseJson(response);
       appendMessage("assistant", payload.message, payload.kind, payload);
     } catch (error) {
       appendMessage("assistant", error.message, "error");
       controls.querySelectorAll("button").forEach((button) => { button.disabled = false; });
     } finally {
-      setBusy(false);
+      controller._setBusy(false);
       input.focus();
     }
   }
@@ -191,7 +208,12 @@ export function bootstrapAssistantChat(root = document) {
     if (!conversationId) return;
     setBusy(true, "Carregando conversa...");
     try {
-      const response = await window.fetch(`/api/assistant/conversations/${conversationId}`);
+      const response = await fetchWithTimeout(
+        window.fetch.bind(window),
+        `/api/assistant/conversations/${conversationId}`,
+        {},
+        30000,
+      );
       const payload = await responseJson(response);
       for (const message of payload.messages || []) {
         appendMessage(message.role, message.content, message.kind, message.details);

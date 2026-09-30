@@ -88,7 +88,7 @@ Essas medidas descrevem apenas este Mac. Nenhuma velocidade foi estimada para o 
 
 ## Erros encontrados e correcoes
 
-1. A primeira abordagem com schema JSON unico confundiu consultas com criacao. O provedor passou a usar chamadas de ferramentas do Ollama com apenas seis ferramentas permitidas.
+1. A primeira abordagem com schema JSON unico confundiu consultas com criacao. O provedor passou a usar chamadas de ferramentas do Ollama com uma lista explicita de ferramentas permitidas; a correcao conversacional posterior acrescentou `responder_conversa`.
 2. O modelo calculava algumas datas relativas incorretamente. O contrato agora manda preservar a expressao falada e o backend resolve a data em `America/Recife`.
 3. O modelo pequeno ocasionalmente respondia em texto em vez de chamar uma ferramenta. Foi adicionado um unico pedido de reparo; recusas textuais so sao aceitas para `fora_do_escopo`, com JSON analisado e validado pelo mesmo contrato Pydantic.
 4. Confirmacao e cancelamento explicitos passaram a ser comandos de controle deterministas. Isso reduz latencia, permite repeticao segura e prepara o mesmo fluxo para voz.
@@ -99,5 +99,5 @@ Essas medidas descrevem apenas este Mac. Nenhuma velocidade foi estimada para o 
 - Medir qualidade e latencia no Windows com Ryzen 7 3700U e 20--24 GB de RAM; o teste continua pendente.
 - Validar a conectividade `host.docker.internal` com o Ollama nativo no Docker Desktop da maquina de destino. O backend nativo ja foi validado.
 - A aplicacao ainda nao possui autenticacao efetiva. Permanecer restrita a `127.0.0.1`; publicacao ou bind em rede esta bloqueado.
-- Microfone e sintese de voz nao fazem parte desta etapa.
+- A validacao humana de microfone e sintese no navegador esta registrada como pendente em `validacao-conversa-local.md`.
 - Registro de atendimento, alteracao de tarefas existentes, documentos, financeiro e exclusao continuam fora do escopo.

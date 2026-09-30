@@ -37,6 +37,7 @@ TASK_STATUS_TERMS = (
     "aguardando cliente",
     "concluido",
 )
+CONTEXT_CHARACTER_BUDGET = 5000
 
 TOOL_DEFINITIONS = (
     (
@@ -267,7 +268,14 @@ class OllamaProvider:
         )
         if not messages:
             raise ProviderResponseError("Nao ha mensagem do usuario para interpretar.")
-        recent_context = [item.model_dump() for item in messages[:-1]]
+        recent_context: list[dict[str, str]] = []
+        remaining_context = CONTEXT_CHARACTER_BUDGET
+        for item in reversed(messages[:-1]):
+            if remaining_context <= 0:
+                break
+            content = item.content[-remaining_context:]
+            recent_context.insert(0, {"role": item.role, "content": content})
+            remaining_context -= len(content)
         latest_assistant = next(
             (item.content for item in reversed(messages[:-1]) if item.role == "assistant"),
             "",
