@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.assistant.contracts import (
+    ConversationCommand,
     TaskCreateCommand,
     TaskQueryCommand,
     UnsupportedCommand,
@@ -209,6 +210,7 @@ def test_ollama_accepts_one_validated_single_tool_call():
         "confirmar_acao",
         "cancelar_acao",
         "fora_do_escopo",
+        "responder_conversa",
     }
 
 
@@ -297,3 +299,54 @@ def test_ollama_accepts_only_a_validated_textual_out_of_scope_refusal():
 
     assert isinstance(command, UnsupportedCommand)
     assert "nada foi alterado" in command.message
+
+
+def test_ollama_accepts_a_structured_natural_conversation_reply():
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "responder_conversa",
+                                "arguments": {
+                                    "message": "Boa tarde! Como posso ajudar com o seu quadro?"
+                                },
+                            }
+                        }
+                    ],
+                }
+            },
+        )
+
+    provider = OllamaProvider(
+        base_url="http://127.0.0.1:11434",
+        model="modelo-local",
+        connect_timeout=1,
+        read_timeout=30,
+        transport=httpx.MockTransport(handler),
+    )
+
+    command = provider.interpret(
+        [ProviderMessage(role="user", content="Oi, boa tarde.")],
+        today=date(2026, 9, 30),
+        timezone="America/Recife",
+    )
+
+    assert isinstance(command, ConversationCommand)
+    assert command.message.startswith("Boa tarde")
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert "responder_conversa" in {
+        tool["function"]["name"] for tool in payload["tools"]
+    }
+    system_prompt = payload["messages"][0]["content"]
+    assert "nao pode afirmar" in system_prompt.lower()
+    assert "consulta real" in system_prompt.lower()

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from app.assistant.contracts import (
     AssistantCommand,
     CancelActionCommand,
+    ConversationCommand,
     ConfirmActionCommand,
     TaskCreateCommand,
     TaskDraftCorrectionCommand,
@@ -29,6 +30,14 @@ LOCAL_OLLAMA_HOSTS = {"127.0.0.1", "localhost", "::1", "host.docker.internal"}
 OLLAMA_INFERENCE_LOCK = threading.BoundedSemaphore(value=1)
 
 TOOL_DEFINITIONS = (
+    (
+        "responder_conversa",
+        (
+            "Responder naturalmente a saudacoes, identidade, capacidades, orientacao geral "
+            "ou perguntas sobre a conversa, sem afirmar fatos do quadro ou acoes nao executadas."
+        ),
+        ConversationCommand,
+    ),
     ("consultar_tarefas", "Consultar tarefas reais usando filtros opcionais.", TaskQueryCommand),
     ("criar_tarefa", "Preparar uma nova tarefa para confirmacao; nao salva ainda.", TaskCreateCommand),
     (
@@ -132,10 +141,17 @@ class OllamaProvider:
             role="system",
             content=(
                 "Voce interpreta pedidos operacionais em portugues. "
-                "Use somente uma destas ferramentas: consultar_tarefas, criar_tarefa, "
+                "Use somente uma destas ferramentas: responder_conversa, consultar_tarefas, criar_tarefa, "
                 "corrigir_tarefa, confirmar_acao, cancelar_acao ou fora_do_escopo. "
+                "Use responder_conversa para saudacoes, identidade, capacidades, ajuda geral e perguntas "
+                "sobre respostas anteriores. A mensagem deve ser natural, util e baseada no historico. "
+                "responder_conversa nao pode afirmar que consultou, criou, alterou ou executou algo, nem "
+                "pode informar tarefas, quantidades, prazos, clientes ou responsaveis; esses fatos exigem "
+                "uma consulta real com consultar_tarefas. "
                 "Use consultar_tarefas quando a pessoa pergunta, lista, procura ou verifica tarefas, "
-                "prazos, atrasos, hoje ou esta semana; uma pergunta nunca cria tarefa. "
+                "prazos, atrasos, hoje ou esta semana; uma pergunta nunca cria tarefa. Se o pedido combina "
+                "uma consulta ao quadro com uma explicacao ou orientacao, use consultar_tarefas; o backend "
+                "formulara uma resposta util a partir do resultado real. "
                 "Use criar_tarefa apenas quando a pessoa pede para criar, colocar, agendar, lembrar ou "
                 "registrar uma nova tarefa. Cliente, responsavel e prazo sao opcionais. "
                 "Voce DEVE chamar exatamente uma ferramenta e nunca responder somente em texto. "
@@ -152,6 +168,9 @@ class OllamaProvider:
                 "depois de amanha continua 'depois de amanha' e esta semana continua 'esta semana'; "
                 "o backend resolvera o calendario. "
                 "Exemplos: 'Quais tarefas e prazos eu tenho?' => consultar_tarefas; "
+                "'Oi, boa tarde' => responder_conversa com uma saudacao breve; "
+                "'Quem e voce?' => responder_conversa explicando as capacidades reais; "
+                "'O que voce quis dizer?' => responder_conversa usando o historico; "
                 "'Tem alguma tarefa atrasada?' => consultar_tarefas com overdue_only=true; "
                 "'O que ficou para esta semana?' => consultar_tarefas com due_before='esta semana'; "
                 "'Coloque para amanha preparar o relatorio' => criar_tarefa com due_date='amanha'; "
