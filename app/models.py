@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -171,6 +171,73 @@ class Task(Base, TimestampMixin):
     client: Mapped[Client | None] = relationship(back_populates="tasks")
     proposal: Mapped[Proposal | None] = relationship(back_populates="tasks")
     user: Mapped[User | None] = relationship(back_populates="tasks")
+
+
+class AssistantConversation(Base, TimestampMixin):
+    __tablename__ = "assistant_conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+
+    messages: Mapped[list["AssistantMessage"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="AssistantMessage.id",
+    )
+    actions: Mapped[list["AssistantAction"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="AssistantAction.id",
+    )
+
+
+class AssistantMessage(Base):
+    __tablename__ = "assistant_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), default="text", nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    request_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    reply_to_request_id: Mapped[str | None] = mapped_column(
+        String(100),
+        unique=True,
+        nullable=True,
+    )
+    details_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    conversation: Mapped[AssistantConversation] = relationship(back_populates="messages")
+
+
+class AssistantAction(Base, TimestampMixin):
+    __tablename__ = "assistant_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    request_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    confirmation_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    action_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    arguments_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    result_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
+
+    conversation: Mapped[AssistantConversation] = relationship(back_populates="actions")
+    task: Mapped[Task | None] = relationship()
 
 
 class Lancamento(Base, TimestampMixin):

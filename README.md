@@ -210,3 +210,22 @@ Estrategias previstas:
 - importacao manual assistida
 - importacao via CSV
 - parsing de DOCX legado
+
+## Assistente operacional local
+
+A pagina `/web/assistente` permite consultar tarefas e preparar a criacao de cards por texto. A interpretacao usa um Ollama local; consultas e gravacoes continuam sendo executadas e validadas pela aplicacao.
+
+Configuracao minima no Mac/Linux:
+
+```bash
+export OLLAMA_BASE_URL=http://127.0.0.1:11434
+export OLLAMA_MODEL='<modelo-local-instalado>'
+export OLLAMA_CONNECT_TIMEOUT=3
+export OLLAMA_READ_TIMEOUT=60
+export ASSISTANT_TIMEZONE=America/Recife
+python run.py
+```
+
+O nome do modelo nao possui padrao deliberadamente. Consulte o tamanho e os requisitos do modelo antes de fazer download e qualifique a escolha no Windows de destino, que nao deve depender de GPU dedicada.
+
+No Docker Compose, a aplicacao usa `http://host.docker.internal:11434` para alcancar o Ollama nativo do host. A porta web e publicada apenas em `127.0.0.1`, pois o sistema ainda nao possui autenticacao efetiva. Veja instrucoes completas em `docs/assistente/execucao.md`.

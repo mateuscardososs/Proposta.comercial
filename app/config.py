@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_reload: bool = True
     default_km_value: float = 2.95
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = ""
+    ollama_connect_timeout: float = 3.0
+    ollama_read_timeout: float = 60.0
+    assistant_timezone: str = "America/Recife"
+    assistant_context_messages: int = 12
 
 
 @lru_cache

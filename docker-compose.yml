@@ -33,11 +33,17 @@ services:
       APP_RELOAD: ${APP_RELOAD:-false}
       DB_WAIT_TIMEOUT: ${DB_WAIT_TIMEOUT:-90}
       DB_WAIT_INTERVAL: ${DB_WAIT_INTERVAL:-2}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      OLLAMA_CONNECT_TIMEOUT: ${OLLAMA_CONNECT_TIMEOUT:-3}
+      OLLAMA_READ_TIMEOUT: ${OLLAMA_READ_TIMEOUT:-60}
+      ASSISTANT_TIMEZONE: ${ASSISTANT_TIMEZONE:-America/Recife}
+      ASSISTANT_CONTEXT_MESSAGES: ${ASSISTANT_CONTEXT_MESSAGES:-12}
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:
       - ./output:/app/output
       - ./doc_templates:/app/doc_templates
