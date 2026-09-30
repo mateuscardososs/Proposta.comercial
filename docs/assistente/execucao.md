@@ -214,3 +214,35 @@ Veja `docs/assistente/validacao-voz-local.md` para resultados e roteiro humano.
 - **Resposta invalida:** o backend rejeita a estrutura e nao executa nenhuma acao. Reformule a frase e registre o caso para a avaliacao do modelo.
 - **Confirmacao sem resposta:** repita a confirmacao. O identificador da acao reconcilia uma tarefa ja gravada e evita duplicacao.
 - **Requisicao presa em processamento:** aguarde a expiracao configurada por `ASSISTANT_REQUEST_LEASE_SECONDS` e repita com o mesmo `request_id`; uma resposta ja persistida e devolvida sem nova gravacao.
+
+## Instancia isolada de teste na porta 8011
+
+A correcao conversacional foi deixada rodando somente em `127.0.0.1:8011`, com
+banco e arquivos sinteticos. A aplicacao Docker antiga da porta 8000 permanece
+separada. Para reproduzir exatamente a instancia de teste no Mac:
+
+```bash
+export APP_HOST=127.0.0.1
+export APP_PORT=8011
+export APP_RELOAD=false
+export DATABASE_URL=sqlite:////tmp/ad-balancas-voice-manual.VnwzuO/manual-ready.sqlite3
+export OUTPUT_DIR=/tmp/ad-balancas-voice-manual.VnwzuO/output-ready
+export TEMPLATE_DOC_PATH=/tmp/ad-balancas-voice-manual.VnwzuO/doc_templates/proposta_template.docx
+export OLLAMA_BASE_URL=http://127.0.0.1:11434
+export OLLAMA_MODEL=qwen3:4b-instruct-2507-q4_K_M
+export OLLAMA_CONNECT_TIMEOUT=3
+export OLLAMA_READ_TIMEOUT=90
+export ASSISTANT_TIMEZONE=America/Recife
+export ASSISTANT_REQUEST_LEASE_SECONDS=30
+export VOICE_ENABLED=true
+export VOICE_MODEL_DIR="$PWD/.models/assistant_voice"
+export VOICE_WHISPER_MODEL=small
+export VOICE_WHISPER_DEVICE=cpu
+export VOICE_WHISPER_COMPUTE_TYPE=int8
+export VOICE_LANGUAGE=pt
+export VOICE_PIPER_MODEL_PATH="$PWD/.models/assistant_voice/pt_BR-faber-medium.onnx"
+.venv/bin/python run.py
+```
+
+Abra `http://127.0.0.1:8011/web/assistente`. Depois de atualizar o codigo, use
+`Cmd+Shift+R` no Mac ou `Ctrl+F5` no Windows para ignorar scripts em cache.

@@ -514,3 +514,50 @@ def test_meta_conversation_accepts_natural_text_under_the_restricted_tool():
 
     assert isinstance(command, ConversationCommand)
     assert command.message.startswith("Eu quis dizer")
+
+
+def test_ollama_bounds_long_history_before_building_the_context_envelope():
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "responder_conversa",
+                                "arguments": {"message": "Como posso ajudar?"},
+                            }
+                        }
+                    ],
+                }
+            },
+        )
+
+    provider = OllamaProvider(
+        base_url="http://127.0.0.1:11434",
+        model="modelo-local",
+        connect_timeout=1,
+        read_timeout=30,
+        transport=httpx.MockTransport(handler),
+    )
+    history = [
+        ProviderMessage(role="user" if index % 2 == 0 else "assistant", content=str(index) * 4000)
+        for index in range(6)
+    ]
+    provider.interpret(
+        [*history, ProviderMessage(role="user", content="Como você pode ajudar?")],
+        today=date(2026, 9, 30),
+        timezone="America/Recife",
+    )
+
+    payload = captured["payload"]
+    envelope = payload["messages"][1]["content"]
+    assert len(envelope) < 12000
+    assert "5555555555" in envelope
+    assert "0000000000" not in envelope

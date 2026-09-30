@@ -1,4 +1,4 @@
-import { getAssistantChat, responseJson } from "/assets/assistant_chat.js";
+import { fetchWithTimeout, getAssistantChat, responseJson } from "/assets/assistant_chat.js";
 import {
   VoiceSessionController,
   createBrowserAudio,
@@ -44,19 +44,19 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
   async function transcribe(blob) {
     const body = new FormData();
     body.append("audio", blob, "fala.webm");
-    const response = await window.fetch("/api/assistant/voice/transcriptions", {
+    const response = await fetchWithTimeout(window.fetch.bind(window), "/api/assistant/voice/transcriptions", {
       method: "POST",
       body,
-    });
+    }, 70000);
     return responseJson(response);
   }
 
   async function synthesize(reply) {
-    const response = await window.fetch("/api/assistant/voice/speech", {
+    const response = await fetchWithTimeout(window.fetch.bind(window), "/api/assistant/voice/speech", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: reply.message, kind: reply.kind }),
-    });
+    }, 40000);
     if (!response.ok) {
       let detail = "Não foi possível gerar o áudio local.";
       try { detail = (await response.json()).detail || detail; } catch (_error) { /* ignore */ }
@@ -72,7 +72,12 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
   }
 
   try {
-    const response = await window.fetch("/api/assistant/voice/status");
+    const response = await fetchWithTimeout(
+      window.fetch.bind(window),
+      "/api/assistant/voice/status",
+      {},
+      15000,
+    );
     const configuration = await responseJson(response);
     voiceReady = configuration.enabled && configuration.transcription_available && configuration.synthesis_available;
     controller = new VoiceSessionController({
