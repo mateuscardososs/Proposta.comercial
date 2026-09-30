@@ -65,6 +65,11 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
     return response.blob();
   }
 
+  if (!window.isSecureContext) {
+    voiceState.textContent = "O microfone exige um contexto seguro. Abra pelo endereço local informado.";
+    voiceState.dataset.state = "error";
+    return null;
+  }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder || !(window.AudioContext || window.webkitAudioContext)) {
     voiceState.textContent = "Este navegador não oferece os recursos locais de áudio necessários.";
     voiceState.dataset.state = "error";
