@@ -152,6 +152,12 @@
   .assistant-voice-state[data-state="listening"] { color: var(--brand); }
   .assistant-voice-state[data-state="error"] { color: #8b202b; }
 
+  .assistant-voice-level {
+    width: 120px;
+    height: 8px;
+    accent-color: var(--brand);
+  }
+
   .assistant-composer-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -232,6 +238,8 @@
         <button class="btn btn-ghost" id="voice-stop" type="button" disabled>Interromper audio</button>
         <button class="btn btn-ghost" id="voice-repeat" type="button" disabled>Repetir audio</button>
         <button class="btn btn-ghost" id="voice-end" type="button" disabled>Encerrar conversa</button>
+        <meter class="assistant-voice-level" id="voice-level" min="0" max="1" value="0"
+               aria-label="Nivel do microfone"></meter>
       </div>
     </div>
 
@@ -245,278 +253,11 @@
         <button class="btn btn-primary" id="assistant-send" type="submit">Enviar</button>
       </div>
       <p class="assistant-status" id="assistant-status" role="status"></p>
+      <button class="btn btn-ghost" id="assistant-retry" type="button" hidden>Tentar novamente</button>
     </form>
   </section>
 </div>
 
-<script type="module">
-  import { VoiceSessionController, createBrowserAudio, createBrowserCapture } from "/assets/assistant_voice.js";
-
-  (function () {
-    const form = document.getElementById("assistant-form");
-    const input = document.getElementById("assistant-message");
-    const send = document.getElementById("assistant-send");
-    const history = document.getElementById("assistant-history");
-    const empty = document.getElementById("assistant-empty");
-    const status = document.getElementById("assistant-status");
-    const voiceStart = document.getElementById("voice-start");
-    const voiceFinish = document.getElementById("voice-finish");
-    const voiceStop = document.getElementById("voice-stop");
-    const voiceRepeat = document.getElementById("voice-repeat");
-    const voiceEnd = document.getElementById("voice-end");
-    const voiceState = document.getElementById("voice-state");
-    const initialConversation = new URLSearchParams(window.location.search).get("conversation_id");
-    let conversationId = initialConversation ? Number(initialConversation) : null;
-    let busy = false;
-    let voiceController = null;
-    let voiceReady = false;
-
-    function requestId() {
-      if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
-      return `assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    }
-
-    function setBusy(value, text) {
-      busy = value;
-      input.disabled = value;
-      send.disabled = value;
-      status.textContent = text || "";
-      status.classList.toggle("is-busy", value);
-    }
-
-    function updateConversation(id) {
-      conversationId = id;
-      const url = new URL(window.location.href);
-      url.searchParams.set("conversation_id", String(id));
-      window.history.replaceState({}, "", url);
-    }
-
-    function appendMessage(role, content, kind, details) {
-      if (empty) empty.remove();
-      const article = document.createElement("article");
-      article.className = `assistant-message ${role}${kind === "error" || kind === "success" ? ` ${kind}` : ""}`;
-
-      const label = document.createElement("span");
-      label.className = "assistant-message-label";
-      label.textContent = role === "user" ? "Voce" : "Assistente";
-      article.appendChild(label);
-
-      const text = document.createElement("span");
-      text.textContent = content;
-      article.appendChild(text);
-
-      if (kind === "confirmation" && details && details.action_id) {
-        const actions = document.createElement("div");
-        actions.className = "assistant-confirm-actions";
-        const confirm = document.createElement("button");
-        confirm.type = "button";
-        confirm.className = "btn btn-primary";
-        confirm.textContent = "Confirmar criacao";
-        confirm.addEventListener("click", () => runAction(details.action_id, details.confirmation_token, "confirm", actions));
-        const cancel = document.createElement("button");
-        cancel.type = "button";
-        cancel.className = "btn btn-ghost";
-        cancel.textContent = "Cancelar";
-        cancel.addEventListener("click", () => runAction(details.action_id, details.confirmation_token, "cancel", actions));
-        actions.append(confirm, cancel);
-        article.appendChild(actions);
-      }
-
-      if (details && details.task_url) {
-        const actions = document.createElement("div");
-        actions.className = "assistant-confirm-actions";
-        const link = document.createElement("a");
-        link.className = "btn btn-ghost";
-        link.href = details.task_url;
-        link.textContent = "Abrir tarefa no quadro";
-        actions.appendChild(link);
-        article.appendChild(actions);
-      }
-
-      history.appendChild(article);
-      history.scrollTop = history.scrollHeight;
-    }
-
-    async function responseJson(response) {
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || "A operacao nao foi concluida.");
-      return payload;
-    }
-
-    async function sendMessage(message) {
-      if (busy) throw new Error("O assistente ainda esta processando a solicitacao anterior.");
-      const id = requestId();
-      appendMessage("user", message, "text", {});
-      setBusy(true, "Consultando o assistente local...");
-      try {
-        const response = await fetch("/api/assistant/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, request_id: id, conversation_id: conversationId }),
-        });
-        const payload = await responseJson(response);
-        updateConversation(payload.conversation_id);
-        appendMessage("assistant", payload.message, payload.kind, payload);
-        return payload;
-      } catch (error) {
-        appendMessage("assistant", error.message, "error", {});
-        throw error;
-      } finally {
-        setBusy(false, "");
-      }
-    }
-
-    async function runAction(actionId, confirmationToken, action, controls) {
-      if (busy) return;
-      controls.querySelectorAll("button").forEach((button) => { button.disabled = true; });
-      setBusy(true, action === "confirm" ? "Salvando a tarefa..." : "Cancelando...");
-      try {
-        const response = await fetch(`/api/assistant/actions/${actionId}/${action}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmation_token: confirmationToken }),
-        });
-        const payload = await responseJson(response);
-        appendMessage("assistant", payload.message, payload.kind, payload);
-      } catch (error) {
-        appendMessage("assistant", error.message, "error", {});
-        controls.querySelectorAll("button").forEach((button) => { button.disabled = false; });
-      } finally {
-        setBusy(false, "");
-        input.focus();
-      }
-    }
-
-    async function loadHistory() {
-      if (!conversationId) return;
-      setBusy(true, "Carregando conversa...");
-      try {
-        const response = await fetch(`/api/assistant/conversations/${conversationId}`);
-        const payload = await responseJson(response);
-        payload.messages.forEach((message) => appendMessage(message.role, message.content, message.kind, message.details));
-      } catch (error) {
-        appendMessage("assistant", error.message, "error", {});
-      } finally {
-        setBusy(false, "");
-      }
-    }
-
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (busy) return;
-      const message = input.value.trim();
-      if (!message) return;
-      input.value = "";
-      try {
-        await sendMessage(message);
-      } catch (_error) {
-        // sendMessage already renders the user-safe error.
-      } finally {
-        input.focus();
-      }
-    });
-
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        form.requestSubmit();
-      }
-    });
-
-    const voiceLabels = {
-      idle: "Conversa encerrada.",
-      requesting: "Solicitando acesso ao microfone...",
-      listening: "Ouvindo. Fale naturalmente; o silencio encerra a fala.",
-      transcribing: "Transcrevendo localmente...",
-      processing: "Consultando o assistente local...",
-      speaking: "Reproduzindo a resposta...",
-      error: "A voz encontrou um problema. O texto continua disponivel.",
-    };
-
-    function renderVoiceState(state) {
-      const active = voiceController?.active || false;
-      voiceState.dataset.state = state;
-      voiceState.textContent = voiceLabels[state] || state;
-      voiceStart.disabled = !voiceReady || active;
-      voiceFinish.disabled = state !== "listening";
-      voiceStop.disabled = state !== "speaking";
-      voiceRepeat.disabled = !active || (!voiceController?.lastAudioBlob && !voiceController?.lastReply);
-      voiceEnd.disabled = !active;
-    }
-
-    async function transcribe(blob) {
-      const body = new FormData();
-      body.append("audio", blob, "fala.webm");
-      const response = await fetch("/api/assistant/voice/transcriptions", { method: "POST", body });
-      return responseJson(response);
-    }
-
-    async function synthesize(reply) {
-      const response = await fetch("/api/assistant/voice/speech", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: reply.message, kind: reply.kind }),
-      });
-      if (!response.ok) {
-        let detail = "Nao foi possivel gerar o audio local.";
-        try { detail = (await response.json()).detail || detail; } catch (_error) {}
-        throw new Error(detail);
-      }
-      return response.blob();
-    }
-
-    async function configureVoice() {
-      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder || !(window.AudioContext || window.webkitAudioContext)) {
-        voiceState.textContent = "Este navegador nao oferece os recursos locais de audio necessarios.";
-        voiceState.dataset.state = "error";
-        return;
-      }
-      try {
-        const response = await fetch("/api/assistant/voice/status");
-        const configuration = await responseJson(response);
-        voiceReady = configuration.enabled && configuration.transcription_available && configuration.synthesis_available;
-        voiceController = new VoiceSessionController({
-          getStream: () => navigator.mediaDevices.getUserMedia({ audio: true }),
-          captureFactory: createBrowserCapture,
-          transcribe,
-          sendText,
-          synthesize,
-          audioFactory: createBrowserAudio,
-          silenceMs: configuration.silence_ms,
-          maxUtteranceMs: configuration.max_duration_seconds * 1000,
-          idleTimeoutMs: configuration.idle_timeout_seconds * 1000,
-          onState: renderVoiceState,
-          onError: (error) => {
-            renderVoiceState("error");
-            voiceState.textContent = error.message;
-            voiceState.dataset.state = "error";
-          },
-        });
-        if (voiceReady) {
-          voiceState.textContent = "Pronto para uma conversa local por voz.";
-          voiceStart.disabled = false;
-        } else {
-          voiceState.textContent = configuration.message;
-          voiceState.dataset.state = "error";
-        }
-      } catch (error) {
-        voiceState.textContent = error.message;
-        voiceState.dataset.state = "error";
-      }
-    }
-
-    voiceStart.addEventListener("click", () => voiceController?.start());
-    voiceFinish.addEventListener("click", () => voiceController?.finishUtterance());
-    voiceStop.addEventListener("click", () => voiceController?.stopPlayback());
-    voiceRepeat.addEventListener("click", () => {
-      if (voiceController?.lastAudioBlob) voiceController.repeatSpeech();
-      else voiceController?.retrySpeech();
-    });
-    voiceEnd.addEventListener("click", () => voiceController?.stop());
-    window.addEventListener("pagehide", () => voiceController?.stop());
-
-    loadHistory();
-    configureVoice();
-  })();
-</script>
+<script type="module" src="/assets/assistant_chat.js"></script>
+<script type="module" src="/assets/assistant_voice_bootstrap.js"></script>
 {% endblock %}
