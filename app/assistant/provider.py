@@ -11,7 +11,9 @@ from app.assistant.contracts import AssistantCommand
 
 class ProviderMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
-    content: str = Field(min_length=1, max_length=4000)
+    # User input remains capped at 4,000 characters by AssistantMessageRequest.
+    # Internal system instructions and contextual envelopes need their own bound.
+    content: str = Field(min_length=1, max_length=12000)
 
 
 class ProviderUnavailableError(RuntimeError):

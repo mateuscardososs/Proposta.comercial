@@ -350,3 +350,135 @@ def test_ollama_accepts_a_structured_natural_conversation_reply():
     system_prompt = payload["messages"][0]["content"]
     assert "nao pode afirmar" in system_prompt.lower()
     assert "consulta real" in system_prompt.lower()
+    assert "estou perdido com a organizacao" in system_prompt.lower()
+
+
+def test_ollama_delimits_history_and_classifies_only_the_current_request():
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "responder_conversa",
+                                "arguments": {"message": "Eu estava explicando a tarefa encontrada."},
+                            }
+                        }
+                    ],
+                }
+            },
+        )
+
+    provider = OllamaProvider(
+        base_url="http://127.0.0.1:11434",
+        model="modelo-local",
+        connect_timeout=1,
+        read_timeout=30,
+        transport=httpx.MockTransport(handler),
+    )
+    provider.interpret(
+        [
+            ProviderMessage(role="user", content="Quais tarefas eu tenho?"),
+            ProviderMessage(role="assistant", content="Encontrei a tarefa preparar relatório."),
+            ProviderMessage(role="user", content="O que você quis dizer?"),
+        ],
+        today=date(2026, 9, 30),
+        timezone="America/Recife",
+    )
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert len(payload["messages"]) == 2
+    request_message = payload["messages"][1]["content"]
+    assert "HISTORICO_JSON=" in request_message
+    assert "Encontrei a tarefa preparar relatório." in request_message
+    assert 'ULTIMA_RESPOSTA_ASSISTENTE="Encontrei a tarefa preparar relatório."' in request_message
+    assert 'PEDIDO_ATUAL="O que você quis dizer?"' in request_message
+    assert [tool["function"]["name"] for tool in payload["tools"]] == [
+        "responder_conversa"
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        'responder_conversa {"message": "Boa tarde! Como posso ajudar?"}',
+        'responder_conversa "Boa tarde! Como posso ajudar?"',
+    ],
+)
+def test_ollama_accepts_validated_textual_conversation_fallback(content):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": content}})
+
+    provider = OllamaProvider(
+        base_url="http://127.0.0.1:11434",
+        model="modelo-local",
+        connect_timeout=1,
+        read_timeout=30,
+        transport=httpx.MockTransport(handler),
+    )
+    command = provider.interpret(
+        [ProviderMessage(role="user", content="Oi")],
+        today=date(2026, 9, 30),
+        timezone="America/Recife",
+    )
+
+    assert isinstance(command, ConversationCommand)
+    assert command.message.startswith("Boa tarde")
+
+
+def test_ollama_repairs_a_conversation_that_changes_a_real_task_status():
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        message = (
+            "A tarefa #1 está em andamento e vence em 02/10/2026."
+            if calls == 1
+            else "A tarefa #1 está a fazer e vence em 02/10/2026."
+        )
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "responder_conversa",
+                                "arguments": {"message": message},
+                            }
+                        }
+                    ],
+                }
+            },
+        )
+
+    provider = OllamaProvider(
+        base_url="http://127.0.0.1:11434",
+        model="modelo-local",
+        connect_timeout=1,
+        read_timeout=30,
+        transport=httpx.MockTransport(handler),
+    )
+    command = provider.interpret(
+        [
+            ProviderMessage(role="assistant", content="Encontrei estas tarefas:\n- #1 Relatório — A fazer — 02/10/2026"),
+            ProviderMessage(role="user", content="O que você quis dizer?"),
+        ],
+        today=date(2026, 9, 30),
+        timezone="America/Recife",
+    )
+
+    assert calls == 2
+    assert isinstance(command, ConversationCommand)
+    assert "a fazer" in command.message

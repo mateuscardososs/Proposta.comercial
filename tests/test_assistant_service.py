@@ -133,6 +133,21 @@ def test_empty_query_explicitly_reports_empty_board_and_offers_help(db):
     assert "criar" in reply.message.lower()
 
 
+def test_create_does_not_accept_a_due_date_invented_by_the_model(db):
+    provider = QueueProvider(
+        TaskCreateCommand(title="Testar cancelamento", due_date="amanha")
+    )
+    service = AssistantService(db, provider, now=_now)
+
+    reply = service.handle_message(
+        message="Crie uma tarefa temporária para testar o cancelamento.",
+        request_id="invented-date-1",
+    )
+
+    assert reply.kind == "confirmation"
+    assert reply.fields["prazo"] == "Sem prazo"
+
+
 def test_create_resolves_relative_date_and_only_saves_after_confirmation(db):
     client = Client(razao_social="Cliente Recife")
     user = User(nome="Carlos", email="carlos@example.com", senha_hash="hash")
