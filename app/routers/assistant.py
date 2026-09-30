@@ -37,6 +37,7 @@ def _service(db: Session, provider: AssistantProvider | None = None) -> Assistan
         provider,
         timezone=settings.assistant_timezone,
         context_messages=settings.assistant_context_messages,
+        request_lease_seconds=settings.assistant_request_lease_seconds,
     )
 
 

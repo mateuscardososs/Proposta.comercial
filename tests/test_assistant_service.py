@@ -5,11 +5,24 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.assistant.contracts import TaskCreateCommand, TaskQueryCommand
+from app.assistant.contracts import (
+    ConfirmActionCommand,
+    TaskCreateCommand,
+    TaskDraftCorrectionCommand,
+    TaskQueryCommand,
+)
 from app.assistant.provider import ProviderMessage, ProviderUnavailableError
 from app.assistant.service import AssistantService
 from app.db import SessionLocal
-from app.models import AssistantAction, AssistantConversation, AssistantMessage, Client, Task, User
+from app.models import (
+    AssistantAction,
+    AssistantConversation,
+    AssistantMessage,
+    AssistantRequest,
+    Client,
+    Task,
+    User,
+)
 
 
 class QueueProvider:
@@ -160,14 +173,24 @@ def test_request_already_in_progress_does_not_call_provider_again(db):
     conversation = AssistantConversation()
     db.add(conversation)
     db.flush()
+    message = AssistantMessage(
+        conversation_id=conversation.id,
+        role="user",
+        kind="text",
+        content="Crie uma tarefa",
+        request_id="in-progress-1",
+        details_json={},
+    )
+    db.add(message)
+    db.flush()
     db.add(
-        AssistantMessage(
-            conversation_id=conversation.id,
-            role="user",
-            kind="text",
-            content="Crie uma tarefa",
+        AssistantRequest(
             request_id="in-progress-1",
-            details_json={},
+            conversation_id=conversation.id,
+            user_message_id=message.id,
+            status="processing",
+            lease_expires_at=datetime(2026, 10, 1, 1, 35),
+            attempts=1,
         )
     )
     db.commit()
@@ -182,6 +205,49 @@ def test_request_already_in_progress_does_not_call_provider_again(db):
 
     assert provider.calls == []
     assert db.query(AssistantConversation).count() == 1
+
+
+def test_expired_request_is_reclaimed_and_completed_without_duplicate_user_message(db):
+    conversation = AssistantConversation()
+    db.add(conversation)
+    db.flush()
+    message = AssistantMessage(
+        conversation_id=conversation.id,
+        role="user",
+        kind="text",
+        content="Mostre as tarefas",
+        request_id="expired-request-1",
+        details_json={},
+    )
+    db.add(message)
+    db.flush()
+    db.add(
+        AssistantRequest(
+            request_id="expired-request-1",
+            conversation_id=conversation.id,
+            user_message_id=message.id,
+            status="processing",
+            lease_expires_at=datetime(2026, 10, 1, 1, 29),
+            attempts=1,
+        )
+    )
+    db.commit()
+    provider = QueueProvider(TaskQueryCommand())
+    service = AssistantService(db, provider, now=_now, request_lease_seconds=120)
+
+    reply = service.handle_message(
+        message="Mostre as tarefas",
+        request_id="expired-request-1",
+        conversation_id=conversation.id,
+    )
+
+    request = db.query(AssistantRequest).filter_by(request_id="expired-request-1").one()
+    assert reply.kind == "text"
+    assert len(provider.calls) == 1
+    assert request.status == "completed"
+    assert request.attempts == 2
+    assert request.reply_message_id is not None
+    assert db.query(AssistantMessage).filter_by(request_id="expired-request-1").count() == 1
 
 
 def test_confirmation_retry_in_new_session_reconciles_saved_task(db):
@@ -258,3 +324,108 @@ def test_cancel_does_not_overwrite_action_already_being_executed(db):
     db.refresh(action)
     assert action.status == "executing"
     assert db.query(Task).count() == 0
+
+
+def test_text_confirmation_creates_once_and_repeated_confirmation_reconciles(db):
+    provider = QueueProvider(TaskCreateCommand(title="Preparar relatorio"))
+    service = AssistantService(db, provider, now=_now)
+    preview = service.handle_message(
+        message="Crie a tarefa preparar relatorio",
+        request_id="text-confirm-preview",
+    )
+
+    created = service.handle_message(
+        message="Pode criar",
+        request_id="text-confirm-first",
+        conversation_id=preview.conversation_id,
+    )
+    repeated = service.handle_message(
+        message="Pode criar",
+        request_id="text-confirm-repeat",
+        conversation_id=preview.conversation_id,
+    )
+
+    assert created.kind == "success"
+    assert repeated.task_id == created.task_id
+    assert db.query(Task).count() == 1
+    assert len(provider.calls) == 1
+
+
+def test_text_cancellation_cancels_pending_draft_without_creating_task(db):
+    provider = QueueProvider(TaskCreateCommand(title="Ligar para Beta"))
+    service = AssistantService(db, provider, now=_now)
+    preview = service.handle_message(
+        message="Crie a tarefa ligar para Beta",
+        request_id="text-cancel-preview",
+    )
+
+    cancelled = service.handle_message(
+        message="Nao, cancela",
+        request_id="text-cancel-action",
+        conversation_id=preview.conversation_id,
+    )
+
+    assert cancelled.kind == "text"
+    assert "cancelada" in cancelled.message.lower()
+    assert db.query(Task).count() == 0
+    action = db.get(AssistantAction, preview.action_id)
+    assert action.status == "cancelled"
+    assert len(provider.calls) == 1
+
+
+def test_draft_correction_updates_fields_and_invalidates_old_confirmation(db):
+    alpha_services = Client(razao_social="Alfa Servicos")
+    alpha_industry = Client(razao_social="Alfa Industria")
+    carlos = User(nome="Carlos", email="carlos@teste.local", senha_hash="hash")
+    db.add_all([alpha_services, alpha_industry, carlos])
+    db.commit()
+    provider = QueueProvider(
+        TaskCreateCommand(
+            title="Revisar proposta",
+            due_date="amanha",
+            client="Alfa Servicos",
+        ),
+        TaskDraftCorrectionCommand(
+            title="Revisar relatorio",
+            due_date="depois de amanha",
+            client="Alfa Industria",
+            responsible="Carlos",
+        ),
+        ConfirmActionCommand(),
+    )
+    service = AssistantService(db, provider, now=_now)
+    original = service.handle_message(
+        message="Crie para amanha revisar proposta da Alfa Servicos",
+        request_id="correct-preview",
+    )
+
+    corrected = service.handle_message(
+        message="Mude o titulo para revisar relatorio, use Alfa Industria, Carlos e depois de amanha",
+        request_id="correct-draft",
+        conversation_id=original.conversation_id,
+    )
+
+    assert corrected.kind == "confirmation"
+    assert corrected.action_id == original.action_id
+    assert corrected.confirmation_token != original.confirmation_token
+    assert corrected.fields == {
+        "titulo": "Revisar relatorio",
+        "status": "A fazer",
+        "prazo": "02/10/2026",
+        "cliente": "Alfa Industria",
+        "responsavel": "Carlos",
+    }
+    with pytest.raises(ValueError, match="Token"):
+        service.confirm_action(original.action_id, original.confirmation_token)
+
+    created = service.handle_message(
+        message="Pode criar",
+        request_id="correct-confirm",
+        conversation_id=original.conversation_id,
+    )
+
+    task = db.get(Task, created.task_id)
+    assert task.titulo == "Revisar relatorio"
+    assert task.prazo == date(2026, 10, 2)
+    assert task.client_id == alpha_industry.id
+    assert task.user_id == carlos.id

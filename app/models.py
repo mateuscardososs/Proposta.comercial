@@ -190,6 +190,31 @@ class AssistantConversation(Base, TimestampMixin):
     )
 
 
+class AssistantRequest(Base, TimestampMixin):
+    __tablename__ = "assistant_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    request_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_message_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_messages.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    reply_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assistant_messages.id", ondelete="SET NULL"),
+        unique=True,
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
 class AssistantMessage(Base):
     __tablename__ = "assistant_messages"
 
