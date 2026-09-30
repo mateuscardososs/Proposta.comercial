@@ -281,6 +281,18 @@ class OllamaProvider:
             )
         )
         allowed_tools = {"responder_conversa"} if meta_conversation else None
+        effective_system_message = system_message
+        if meta_conversation:
+            effective_system_message = ProviderMessage(
+                role="system",
+                content=(
+                    "Responda naturalmente em portugues usando somente responder_conversa. "
+                    "O usuario pediu uma explicacao da resposta imediatamente anterior. "
+                    "Parafraseie somente ULTIMA_RESPOSTA_ASSISTENTE. Preserve exatamente quaisquer "
+                    "titulos, identificadores, datas e status; nao invente, nao consulte e nao execute nada. "
+                    "Retorne uma resposta curta adequada para voz."
+                ),
+            )
         contextual_request = ProviderMessage(
             role="user",
             content=(
@@ -294,7 +306,10 @@ class OllamaProvider:
         )
         payload = {
             "model": self.model,
-            "messages": [system_message.model_dump(), contextual_request.model_dump()],
+            "messages": [
+                effective_system_message.model_dump(),
+                contextual_request.model_dump(),
+            ],
             "stream": False,
             "tools": _ollama_tools(allowed_tools),
             "options": {"temperature": 0},
