@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.assistant.contracts import TaskCreateCommand, TaskQueryCommand
+from app.assistant.contracts import ConversationCommand, TaskCreateCommand, TaskQueryCommand
 from app.main import app
 from app.routers.assistant import get_assistant_provider
 
@@ -81,6 +81,27 @@ def test_conversation_history_endpoint_returns_messages():
 
     assert history.status_code == 200
     assert [item["role"] for item in history.json()["messages"]] == ["user", "assistant"]
+
+
+def test_assistant_api_returns_a_natural_structured_conversation_reply():
+    provider = RouteProvider()
+    provider.command = ConversationCommand(
+        message="Olá! Posso consultar tarefas e preparar uma nova tarefa com você."
+    )
+    app.dependency_overrides[get_assistant_provider] = lambda: provider
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/assistant/messages",
+                json={"message": "Oi", "request_id": "route-talk-1"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["kind"] == "text"
+    assert response.json()["message"].startswith("Olá")
+    assert response.json()["task_id"] is None
 
 
 def test_conversation_history_never_exposes_confirmation_credentials():
