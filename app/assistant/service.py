@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from datetime import date, datetime
 import hashlib
+import re
 import secrets
+from collections.abc import Callable, Sequence
+from datetime import date, datetime, timedelta
 from typing import TypeVar
 from zoneinfo import ZoneInfo
 
@@ -14,7 +15,10 @@ from sqlalchemy.orm import Session
 from app.assistant.contracts import (
     AssistantMessageView,
     AssistantReply,
+    CancelActionCommand,
+    ConfirmActionCommand,
     TaskCreateCommand,
+    TaskDraftCorrectionCommand,
     TaskQueryCommand,
     UnsupportedCommand,
 )
@@ -29,13 +33,13 @@ from app.models import (
     AssistantAction,
     AssistantConversation,
     AssistantMessage,
+    AssistantRequest,
     Client,
     Proposal,
     User,
 )
 from app.schemas import TaskCreate
 from app.services import board_service
-
 
 ModelT = TypeVar("ModelT", Client, User)
 
@@ -57,6 +61,7 @@ class AssistantService:
         now: Callable[[], datetime] | None = None,
         timezone: str = "America/Recife",
         context_messages: int = 12,
+        request_lease_seconds: int = 120,
     ) -> None:
         self.db = db
         self.provider = provider
@@ -64,6 +69,7 @@ class AssistantService:
         self.timezone = ZoneInfo(timezone)
         self.now = now or (lambda: datetime.now(self.timezone))
         self.context_messages = max(2, min(context_messages, 30))
+        self.request_lease_seconds = max(30, min(request_lease_seconds, 900))
 
     def handle_message(
         self,
@@ -85,48 +91,26 @@ class AssistantService:
         if cached is not None:
             return cached
 
-        existing_user_message = (
-            self.db.query(AssistantMessage)
-            .filter(AssistantMessage.request_id == clean_request_id)
-            .first()
+        claimed_request = self._claim_or_create_request(
+            message=clean_message,
+            request_id=clean_request_id,
+            conversation_id=conversation_id,
         )
-        if existing_user_message is not None:
-            cached = self._cached_reply(clean_request_id)
-            if cached is not None:
-                return cached
-            raise ValueError("Esta solicitacao ainda esta sendo processada; aguarde antes de repetir.")
-
-        conversation = self._get_or_build_conversation(conversation_id)
-        self.db.add(
-            AssistantMessage(
-                conversation_id=conversation.id,
-                role="user",
-                kind="text",
-                content=clean_message,
-                request_id=clean_request_id,
-                details_json={},
-            )
-        )
-        try:
-            self.db.commit()
-        except IntegrityError:
-            self.db.rollback()
-            cached = self._cached_reply(clean_request_id)
-            if cached is not None:
-                return cached
-            raise ValueError(
-                "Esta solicitacao ainda esta sendo processada; aguarde antes de repetir."
-            )
+        if isinstance(claimed_request, AssistantReply):
+            return claimed_request
+        conversation = claimed_request
 
         current_date = self._local_now().date()
         try:
-            if self.provider is None:
-                raise ProviderUnavailableError("Provedor nao configurado.")
-            command = self.provider.interpret(
-                self._provider_messages(conversation.id),
-                today=current_date,
-                timezone=self.timezone_name,
-            )
+            command = self._direct_control_command(clean_message)
+            if command is None:
+                if self.provider is None:
+                    raise ProviderUnavailableError("Provedor nao configurado.")
+                command = self.provider.interpret(
+                    self._provider_messages(conversation.id),
+                    today=current_date,
+                    timezone=self.timezone_name,
+                )
             if isinstance(command, TaskQueryCommand):
                 reply = self._query_tasks(conversation.id, command, current_date)
             elif isinstance(command, TaskCreateCommand):
@@ -136,6 +120,12 @@ class AssistantService:
                     command,
                     current_date,
                 )
+            elif isinstance(command, ConfirmActionCommand):
+                reply = self._confirm_latest(conversation.id)
+            elif isinstance(command, CancelActionCommand):
+                reply = self._cancel_latest(conversation.id)
+            elif isinstance(command, TaskDraftCorrectionCommand):
+                reply = self._correct_pending_task(conversation.id, command, current_date)
             elif isinstance(command, UnsupportedCommand):
                 reply = AssistantReply(
                     conversation_id=conversation.id,
@@ -165,11 +155,31 @@ class AssistantService:
 
         return self._save_reply(clean_request_id, reply)
 
+    @staticmethod
+    def _direct_control_command(
+        message: str,
+    ) -> ConfirmActionCommand | CancelActionCommand | None:
+        normalized = re.sub(r"[^a-z0-9 ]+", " ", normalize_text(message))
+        normalized = " ".join(normalized.split())
+        if normalized in {"pode criar", "pode confirmar", "confirmo", "sim pode criar"}:
+            return ConfirmActionCommand()
+        if normalized in {"cancela", "cancelar", "nao cancela"}:
+            return CancelActionCommand()
+        return None
+
     def confirm_action(self, action_id: int, confirmation_token: str) -> AssistantReply:
         action = self.db.get(AssistantAction, action_id)
         if action is None:
             raise ValueError("Acao de confirmacao nao encontrada.")
         self._validate_confirmation_token(action, confirmation_token)
+        return self._confirm_action_record(action, record_message=True)
+
+    def _confirm_action_record(
+        self,
+        action: AssistantAction,
+        *,
+        record_message: bool,
+    ) -> AssistantReply:
         if action.status == "executed":
             return self._success_reply(action)
         if action.status == "cancelled":
@@ -177,13 +187,13 @@ class AssistantService:
 
         claimed = self.db.execute(
             update(AssistantAction)
-            .where(AssistantAction.id == action_id, AssistantAction.status == "pending")
+            .where(AssistantAction.id == action.id, AssistantAction.status == "pending")
             .values(status="executing"),
             execution_options={"synchronize_session": False},
         )
         if claimed.rowcount != 1:
             self.db.rollback()
-            refreshed = self.db.get(AssistantAction, action_id)
+            refreshed = self.db.get(AssistantAction, action.id)
             if refreshed is not None and refreshed.status == "executed":
                 return self._success_reply(refreshed)
             raise ValueError("A acao ja esta sendo processada. Consulte o historico antes de repetir.")
@@ -211,15 +221,16 @@ class AssistantService:
                 task_id=task.id,
                 task_url=f"/web/board/{task.id}/edit",
             )
-            self.db.add(
-                AssistantMessage(
-                    conversation_id=action.conversation_id,
-                    role="assistant",
-                    kind="success",
-                    content=reply.message,
-                    details_json=reply.model_dump(mode="json"),
+            if record_message:
+                self.db.add(
+                    AssistantMessage(
+                        conversation_id=action.conversation_id,
+                        role="assistant",
+                        kind="success",
+                        content=reply.message,
+                        details_json=reply.model_dump(mode="json"),
+                    )
                 )
-            )
             self.db.commit()
             return reply
         except Exception:
@@ -231,6 +242,14 @@ class AssistantService:
         if action is None:
             raise ValueError("Acao de confirmacao nao encontrada.")
         self._validate_confirmation_token(action, confirmation_token)
+        return self._cancel_action_record(action, record_message=True)
+
+    def _cancel_action_record(
+        self,
+        action: AssistantAction,
+        *,
+        record_message: bool,
+    ) -> AssistantReply:
         if action.status == "executed":
             return self._success_reply(action)
         if action.status == "cancelled":
@@ -243,7 +262,7 @@ class AssistantService:
 
         cancelled = self.db.execute(
             update(AssistantAction)
-            .where(AssistantAction.id == action_id, AssistantAction.status == "pending")
+            .where(AssistantAction.id == action.id, AssistantAction.status == "pending")
             .values(status="cancelled"),
             execution_options={"synchronize_session": False},
         )
@@ -255,19 +274,20 @@ class AssistantService:
                 message="Criacao cancelada. Nenhuma tarefa foi adicionada ao quadro.",
                 action_id=action.id,
             )
-            self.db.add(
-                AssistantMessage(
-                    conversation_id=action.conversation_id,
-                    role="assistant",
-                    kind="text",
-                    content=reply.message,
-                    details_json=reply.model_dump(mode="json"),
+            if record_message:
+                self.db.add(
+                    AssistantMessage(
+                        conversation_id=action.conversation_id,
+                        role="assistant",
+                        kind="text",
+                        content=reply.message,
+                        details_json=reply.model_dump(mode="json"),
+                    )
                 )
-            )
             self.db.commit()
             return reply
         self.db.rollback()
-        refreshed = self.db.get(AssistantAction, action_id)
+        refreshed = self.db.get(AssistantAction, action.id)
         if refreshed is not None and refreshed.status == "executed":
             return self._success_reply(refreshed)
         raise ValueError("A acao ja esta sendo processada; consulte o historico antes de cancelar.")
@@ -292,6 +312,126 @@ class AssistantService:
         if value.tzinfo is None:
             return value.replace(tzinfo=self.timezone)
         return value.astimezone(self.timezone)
+
+    def _request_now(self) -> datetime:
+        return self._local_now().astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+    def _claim_or_create_request(
+        self,
+        *,
+        message: str,
+        request_id: str,
+        conversation_id: int | None,
+    ) -> AssistantConversation | AssistantReply:
+        now = self._request_now()
+        lease_expires_at = now + timedelta(seconds=self.request_lease_seconds)
+        request_record = (
+            self.db.query(AssistantRequest)
+            .filter(AssistantRequest.request_id == request_id)
+            .first()
+        )
+        if request_record is not None:
+            if conversation_id is not None and request_record.conversation_id != conversation_id:
+                raise ValueError("O identificador de requisicao pertence a outra conversa.")
+            user_message = self.db.get(AssistantMessage, request_record.user_message_id)
+            if user_message is None or user_message.content != message:
+                raise ValueError("O identificador de requisicao ja foi usado com outra mensagem.")
+            if request_record.status == "completed":
+                cached = self._cached_reply(request_id)
+                if cached is not None:
+                    return cached
+                raise ValueError("A solicitacao foi concluida sem uma resposta reconciliavel.")
+            if request_record.lease_expires_at > now:
+                raise ValueError(
+                    "Esta solicitacao ainda esta sendo processada; aguarde antes de repetir."
+                )
+            claimed = self.db.execute(
+                update(AssistantRequest)
+                .where(
+                    AssistantRequest.id == request_record.id,
+                    AssistantRequest.status == "processing",
+                    AssistantRequest.lease_expires_at <= now,
+                )
+                .values(
+                    lease_expires_at=lease_expires_at,
+                    attempts=AssistantRequest.attempts + 1,
+                ),
+                execution_options={"synchronize_session": False},
+            )
+            if claimed.rowcount != 1:
+                self.db.rollback()
+                raise ValueError(
+                    "Esta solicitacao ainda esta sendo processada; aguarde antes de repetir."
+                )
+            self.db.commit()
+            conversation = self.db.get(AssistantConversation, request_record.conversation_id)
+            if conversation is None:
+                raise ValueError("Conversa da solicitacao nao encontrada.")
+            return conversation
+
+        existing_user_message = (
+            self.db.query(AssistantMessage)
+            .filter(AssistantMessage.request_id == request_id)
+            .first()
+        )
+        if existing_user_message is not None:
+            legacy_expiry = existing_user_message.created_at + timedelta(
+                seconds=self.request_lease_seconds
+            )
+            if legacy_expiry > now:
+                raise ValueError(
+                    "Esta solicitacao ainda esta sendo processada; aguarde antes de repetir."
+                )
+            request_record = AssistantRequest(
+                request_id=request_id,
+                conversation_id=existing_user_message.conversation_id,
+                user_message_id=existing_user_message.id,
+                status="processing",
+                lease_expires_at=lease_expires_at,
+                attempts=2,
+            )
+            self.db.add(request_record)
+            self.db.commit()
+            conversation = self.db.get(
+                AssistantConversation,
+                existing_user_message.conversation_id,
+            )
+            if conversation is None:
+                raise ValueError("Conversa da solicitacao nao encontrada.")
+            return conversation
+
+        conversation = self._get_or_build_conversation(conversation_id)
+        user_message = AssistantMessage(
+            conversation_id=conversation.id,
+            role="user",
+            kind="text",
+            content=message,
+            request_id=request_id,
+            details_json={},
+        )
+        self.db.add(user_message)
+        self.db.flush()
+        self.db.add(
+            AssistantRequest(
+                request_id=request_id,
+                conversation_id=conversation.id,
+                user_message_id=user_message.id,
+                status="processing",
+                lease_expires_at=lease_expires_at,
+                attempts=1,
+            )
+        )
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            cached = self._cached_reply(request_id)
+            if cached is not None:
+                return cached
+            raise ValueError(
+                "Esta solicitacao ainda esta sendo processada; aguarde antes de repetir."
+            )
+        return conversation
 
     def _get_or_build_conversation(self, conversation_id: int | None) -> AssistantConversation:
         if conversation_id is not None:
@@ -361,17 +501,25 @@ class AssistantService:
         existing = self._cached_reply(request_id)
         if existing is not None:
             return existing
-        self.db.add(
-            AssistantMessage(
-                conversation_id=reply.conversation_id,
-                role="assistant",
-                kind=reply.kind,
-                content=reply.message,
-                reply_to_request_id=request_id,
-                details_json=self._safe_reply_details(reply.model_dump(mode="json")),
-            )
+        reply_message = AssistantMessage(
+            conversation_id=reply.conversation_id,
+            role="assistant",
+            kind=reply.kind,
+            content=reply.message,
+            reply_to_request_id=request_id,
+            details_json=self._safe_reply_details(reply.model_dump(mode="json")),
         )
+        self.db.add(reply_message)
         try:
+            self.db.flush()
+            request_record = (
+                self.db.query(AssistantRequest)
+                .filter(AssistantRequest.request_id == request_id)
+                .first()
+            )
+            if request_record is not None:
+                request_record.status = "completed"
+                request_record.reply_message_id = reply_message.id
             self.db.commit()
         except IntegrityError:
             self.db.rollback()
@@ -434,6 +582,144 @@ class AssistantService:
                 f"- #{task.id} {task.titulo} — {STATUS_LABELS.get(task.status, task.status)} — {deadline}{suffix}"
             )
         return AssistantReply(conversation_id=conversation_id, kind="text", message="\n".join(lines))
+
+    def _confirm_latest(self, conversation_id: int) -> AssistantReply:
+        action = self._latest_create_action(conversation_id)
+        if action is None:
+            return AssistantReply(
+                conversation_id=conversation_id,
+                kind="clarification",
+                message="Nao ha uma criacao de tarefa nesta conversa para confirmar.",
+            )
+        if action.status == "cancelled":
+            return AssistantReply(
+                conversation_id=conversation_id,
+                kind="text",
+                message="Esta criacao ja foi cancelada.",
+                action_id=action.id,
+            )
+        return self._confirm_action_record(action, record_message=False)
+
+    def _cancel_latest(self, conversation_id: int) -> AssistantReply:
+        action = self._latest_create_action(conversation_id)
+        if action is None:
+            return AssistantReply(
+                conversation_id=conversation_id,
+                kind="clarification",
+                message="Nao ha uma criacao de tarefa nesta conversa para cancelar.",
+            )
+        if action.status == "executed":
+            return AssistantReply(
+                conversation_id=conversation_id,
+                kind="error",
+                message="A tarefa ja foi criada e nao pode ser cancelada pelo assistente.",
+                action_id=action.id,
+                task_id=action.task_id,
+                task_url=f"/web/board/{action.task_id}/edit" if action.task_id else None,
+            )
+        return self._cancel_action_record(action, record_message=False)
+
+    def _latest_create_action(self, conversation_id: int) -> AssistantAction | None:
+        return (
+            self.db.query(AssistantAction)
+            .filter(
+                AssistantAction.conversation_id == conversation_id,
+                AssistantAction.action_type == "create_task",
+            )
+            .order_by(AssistantAction.id.desc())
+            .first()
+        )
+
+    def _correct_pending_task(
+        self,
+        conversation_id: int,
+        command: TaskDraftCorrectionCommand,
+        today: date,
+    ) -> AssistantReply:
+        action = (
+            self.db.query(AssistantAction)
+            .filter(
+                AssistantAction.conversation_id == conversation_id,
+                AssistantAction.action_type == "create_task",
+                AssistantAction.status == "pending",
+            )
+            .order_by(AssistantAction.id.desc())
+            .first()
+        )
+        if action is None:
+            return AssistantReply(
+                conversation_id=conversation_id,
+                kind="clarification",
+                message="Nao ha um rascunho pendente para corrigir.",
+            )
+
+        arguments = dict(action.arguments_json)
+        if command.title is not None:
+            title = command.title.strip()
+            if not title:
+                return AssistantReply(
+                    conversation_id=conversation_id,
+                    kind="clarification",
+                    message="Qual deve ser o novo titulo da tarefa?",
+                )
+            arguments["titulo"] = title
+
+        if command.clear_due_date:
+            arguments["prazo"] = None
+        elif command.due_date is not None:
+            try:
+                due_date = resolve_date_expression(command.due_date, today=today)
+            except ValueError as exc:
+                return AssistantReply(
+                    conversation_id=conversation_id,
+                    kind="clarification",
+                    message=str(exc),
+                )
+            arguments["prazo"] = due_date.isoformat() if due_date else None
+
+        if command.clear_client:
+            if arguments.get("proposal_id"):
+                return AssistantReply(
+                    conversation_id=conversation_id,
+                    kind="clarification",
+                    message="A tarefa esta vinculada a uma proposta; o cliente nao pode ser removido aqui.",
+                )
+            arguments["client_id"] = None
+        elif command.client is not None:
+            client, question = self._resolve_client(command.client)
+            if question:
+                return AssistantReply(
+                    conversation_id=conversation_id,
+                    kind="clarification",
+                    message=question,
+                )
+            if arguments.get("proposal_id"):
+                proposal = self.db.get(Proposal, int(arguments["proposal_id"]))
+                if proposal is None or proposal.client_id != client.id:
+                    return AssistantReply(
+                        conversation_id=conversation_id,
+                        kind="clarification",
+                        message="A proposta informada pertence a outro cliente. Qual vinculo devo usar?",
+                    )
+            arguments["client_id"] = client.id
+
+        if command.clear_responsible:
+            arguments["user_id"] = None
+        elif command.responsible is not None:
+            user, question = self._resolve_user(command.responsible)
+            if question:
+                return AssistantReply(
+                    conversation_id=conversation_id,
+                    kind="clarification",
+                    message=question,
+                )
+            arguments["user_id"] = user.id
+
+        confirmation_token = secrets.token_urlsafe(32)
+        action.arguments_json = arguments
+        action.confirmation_token_hash = self._token_hash(confirmation_token)
+        self.db.flush()
+        return self._task_confirmation_reply(action, confirmation_token)
 
     def _prepare_task(
         self,
@@ -530,9 +816,21 @@ class AssistantService:
                 raise
             action = existing
 
+        return self._task_confirmation_reply(action, confirmation_token)
+
+    def _task_confirmation_reply(
+        self,
+        action: AssistantAction,
+        confirmation_token: str,
+    ) -> AssistantReply:
+        arguments = action.arguments_json
+        due_date = date.fromisoformat(str(arguments["prazo"])) if arguments.get("prazo") else None
+        client = self.db.get(Client, int(arguments["client_id"])) if arguments.get("client_id") else None
+        user = self.db.get(User, int(arguments["user_id"])) if arguments.get("user_id") else None
+        status_value = str(arguments.get("status") or "a_fazer")
         fields = {
-            "titulo": title,
-            "status": STATUS_LABELS[command.status],
+            "titulo": str(arguments["titulo"]),
+            "status": STATUS_LABELS[status_value],
             "prazo": due_date.strftime("%d/%m/%Y") if due_date else "Sem prazo",
             "cliente": client.razao_social if client else "Sem cliente",
             "responsavel": user.nome if user else "Sem responsavel",
@@ -543,7 +841,7 @@ class AssistantService:
             f"cliente {fields['cliente']}; responsavel {fields['responsavel']}."
         )
         return AssistantReply(
-            conversation_id=conversation_id,
+            conversation_id=action.conversation_id,
             kind="confirmation",
             message=message,
             action_id=action.id,

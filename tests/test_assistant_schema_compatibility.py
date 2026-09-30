@@ -11,6 +11,7 @@ ASSISTANT_TABLES = {
     "assistant_conversations",
     "assistant_messages",
     "assistant_actions",
+    "assistant_requests",
 }
 
 

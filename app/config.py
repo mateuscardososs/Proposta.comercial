@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     ollama_read_timeout: float = 60.0
     assistant_timezone: str = "America/Recife"
     assistant_context_messages: int = 12
+    assistant_request_lease_seconds: int = 120
 
 
 @lru_cache
