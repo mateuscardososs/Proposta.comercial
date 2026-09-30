@@ -77,7 +77,7 @@ cancelados. Nao houve duplicacao.
   `finally`, retry idempotente, erros de microfone, nivel de audio, callbacks
   tardios e falha de TTS sem reenvio da acao.
 
-Regressao final: 193 testes Python passaram, 2 foram ignorados e 17 testes
+Regressao final: 194 testes Python passaram, 2 foram ignorados e 17 testes
 JavaScript passaram. A integracao real de voz com audio sintetico tambem
 passou: Piper gerou audio, faster-whisper transcreveu, Ollama preparou e
 corrigiu o rascunho, uma unica tarefa foi salva apos `Pode criar`, confirmacao
