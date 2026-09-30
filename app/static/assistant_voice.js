@@ -43,7 +43,7 @@ export class VoiceSessionController {
       }
       this.stream = stream;
       this._beginListening(generation);
-    } catch (_error) {
+    } catch (error) {
       if (generation !== this.generation) return;
       const microphoneWasGranted = Boolean(this.stream);
       this.capture?.cancel();
@@ -52,11 +52,7 @@ export class VoiceSessionController {
       this.stream = null;
       this.active = false;
       this._setState("idle");
-      this.options.onError?.(new Error(
-        microphoneWasGranted
-          ? "O navegador permitiu o microfone, mas nao conseguiu gravar neste formato."
-          : "Nao foi possivel acessar o microfone. Verifique a permissao do navegador."
-      ));
+      this.options.onError?.(new Error(microphoneErrorMessage(error, microphoneWasGranted)));
     }
   }
 
@@ -80,6 +76,7 @@ export class VoiceSessionController {
 
   observeLevel(level, now = performance.now()) {
     if (!this.active || this.state !== "listening") return;
+    this.options.onLevel?.(level);
     if (level >= this.speechThreshold) {
       this.heardSpeech = true;
       this.lastSpeechAt = now;
@@ -193,6 +190,7 @@ export class VoiceSessionController {
     this.currentAudio = null;
     releaseStream(this.stream);
     this.stream = null;
+    this.options.onLevel?.(0);
     this._setState("idle");
   }
 
@@ -205,6 +203,7 @@ export class VoiceSessionController {
     this.currentAudio = null;
     releaseStream(this.stream);
     this.stream = null;
+    this.options.onLevel?.(0);
     this._setState("error");
     this.options.onError?.(error);
   }
@@ -219,6 +218,23 @@ export class VoiceSessionController {
   whenSettled() {
     return this._inFlight;
   }
+}
+
+
+export function microphoneErrorMessage(error, microphoneWasGranted = false) {
+  if (microphoneWasGranted) {
+    return "O navegador permitiu o microfone, mas não conseguiu gravar neste formato.";
+  }
+  if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+    return "A permissão do microfone foi negada. Libere o microfone para este endereço nas configurações do navegador.";
+  }
+  if (error?.name === "NotFoundError" || error?.name === "DevicesNotFoundError") {
+    return "Nenhum microfone foi encontrado. Conecte ou selecione um microfone e tente novamente.";
+  }
+  if (error?.name === "NotReadableError" || error?.name === "TrackStartError") {
+    return "O microfone está em uso por outro aplicativo ou não pôde ser iniciado. Feche o outro aplicativo e tente novamente.";
+  }
+  return "Não foi possível acessar o microfone. Verifique a permissão do navegador.";
 }
 
 
