@@ -17,6 +17,7 @@ from app.assistant.contracts import (
     AssistantReply,
     CancelActionCommand,
     ConfirmActionCommand,
+    ConversationCommand,
     TaskCreateCommand,
     TaskDraftCorrectionCommand,
     TaskQueryCommand,
@@ -144,6 +145,8 @@ class AssistantService:
                     kind="error",
                     message=command.message,
                 )
+            elif isinstance(command, ConversationCommand):
+                reply = self._conversation_reply(conversation.id, command)
             else:  # pragma: no cover - protected by the provider contract
                 raise ProviderResponseError("Comando desconhecido.")
         except ProviderUnavailableError:
@@ -579,7 +582,10 @@ class AssistantService:
             return AssistantReply(
                 conversation_id=conversation_id,
                 kind="text",
-                message="Nao encontrei tarefas com esses criterios.",
+                message=(
+                    "Não há tarefas cadastradas com esses critérios. "
+                    "Se quiser, posso ajudar a criar uma nova tarefa."
+                ),
             )
         lines = ["Encontrei estas tarefas:"]
         for task in tasks:
@@ -594,6 +600,28 @@ class AssistantService:
                 f"- #{task.id} {task.titulo} — {STATUS_LABELS.get(task.status, task.status)} — {deadline}{suffix}"
             )
         return AssistantReply(conversation_id=conversation_id, kind="text", message="\n".join(lines))
+
+    @staticmethod
+    def _conversation_reply(
+        conversation_id: int,
+        command: ConversationCommand,
+    ) -> AssistantReply:
+        normalized = normalize_text(command.message)
+        ungrounded_claims = (
+            r"\b(criei|alterei|atualizei|consultei|executei|exclui|apaguei|salvei|registrei)\b",
+            r"\b(tarefa|acao|registro)s?\s+(foi|foram)\s+(criad[ao]s?|alterad[ao]s?|excluid[ao]s?)\b",
+            r"\b(encontrei|localizei)\b.{0,80}\btarefas?\b",
+            r"\bvoce\s+tem\b.{0,80}\btarefas?\b",
+        )
+        if any(re.search(pattern, normalized) for pattern in ungrounded_claims):
+            raise ProviderResponseError(
+                "Resposta conversacional alegou uma operacao ou consulta nao executada."
+            )
+        return AssistantReply(
+            conversation_id=conversation_id,
+            kind="text",
+            message=command.message.strip(),
+        )
 
     def _confirm_latest(self, conversation_id: int) -> AssistantReply:
         action = self._latest_create_action(conversation_id)

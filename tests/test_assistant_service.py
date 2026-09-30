@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.assistant.contracts import (
+    ConversationCommand,
     ConfirmActionCommand,
     TaskCreateCommand,
     TaskDraftCorrectionCommand,
@@ -64,6 +65,72 @@ def test_query_reads_real_tasks_and_persists_conversation(db):
     assert "Servico concluido" not in reply.message
     assert db.query(AssistantConversation).count() == 1
     assert db.query(AssistantMessage).count() == 2
+
+
+def test_natural_conversation_reply_is_returned_and_persisted(db):
+    provider = QueueProvider(
+        ConversationCommand(
+            message="Boa tarde! Posso consultar o quadro e ajudar a preparar uma nova tarefa."
+        )
+    )
+    service = AssistantService(db, provider, now=_now)
+
+    reply = service.handle_message(message="Oi, boa tarde.", request_id="talk-1")
+
+    assert reply.kind == "text"
+    assert reply.message.startswith("Boa tarde")
+    assert reply.action_id is None
+    assert reply.task_id is None
+    assert db.query(Task).count() == 0
+
+
+def test_question_about_previous_answer_reaches_provider_with_history(db):
+    provider = QueueProvider(
+        ConversationCommand(message="Posso consultar e criar tarefas no quadro."),
+        ConversationCommand(
+            message="Eu quis dizer que consulto tarefas reais e preparo novas tarefas para sua confirmação."
+        ),
+    )
+    service = AssistantService(db, provider, now=_now)
+
+    first = service.handle_message(message="O que você faz?", request_id="talk-history-1")
+    second = service.handle_message(
+        message="O que você quis dizer?",
+        request_id="talk-history-2",
+        conversation_id=first.conversation_id,
+    )
+
+    assert "consulto tarefas reais" in second.message
+    assert [item.content for item in provider.calls[1]] == [
+        "O que você faz?",
+        first.message,
+        "O que você quis dizer?",
+    ]
+
+
+def test_conversation_reply_cannot_claim_an_unexecuted_action(db):
+    provider = QueueProvider(
+        ConversationCommand(message="Criei a tarefa no quadro para você.")
+    )
+    service = AssistantService(db, provider, now=_now)
+
+    reply = service.handle_message(message="Oi", request_id="unsafe-talk-1")
+
+    assert reply.kind == "error"
+    assert "Nada foi alterado" in reply.message
+    assert db.query(Task).count() == 0
+
+
+def test_empty_query_explicitly_reports_empty_board_and_offers_help(db):
+    provider = QueueProvider(TaskQueryCommand())
+    service = AssistantService(db, provider, now=_now)
+
+    reply = service.handle_message(
+        message="O que tenho para fazer hoje?", request_id="empty-query-1"
+    )
+
+    assert "Não há tarefas cadastradas" in reply.message
+    assert "criar" in reply.message.lower()
 
 
 def test_create_resolves_relative_date_and_only_saves_after_confirmation(db):
