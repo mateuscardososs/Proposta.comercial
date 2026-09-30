@@ -14,6 +14,7 @@ function deferred() {
 function harness(overrides = {}) {
   const states = [];
   const errors = [];
+  const levels = [];
   const tracks = [{ stopped: 0, stop() { this.stopped += 1; } }];
   const stream = { getTracks: () => tracks };
   const captures = [];
@@ -47,10 +48,11 @@ function harness(overrides = {}) {
     },
     onState: (state) => states.push(state),
     onError: (error) => errors.push(error.message),
+    onLevel: (level) => levels.push(level),
     silenceMs: 100,
     ...overrides,
   });
-  return { controller, states, errors, tracks, captures, audios };
+  return { controller, states, errors, levels, tracks, captures, audios };
 }
 
 
@@ -61,6 +63,26 @@ test("permission failure returns to idle with a useful error", async () => {
   assert.equal(sample.states.at(-1), "idle");
   assert.match(sample.errors.at(-1), /microfone/i);
 });
+
+
+for (const [name, expected] of [
+  ["NotAllowedError", /permiss[aã]o.*microfone/i],
+  ["NotFoundError", /nenhum microfone/i],
+  ["NotReadableError", /microfone.*uso/i],
+]) {
+  test(`${name} gives a specific microphone recovery message`, async () => {
+    const error = new Error(name);
+    error.name = name;
+    const sample = harness({ getStream: async () => { throw error; } });
+
+    const starting = sample.controller.start();
+    assert.equal(sample.states.at(-1), "requesting", "click must react before permission settles");
+    await starting;
+
+    assert.match(sample.errors.at(-1), expected);
+    assert.equal(sample.controller.active, false);
+  });
+}
 
 
 test("recorder startup failure releases the granted microphone", async () => {
@@ -81,6 +103,17 @@ test("silence after speech automatically finishes the utterance", async () => {
   assert.equal(sample.captures[0].startCalls, 1);
   assert.equal(sample.audios[0].playCalls, 1);
   sample.controller.stop();
+});
+
+
+test("microphone levels are exposed while listening and reset when it stops", async () => {
+  const sample = harness();
+  await sample.controller.start();
+  sample.controller.observeLevel(0.04, 10);
+  sample.controller.stop();
+
+  assert.equal(sample.levels[0], 0.04);
+  assert.equal(sample.levels.at(-1), 0);
 });
 
 
