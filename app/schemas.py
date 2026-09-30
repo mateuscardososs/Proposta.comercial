@@ -12,6 +12,13 @@ class ORMModel(BaseModel):
 
 
 ProposalOrigin = Literal["sistema", "reupload_editado", "upload_externo"]
+TaskStatus = Literal[
+    "a_fazer",
+    "em_andamento",
+    "servico_feito_falta_nota_pedido",
+    "aguardando_cliente",
+    "concluido",
+]
 
 
 class ClientBase(BaseModel):
@@ -260,7 +267,7 @@ class ImportProposalsResponse(BaseModel):
 class TaskBase(BaseModel):
     titulo: str
     descricao: str = ""
-    status: str = "a_fazer"
+    status: TaskStatus = "a_fazer"
     client_id: int | None = None
     proposal_id: int | None = None
     user_id: int | None = None
@@ -274,7 +281,7 @@ class TaskCreate(TaskBase):
 class TaskUpdate(BaseModel):
     titulo: str | None = None
     descricao: str | None = None
-    status: str | None = None
+    status: TaskStatus | None = None
     client_id: int | None = None
     proposal_id: int | None = None
     user_id: int | None = None
@@ -293,7 +300,7 @@ class TaskRead(ORMModel, TaskBase):
 
 
 class TaskMove(BaseModel):
-    status: str
+    status: TaskStatus
     ordem: int
 
 

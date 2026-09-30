@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .assistant-shell {
+    width: min(100%, 980px);
+    margin: 0 auto;
+    display: grid;
+    gap: 14px;
+  }
+
+  .assistant-local-strip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid rgba(29, 143, 110, 0.3);
+    border-radius: var(--radius-sm);
+    background: #e7f7f1;
+    color: #0f5c46;
+    padding: 9px 12px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .assistant-local-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(29, 143, 110, 0.14);
+    flex: 0 0 auto;
+  }
+
+  .assistant-stage {
+    min-height: 430px;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .assistant-history {
+    min-height: 320px;
+    max-height: 58vh;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background:
+      linear-gradient(rgba(214, 222, 233, 0.32) 1px, transparent 1px),
+      var(--surface-muted);
+    background-size: 100% 44px;
+  }
+
+  .assistant-empty {
+    margin: auto;
+    max-width: 600px;
+    text-align: center;
+    color: var(--text-soft);
+  }
+
+  .assistant-empty strong {
+    display: block;
+    color: var(--text);
+    font-size: 18px;
+    margin-bottom: 6px;
+  }
+
+  .assistant-message {
+    width: fit-content;
+    max-width: min(78%, 720px);
+    border: 1px solid var(--line);
+    border-radius: 14px 14px 14px 4px;
+    background: #fff;
+    padding: 11px 13px;
+    box-shadow: var(--shadow-sm);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .assistant-message.user {
+    align-self: flex-end;
+    border-color: rgba(13, 90, 157, 0.28);
+    border-radius: 14px 14px 4px 14px;
+    background: #e8f2fc;
+  }
+
+  .assistant-message.error {
+    border-color: rgba(178, 51, 62, 0.3);
+    background: #fdecee;
+    color: #8b202b;
+  }
+
+  .assistant-message.success {
+    border-color: rgba(29, 143, 110, 0.3);
+    background: #e7f7f1;
+  }
+
+  .assistant-message-label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.55px;
+    text-transform: uppercase;
+  }
+
+  .assistant-confirm-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+
+  .assistant-composer {
+    border-top: 1px solid var(--line);
+    background: #fff;
+    padding: 14px;
+  }
+
+  .assistant-composer-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: end;
+  }
+
+  .assistant-composer textarea {
+    min-height: 48px;
+    max-height: 150px;
+  }
+
+  .assistant-status {
+    min-height: 20px;
+    margin: 7px 0 0;
+    color: var(--text-soft);
+    font-size: 12px;
+  }
+
+  .assistant-status.is-busy::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 7px;
+    border-radius: 50%;
+    background: var(--brand);
+    animation: assistant-pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes assistant-pulse {
+    50% { opacity: 0.35; transform: scale(0.78); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .assistant-status.is-busy::before { animation: none; }
+  }
+
+  @media (max-width: 640px) {
+    .assistant-history { padding: 12px; max-height: 62vh; }
+    .assistant-message { max-width: 92%; }
+    .assistant-composer-row { grid-template-columns: 1fr; }
+    .assistant-composer-row .btn { width: 100%; }
+  }
+</style>
+
+<div class="assistant-shell">
+  <section class="page-header">
+    <h1 class="page-title">Assistente operacional</h1>
+    <p class="page-subtitle">Consulte prazos e prepare tarefas em linguagem natural. Toda criacao pede confirmacao antes de entrar no quadro.</p>
+    <div class="meta-line">
+      <span class="badge primary">Texto agora, voz depois</span>
+      <span class="badge">Fuso America/Recife</span>
+    </div>
+  </section>
+
+  <div class="assistant-local-strip" role="note">
+    <span class="assistant-local-dot" aria-hidden="true"></span>
+    Somente neste computador. O assistente nao possui autenticacao para publicacao externa.
+  </div>
+
+  <section class="card assistant-stage" aria-label="Conversa com o assistente">
+    <div class="assistant-history" id="assistant-history" aria-live="polite">
+      <div class="assistant-empty" id="assistant-empty">
+        <strong>O que precisa de atencao agora?</strong>
+        Tente “Quais tarefas vencem esta semana?” ou “Crie para amanha a tarefa de preparar o relatorio”.
+      </div>
+    </div>
+
+    <form class="assistant-composer" id="assistant-form">
+      <div class="assistant-composer-row">
+        <div class="field">
+          <label for="assistant-message">Mensagem</label>
+          <textarea id="assistant-message" name="message" rows="2" maxlength="4000"
+                    placeholder="Escreva uma consulta ou peca uma nova tarefa..." required></textarea>
+        </div>
+        <button class="btn btn-primary" id="assistant-send" type="submit">Enviar</button>
+      </div>
+      <p class="assistant-status" id="assistant-status" role="status"></p>
+    </form>
+  </section>
+</div>
+
+<script>
+  (function () {
+    const form = document.getElementById("assistant-form");
+    const input = document.getElementById("assistant-message");
+    const send = document.getElementById("assistant-send");
+    const history = document.getElementById("assistant-history");
+    const empty = document.getElementById("assistant-empty");
+    const status = document.getElementById("assistant-status");
+    const initialConversation = new URLSearchParams(window.location.search).get("conversation_id");
+    let conversationId = initialConversation ? Number(initialConversation) : null;
+    let busy = false;
+
+    function requestId() {
+      if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+      return `assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function setBusy(value, text) {
+      busy = value;
+      input.disabled = value;
+      send.disabled = value;
+      status.textContent = text || "";
+      status.classList.toggle("is-busy", value);
+    }
+
+    function updateConversation(id) {
+      conversationId = id;
+      const url = new URL(window.location.href);
+      url.searchParams.set("conversation_id", String(id));
+      window.history.replaceState({}, "", url);
+    }
+
+    function appendMessage(role, content, kind, details) {
+      if (empty) empty.remove();
+      const article = document.createElement("article");
+      article.className = `assistant-message ${role}${kind === "error" || kind === "success" ? ` ${kind}` : ""}`;
+
+      const label = document.createElement("span");
+      label.className = "assistant-message-label";
+      label.textContent = role === "user" ? "Voce" : "Assistente";
+      article.appendChild(label);
+
+      const text = document.createElement("span");
+      text.textContent = content;
+      article.appendChild(text);
+
+      if (kind === "confirmation" && details && details.action_id) {
+        const actions = document.createElement("div");
+        actions.className = "assistant-confirm-actions";
+        const confirm = document.createElement("button");
+        confirm.type = "button";
+        confirm.className = "btn btn-primary";
+        confirm.textContent = "Confirmar criacao";
+        confirm.addEventListener("click", () => runAction(details.action_id, details.confirmation_token, "confirm", actions));
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "btn btn-ghost";
+        cancel.textContent = "Cancelar";
+        cancel.addEventListener("click", () => runAction(details.action_id, details.confirmation_token, "cancel", actions));
+        actions.append(confirm, cancel);
+        article.appendChild(actions);
+      }
+
+      if (details && details.task_url) {
+        const actions = document.createElement("div");
+        actions.className = "assistant-confirm-actions";
+        const link = document.createElement("a");
+        link.className = "btn btn-ghost";
+        link.href = details.task_url;
+        link.textContent = "Abrir tarefa no quadro";
+        actions.appendChild(link);
+        article.appendChild(actions);
+      }
+
+      history.appendChild(article);
+      history.scrollTop = history.scrollHeight;
+    }
+
+    async function responseJson(response) {
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "A operacao nao foi concluida.");
+      return payload;
+    }
+
+    async function runAction(actionId, confirmationToken, action, controls) {
+      if (busy) return;
+      controls.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      setBusy(true, action === "confirm" ? "Salvando a tarefa..." : "Cancelando...");
+      try {
+        const response = await fetch(`/api/assistant/actions/${actionId}/${action}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmation_token: confirmationToken }),
+        });
+        const payload = await responseJson(response);
+        appendMessage("assistant", payload.message, payload.kind, payload);
+      } catch (error) {
+        appendMessage("assistant", error.message, "error", {});
+        controls.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+      } finally {
+        setBusy(false, "");
+        input.focus();
+      }
+    }
+
+    async function loadHistory() {
+      if (!conversationId) return;
+      setBusy(true, "Carregando conversa...");
+      try {
+        const response = await fetch(`/api/assistant/conversations/${conversationId}`);
+        const payload = await responseJson(response);
+        payload.messages.forEach((message) => appendMessage(message.role, message.content, message.kind, message.details));
+      } catch (error) {
+        appendMessage("assistant", error.message, "error", {});
+      } finally {
+        setBusy(false, "");
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      const message = input.value.trim();
+      if (!message) return;
+      const id = requestId();
+      appendMessage("user", message, "text", {});
+      input.value = "";
+      setBusy(true, "Consultando o assistente local...");
+      try {
+        const response = await fetch("/api/assistant/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, request_id: id, conversation_id: conversationId }),
+        });
+        const payload = await responseJson(response);
+        updateConversation(payload.conversation_id);
+        appendMessage("assistant", payload.message, payload.kind, payload);
+      } catch (error) {
+        appendMessage("assistant", error.message, "error", {});
+      } finally {
+        setBusy(false, "");
+        input.focus();
+      }
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    loadHistory();
+  })();
+</script>
+{% endblock %}
