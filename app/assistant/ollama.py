@@ -124,6 +124,10 @@ def _validated_command(
                 return assistant_command_adapter.validate_python(
                     {"tool": textual_tool, **arguments}
                 )
+            if allowed_tools == {"responder_conversa"} and stripped:
+                return assistant_command_adapter.validate_python(
+                    {"tool": "responder_conversa", "message": stripped}
+                )
         raise KeyError("tool_calls")
     if not isinstance(tool_calls, list) or len(tool_calls) != 1:
         raise ValueError("O modelo deve solicitar exatamente uma ferramenta.")

@@ -482,3 +482,35 @@ def test_ollama_repairs_a_conversation_that_changes_a_real_task_status():
     assert calls == 2
     assert isinstance(command, ConversationCommand)
     assert "a fazer" in command.message
+
+
+def test_meta_conversation_accepts_natural_text_under_the_restricted_tool():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": "Eu quis dizer que a tarefa #1 está a fazer em 02/10/2026.",
+                }
+            },
+        )
+
+    provider = OllamaProvider(
+        base_url="http://127.0.0.1:11434",
+        model="modelo-local",
+        connect_timeout=1,
+        read_timeout=30,
+        transport=httpx.MockTransport(handler),
+    )
+    command = provider.interpret(
+        [
+            ProviderMessage(role="assistant", content="Encontrei estas tarefas:\n- #1 Relatório — A fazer — 02/10/2026"),
+            ProviderMessage(role="user", content="O que você quis dizer?"),
+        ],
+        today=date(2026, 9, 30),
+        timezone="America/Recife",
+    )
+
+    assert isinstance(command, ConversationCommand)
+    assert command.message.startswith("Eu quis dizer")
