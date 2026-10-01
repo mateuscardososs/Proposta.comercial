@@ -40,9 +40,11 @@ class Settings(BaseSettings):
     ollama_model: str = ""
     ollama_connect_timeout: float = 3.0
     ollama_read_timeout: float = 60.0
+    ollama_max_output_tokens: int = 180
     assistant_timezone: str = "America/Recife"
     assistant_context_messages: int = 12
     assistant_request_lease_seconds: int = 120
+    assistant_max_tool_rounds: int = 2
     voice_enabled: bool = True
     voice_model_dir: Path = VOICE_MODEL_DIR
     voice_whisper_model: str = "small"
@@ -60,7 +62,7 @@ class Settings(BaseSettings):
     voice_max_duration_seconds: float = 30.0
     voice_transcription_timeout_seconds: float = 60.0
     voice_synthesis_timeout_seconds: float = 30.0
-    voice_silence_ms: int = 1200
+    voice_silence_ms: int = 1800
     voice_idle_timeout_seconds: int = 120
 
 

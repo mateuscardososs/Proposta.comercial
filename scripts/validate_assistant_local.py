@@ -110,8 +110,13 @@ class RecordingProvider:
         self.provider = provider
         self.commands: list[dict[str, Any]] = []
 
-    def interpret(self, messages: Any, *, today: date, timezone: str) -> Any:
-        command = self.provider.interpret(messages, today=today, timezone=timezone)
+    def interpret(self, messages: Any, *, today: date, timezone: str, **context: Any) -> Any:
+        command = self.provider.interpret(
+            messages,
+            today=today,
+            timezone=timezone,
+            **context,
+        )
         self.commands.append(command.model_dump(mode="json"))
         return command
 
