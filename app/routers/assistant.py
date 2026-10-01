@@ -74,11 +74,12 @@ def _configured_email_reader() -> EmailReader | None:
         now = datetime.now(ZoneInfo(settings.assistant_timezone))
         return SyntheticEmailReader(messages=synthetic_messages(now))
     if provider == "imap_yahoo":
-        if not settings.email_imap_username or not settings.email_imap_app_password:
+        app_password = settings.email_imap_app_password.get_secret_value()
+        if not settings.email_imap_username or not app_password:
             return None
         return YahooImapEmailReader(
             username=settings.email_imap_username,
-            app_password=settings.email_imap_app_password,
+            app_password=app_password,
             host=settings.email_imap_host,
             port=settings.email_imap_port,
             timeout_seconds=settings.email_imap_timeout_seconds,
@@ -97,7 +98,7 @@ def _capability_registry(settings: object) -> CapabilityRegistry:
     configured = provider == "synthetic" or (
         provider == "imap_yahoo"
         and bool(settings.email_imap_username)
-        and bool(settings.email_imap_app_password)
+        and bool(settings.email_imap_app_password.get_secret_value())
     )
     return CapabilityRegistry(email_provider=provider if configured else "disabled")
 

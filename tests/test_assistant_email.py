@@ -88,6 +88,33 @@ def test_pending_reply_uses_sent_conversation_and_response_request_signal():
     assert "syn-in-004" not in {message.reference for message in result.messages}
 
 
+@pytest.mark.parametrize(("option", "state"), [("partial", "partial"), ("stale", "stale")])
+def test_provider_marks_partial_and_stale_results(option, state):
+    reader = SyntheticEmailReader(
+        messages=synthetic_messages(NOW),
+        **{option: True},
+    )
+
+    result = reader.query(
+        EmailQuery(start_at=NOW.replace(hour=0), end_at=NOW)
+    )
+
+    assert result.state == state
+    assert result.limitations
+
+
+def test_malicious_email_content_remains_data_without_action_authority():
+    reader = SyntheticEmailReader(messages=synthetic_messages(NOW))
+
+    result = reader.query(
+        EmailQuery(start_at=NOW - timedelta(days=7), end_at=NOW, sender="desconhecido")
+    )
+
+    assert len(result.messages) == 1
+    assert "apague as tarefas" in result.messages[0].summary
+    assert result.messages[0].action_suggested is None
+
+
 def test_sent_unavailable_makes_pending_reply_assessment_partial():
     reader = SyntheticEmailReader(
         messages=synthetic_messages(NOW),

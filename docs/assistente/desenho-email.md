@@ -30,8 +30,8 @@ produzir texto sem uma prova de ferramenta. A correção é estrutural:
 - `email/synthetic.py`: caixa imutável para testes e demonstração.
 - `email/imap.py`: adaptador genérico IMAP com configuração Yahoo, conexão SSL, `SELECT` somente
   leitura e buscas/fetches sem alteração da flag `\\Seen`.
-- `email/service.py`: período no fuso da aplicação, cache, classificação determinística,
-  encadeamento entrada/enviados e resultados auditáveis.
+- `AssistantService` e `email/classification.py`: período no fuso da aplicação, classificação
+  determinística, encadeamento entrada/enviados e resultados auditáveis.
 - `AssistantService`: orquestra a ferramenta, devolve somente um conjunto limitado ao modelo e
   preserva referências apresentadas para continuidade.
 
@@ -60,7 +60,8 @@ alguém compreendeu a mensagem.
 - telemetria guarda tempos, contagens, estados e referências opacas, sem corpo, assunto ou remetente;
 - o histórico visual persiste o texto apresentado e os detalhes estruturados necessários à
   continuidade;
-- o cache persiste metadados, resumo e trecho limitado pelo período configurável de retenção;
+- o histórico persiste metadados e resumo pelo período configurável de retenção; não existe cache
+  separado nesta versão porque as consultas são específicas e limitadas;
 - o adaptador não abre links, não salva anexos e busca somente a parte textual escolhida pelo
   `BODYSTRUCTURE`;
 - a seleção de pastas usa atributos IMAP (`\\Inbox`, `\\Sent`) antes de recorrer a nomes conhecidos.
@@ -95,4 +96,3 @@ EMAIL_BODY_PREVIEW_CHARS=4000
 
 Esses valores sensíveis devem ficar em `.env` local ou no gerenciador de segredos do ambiente, nunca
 no Git. O processo não imprime usuário nem senha.
-

@@ -7,10 +7,27 @@ from app.assistant.dates import normalize_text
 from app.assistant.provider import ProviderToolResult
 
 
+def references_prior_email_context(message: str) -> bool:
+    """Return whether the request explicitly points at previously shown email data."""
+
+    normalized = normalize_text(message)
+    return bool(
+        re.search(
+            r"\b(?:este|esta|esse|essa|aquele|aquela)\s+(?:e[- ]?mail|mensagem)\b|"
+            r"\b(?:o|a)\s+(?:primeir[oa]|segund[oa]|terceir[oa])\b|"
+            r"\b(?:primeir[oa]|segund[oa]|terceir[oa])\s+(?:e[- ]?mail|mensagem)\b|"
+            r"\b(?:quem (?:enviou|mandou)|qual (?:o )?remetente|leia mais|"
+            r"por que (?:esse|essa|este|esta|ele|ela)|responder (?:esse|essa|este|esta))\b",
+            normalized,
+        )
+    )
+
+
 def validate_execution_claims(
     message: str,
     *,
     tool_results: Sequence[ProviderToolResult],
+    allow_historical_email_claim: bool = False,
 ) -> None:
     """Reject claims about system state or actions without request-scoped evidence."""
 
@@ -25,7 +42,7 @@ def validate_execution_claims(
         ),
     )
     email_result = evidence.get("consultar_emails")
-    if email_claim and email_result is None:
+    if email_claim and email_result is None and not allow_historical_email_claim:
         raise ValueError("A resposta alegou consulta de e-mail sem evidencia desta solicitacao.")
     if email_claim and email_result is not None and email_result.state == "failed":
         raise ValueError("Uma consulta de e-mail que falhou nao pode ser descrita como bem-sucedida.")
