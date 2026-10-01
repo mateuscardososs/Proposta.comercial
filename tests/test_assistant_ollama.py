@@ -780,7 +780,8 @@ def test_ollama_accepts_one_validated_single_tool_call():
     assert isinstance(payload, dict)
     assert "format" not in payload
     assert {tool["function"]["name"] for tool in payload["tools"]} == {
-        "consultar_tarefas",
+            "consultar_tarefas",
+            "consultar_emails",
         "criar_tarefa",
         "corrigir_tarefa",
         "confirmar_acao",

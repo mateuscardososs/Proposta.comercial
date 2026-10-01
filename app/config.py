@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     assistant_context_messages: int = 12
     assistant_request_lease_seconds: int = 120
     assistant_max_tool_rounds: int = 2
+    email_provider: str = "disabled"
+    email_imap_host: str = "imap.mail.yahoo.com"
+    email_imap_port: int = 993
+    email_imap_username: str = ""
+    email_imap_app_password: str = ""
+    email_imap_timeout_seconds: float = 10.0
+    email_max_messages: int = 30
+    email_cache_retention_days: int = 14
+    email_body_preview_chars: int = 4000
     voice_enabled: bool = True
     voice_model_dir: Path = VOICE_MODEL_DIR
     voice_whisper_model: str = "small"

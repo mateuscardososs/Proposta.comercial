@@ -17,7 +17,9 @@ class ProviderMessage(BaseModel):
 
 
 class ProviderToolResult(BaseModel):
-    tool: Literal["consultar_tarefas"]
+    tool: Literal["consultar_tarefas", "consultar_emails"]
+    evidence_id: str | None = None
+    state: Literal["success", "empty", "partial", "stale", "failed"] = "success"
     payload: dict[str, object]
 
 

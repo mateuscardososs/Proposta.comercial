@@ -265,6 +265,24 @@ class AssistantAction(Base, TimestampMixin):
     task: Mapped[Task | None] = relationship()
 
 
+class AssistantEmailTaskLink(Base, TimestampMixin):
+    __tablename__ = "assistant_email_task_links"
+    __table_args__ = (UniqueConstraint("task_id", "email_reference"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email_reference: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+
+    task: Mapped[Task] = relationship()
+
+
 class Lancamento(Base, TimestampMixin):
     __tablename__ = "lancamentos"
 
