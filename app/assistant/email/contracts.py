@@ -35,12 +35,12 @@ class EmailQuery(BaseModel):
 class EmailMessageRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    reference: str
-    thread_reference: str
+    reference: str = Field(max_length=160)
+    thread_reference: str = Field(max_length=500)
     folder_role: Literal["inbox", "sent", "other"]
-    sender: str
+    sender: str = Field(max_length=500)
     recipients: tuple[str, ...] = ()
-    subject: str
+    subject: str = Field(max_length=500)
     received_at: datetime
     seen: bool
     text: str = Field(default="", max_length=12000)
@@ -49,12 +49,12 @@ class EmailMessageRecord(BaseModel):
 class EmailMessageResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    reference: str
-    sender: str
-    subject: str
+    reference: str = Field(max_length=160)
+    sender: str = Field(max_length=500)
+    subject: str = Field(max_length=500)
     received_at: datetime
     seen: bool
-    summary: str
+    summary: str = Field(max_length=400)
     priority: EmailPriority
     priority_reason: str
     action_suggested: str | None = None
@@ -78,4 +78,3 @@ class EmailQueryResult(BaseModel):
     stale: bool = False
     limitations: list[str] = Field(default_factory=list)
     user_message: str = ""
-

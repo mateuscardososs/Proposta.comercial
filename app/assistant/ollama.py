@@ -12,7 +12,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.assistant.dates import normalize_text
-from app.assistant.evidence import validate_execution_claims
+from app.assistant.evidence import references_prior_email_context, validate_execution_claims
 from app.assistant.contracts import (
     AssistantCommand,
     CancelActionCommand,
@@ -46,6 +46,7 @@ TASK_STATUS_TERMS = (
     "concluido",
 )
 CONTEXT_CHARACTER_BUDGET = 3200
+PROMPT_DATA_CHARACTER_BUDGET = 8000
 UNAVAILABLE_OPERATION_PATTERN = re.compile(
     r"\b(atendimento|pagamento|financeiro|conta paga|nota fiscal|emitir nota|"
     r"enviar (?:e-mail|email|mensagem)|excluir|apagar)\b"
@@ -118,6 +119,46 @@ def _ollama_tools(allowed_tools: set[str] | None = None) -> list[dict[str, objec
     return tools
 
 
+def _prompt_tool_results(
+    tool_results: Sequence[ProviderToolResult],
+) -> list[dict[str, object]]:
+    compact: list[dict[str, object]] = []
+    for result in tool_results:
+        serialized = result.model_dump(mode="json")
+        payload = dict(serialized.get("payload") or {})
+        raw_items = payload.get("messages" if result.tool == "consultar_emails" else "tasks", [])
+        if isinstance(raw_items, list):
+            if result.tool == "consultar_emails":
+                allowed_fields = (
+                    "reference", "sender", "subject", "received_at", "seen", "summary", "priority",
+                    "priority_reason", "action_suggested", "explicit_deadline", "inferred_deadline",
+                    "awaiting_reply", "limitations",
+                )
+                limits = {
+                    "reference": 160,
+                    "sender": 240,
+                    "subject": 240,
+                    "summary": 280,
+                    "priority_reason": 240,
+                    "action_suggested": 200,
+                }
+                items = []
+                for item in raw_items[:3]:
+                    if not isinstance(item, dict):
+                        continue
+                    compact_item = {key: item.get(key) for key in allowed_fields if key in item}
+                    for key, limit in limits.items():
+                        if isinstance(compact_item.get(key), str):
+                            compact_item[key] = compact_item[key][:limit]
+                    items.append(compact_item)
+                payload["messages"] = items
+            else:
+                payload["tasks"] = raw_items[:10]
+        serialized["payload"] = payload
+        compact.append(serialized)
+    return compact
+
+
 def _validated_command(
     response: httpx.Response,
     *,
@@ -173,6 +214,7 @@ def _validate_conversation_grounding(
     *,
     tool_results: Sequence[ProviderToolResult],
     latest_assistant: str = "",
+    latest_email_evidence: str = "",
     current_message: str = "",
 ) -> AssistantCommand:
     if not isinstance(command, ConversationCommand):
@@ -190,7 +232,19 @@ def _validate_conversation_grounding(
         raise ValueError("A resposta expos o envelope interno de contexto.")
     normalized_request = normalize_text(current_message)
     normalized_answer = normalize_text(command.message)
-    validate_execution_claims(command.message, tool_results=tool_results)
+    historical_email_label = bool(
+        latest_email_evidence
+        and re.search(
+            r"\b(?:resultado|consulta|mensagens?|e[- ]?mails?)\s+(?:anterior|anteriores)\b|"
+            r"\bapresentad[oa]s? anteriormente\b",
+            normalized_answer,
+        )
+    )
+    validate_execution_claims(
+        command.message,
+        tool_results=tool_results,
+        allow_historical_email_claim=historical_email_label,
+    )
     requests_board_facts = (
         any(term in normalized_request for term in ("tarefa", "pendencia", "quadro", "prazo"))
         and any(
@@ -210,6 +264,7 @@ def _validate_conversation_grounding(
     )
     if requests_board_facts and asserts_board_state and not tool_results:
         raise ValueError("A resposta alegou estado do quadro sem consulta real.")
+    using_historical_email_source = False
     if tool_results:
         source = json.dumps(
             [result.model_dump(mode="json") for result in tool_results],
@@ -217,14 +272,13 @@ def _validate_conversation_grounding(
         ).casefold()
     elif latest_assistant.startswith("Encontrei estas tarefas:"):
         source = latest_assistant.casefold()
-    elif "Mensagens exibidas nesta resposta:" in latest_assistant:
-        source = latest_assistant.casefold()
-        historical_marker = re.search(
-            r"\b(?:resultado|consulta|mensagens?|e[- ]?mails?)\s+(?:anterior|anteriores)\b|"
-            r"\bapresentad[oa]s? anteriormente\b",
-            normalized_answer,
-        )
-        if not historical_marker:
+    elif (
+        "Mensagens exibidas nesta resposta:" in latest_email_evidence
+        and references_prior_email_context(current_message)
+    ):
+        source = latest_email_evidence.casefold()
+        using_historical_email_source = True
+        if not historical_email_label:
             raise ValueError("Fatos historicos de e-mail devem ser identificados como resultado anterior.")
     else:
         return command
@@ -246,7 +300,9 @@ def _validate_conversation_grounding(
         "inacabad",
         "imediat",
     )
-    if tool_results:
+    has_task_tool_results = any(result.tool == "consultar_tarefas" for result in tool_results)
+    has_email_tool_results = any(result.tool == "consultar_emails" for result in tool_results)
+    if has_task_tool_results:
         sentences = re.split(r"(?<=[.!?])\s+", command.message.strip())
         grounded_sentences: list[str] = []
         grounding_adjusted = False
@@ -286,7 +342,45 @@ def _validate_conversation_grounding(
         raise ValueError("A resposta conversacional alterou o status consultado.")
     if "oficial" in answer and "oficial" not in source:
         raise ValueError("A resposta conversacional inventou uma qualificacao de e-mail.")
+    if has_email_tool_results or using_historical_email_source:
+        _validate_email_facts(command.message, source)
     return command
+
+
+def _validate_email_facts(message: str, source: str) -> None:
+    normalized_source = normalize_text(source)
+    for quoted in re.findall(r'["“]([^"”]{2,500})["”]', message):
+        if normalize_text(quoted) not in normalized_source:
+            raise ValueError("A resposta de e-mail inventou um assunto ou trecho citado.")
+    for email_address in re.findall(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b", message):
+        if email_address.casefold().rstrip(".,;:") not in source.casefold():
+            raise ValueError("A resposta de e-mail inventou um endereco.")
+    for amount in re.findall(r"R\$\s*\d[\d.]*,\d{2}", message, flags=re.IGNORECASE):
+        if amount.casefold().replace(" ", "") not in source.casefold().replace(" ", ""):
+            raise ValueError("A resposta de e-mail inventou um valor.")
+
+    common_capitalized = {
+        "a", "ao", "as", "com", "de", "do", "e", "em", "este", "esta", "esse", "essa",
+        "foram", "foi", "ha", "hoje", "na", "nao", "no", "o", "os", "pela", "pelo",
+        "por", "primeiro", "resultado", "segundo", "tambem", "um", "uma",
+    }
+    for match in re.finditer(
+        r"(?<![\w@])([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\wÀ-ÿ-]{2,}(?:\s+(?:da|de|do|dos|das|-)?\s*"
+        r"[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\wÀ-ÿ-]{2,})*)",
+        message,
+    ):
+        phrase = match.group(1)
+        normalized_phrase = normalize_text(phrase).strip()
+        if normalized_phrase in common_capitalized:
+            continue
+        preceding = normalize_text(message[max(0, match.start() - 24) : match.start()])
+        capitalized_words = re.findall(r"[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\wÀ-ÿ-]{2,}", phrase)
+        if len(capitalized_words) == 1 and not re.search(
+            r"\b(?:por|de|da|do|empresa|remetente)\s*$", preceding
+        ):
+            continue
+        if normalized_phrase not in normalized_source:
+            raise ValueError("A resposta de e-mail inventou remetente, empresa ou entidade.")
 
 
 def _validate_tool_scope(
@@ -409,8 +503,13 @@ class OllamaProvider:
             ),
         )
 
+        prompt_tool_results = _prompt_tool_results(tool_results)
+        tool_results_json = json.dumps(prompt_tool_results, ensure_ascii=False)
         recent_context: list[dict[str, str]] = []
-        remaining_context = CONTEXT_CHARACTER_BUDGET
+        remaining_context = min(
+            CONTEXT_CHARACTER_BUDGET,
+            max(400, PROMPT_DATA_CHARACTER_BUDGET - len(tool_results_json)),
+        )
         for item in reversed(messages[:-1]):
             if remaining_context <= 0:
                 break
@@ -422,6 +521,14 @@ class OllamaProvider:
             (item.content for item in reversed(messages[:-1]) if item.role == "assistant"),
             "",
         )
+        latest_email_evidence = next(
+            (
+                item.content
+                for item in reversed(messages[:-1])
+                if item.role == "assistant" and "Mensagens exibidas nesta resposta:" in item.content
+            ),
+            "",
+        )
         has_task_results = any(result.tool == "consultar_tarefas" for result in tool_results)
         has_email_results = any(result.tool == "consultar_emails" for result in tool_results)
         contextual_request = ProviderMessage(
@@ -431,7 +538,7 @@ class OllamaProvider:
                 f"HISTORICO_JSON={json.dumps(recent_context, ensure_ascii=False)}\n"
                 f"CAPACIDADES_JSON={json.dumps(self.capabilities, ensure_ascii=False)}\n"
                 f"ACAO_PENDENTE_JSON={json.dumps(pending_action.model_dump(mode='json') if pending_action else None, ensure_ascii=False)}\n"
-                f"RESULTADOS_FERRAMENTAS_JSON={json.dumps([result.model_dump(mode='json') for result in tool_results], ensure_ascii=False)}\n"
+                f"RESULTADOS_FERRAMENTAS_JSON={tool_results_json}\n"
                 f"REFERENCIAS_TECNICAS_JSON={json.dumps(references_for(current_message.content), ensure_ascii=False)}\n"
                 f"PEDIDO_ATUAL={json.dumps(current_message.content, ensure_ascii=False)}\n"
                 + (
@@ -491,6 +598,7 @@ class OllamaProvider:
                             validated_command,
                             tool_results=tool_results,
                             latest_assistant=latest_assistant,
+                            latest_email_evidence=latest_email_evidence,
                             current_message=current_message.content,
                         )
                     except (KeyError, TypeError, ValueError, ValidationError) as exc:
@@ -534,6 +642,12 @@ class OllamaProvider:
                     response_message = response.json().get(
                         "message", {"role": "assistant", "content": ""}
                     )
+                    repair_hint = (
+                        " Ao usar fatos de e-mail exibidos antes, comece a resposta com "
+                        "'No resultado anterior,' para identificar a evidencia historica."
+                        if repair_reason == "unlabeled_historical_email_evidence"
+                        else ""
+                    )
                     attempt_payload = {
                         **payload,
                         "messages": [
@@ -547,6 +661,7 @@ class OllamaProvider:
                                     "argumentos validos. Preserve os limites e os resultados fornecidos. "
                                     "Nunca converta atendimento, financeiro, exclusao, envio ou emissao em tarefa; "
                                     "para pedido de execucao indisponivel use fora_do_escopo."
+                                    + repair_hint
                                 ),
                             },
                         ],

@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import imaplib
+import hashlib
+import base64
+import binascii
+import quopri
 import re
 import socket
 import ssl
 from collections.abc import Callable
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import timedelta, tzinfo
 from email.header import decode_header, make_header
 from email.parser import BytesHeaderParser
 from email.policy import default
 from email.utils import getaddresses, parsedate_to_datetime
+from html.parser import HTMLParser
 
 from app.assistant.email.classification import to_result
 from app.assistant.email.contracts import EmailMessageRecord, EmailQuery, EmailQueryResult
+from app.assistant.email.provider import EmailUnavailableError
 
 
 class YahooImapEmailReader:
@@ -56,8 +63,23 @@ class YahooImapEmailReader:
             sent = folders.get("sent")
             records = self._read_folder(client, inbox, "inbox", query)
             sent_records: list[EmailMessageRecord] = []
+            sent_failed = False
             if query.awaiting_reply and sent is not None:
-                sent_records = self._read_folder(client, sent, "sent", query)
+                sent_query = query.model_copy(
+                    update={
+                        "unread_only": False,
+                        "sender": None,
+                        "attention_only": False,
+                        "awaiting_reply": False,
+                        "reference": None,
+                        "limit": self.max_messages,
+                    }
+                )
+                try:
+                    sent_records = self._read_folder(client, sent, "sent", sent_query)
+                except EmailUnavailableError:
+                    sent_failed = True
+                    sent = None
 
             results = []
             for record in records:
@@ -92,7 +114,12 @@ class YahooImapEmailReader:
             if query.awaiting_reply and sent is None:
                 state = "partial"
                 limitations.append(
-                    "A pasta Enviados não foi localizada; não é possível avaliar respostas pendentes com confiança."
+                    (
+                        "A pasta Enviados falhou durante a consulta; não é possível avaliar respostas "
+                        "pendentes com confiança."
+                        if sent_failed
+                        else "A pasta Enviados não foi localizada; não é possível avaliar respostas pendentes com confiança."
+                    )
                 )
             return EmailQueryResult(
                 state=state,
@@ -111,7 +138,7 @@ class YahooImapEmailReader:
                 query,
                 "A consulta de e-mail excedeu o tempo limite; isso não significa que a caixa está vazia.",
             )
-        except (OSError, ValueError):
+        except (EmailUnavailableError, OSError, ValueError):
             return self._failure(query, "A caixa de e-mail está indisponível no momento.")
         finally:
             if client is not None:
@@ -169,7 +196,7 @@ class YahooImapEmailReader:
     ) -> list[EmailMessageRecord]:
         status, _ = client.select(mailbox, readonly=True)
         if status != "OK":
-            return []
+            raise EmailUnavailableError("Falha ao selecionar pasta IMAP.")
         uidvalidity = self._uidvalidity(client)
         before = query.end_at.date() + timedelta(days=1)
         criteria: list[str] = [
@@ -181,13 +208,22 @@ class YahooImapEmailReader:
         if query.unread_only:
             criteria.append("UNSEEN")
         status, data = client.uid("search", None, *criteria)
-        if status != "OK" or not data:
+        if status != "OK":
+            raise EmailUnavailableError("Falha ao pesquisar pasta IMAP.")
+        if not data:
             return []
         raw_uids = data[0].split()[-self.max_messages :]
         records: list[EmailMessageRecord] = []
         for raw_uid in reversed(raw_uids):
             uid = raw_uid.decode("ascii") if isinstance(raw_uid, bytes) else str(raw_uid)
-            record = self._fetch_message(client, mailbox, role, uidvalidity, uid)
+            record = self._fetch_message(
+                client,
+                mailbox,
+                role,
+                uidvalidity,
+                uid,
+                query.start_at.tzinfo,
+            )
             if record is None:
                 continue
             if not (query.start_at <= record.received_at <= query.end_at):
@@ -208,6 +244,7 @@ class YahooImapEmailReader:
         role: str,
         uidvalidity: str,
         uid: str,
+        default_timezone: tzinfo | None,
     ) -> EmailMessageRecord | None:
         header_query = (
             "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES IN-REPLY-TO FROM TO SUBJECT DATE)])"
@@ -223,20 +260,23 @@ class YahooImapEmailReader:
         if received_at is None:
             return None
         if received_at.tzinfo is None:
-            received_at = received_at.replace(tzinfo=query_timezone_placeholder())
+            received_at = received_at.replace(tzinfo=default_timezone)
 
         _status, flags_data = client.uid("fetch", uid, "(FLAGS)")
         seen = "\\Seen" in repr(flags_data)
         body = self._fetch_text_body(client, uid)
-        message_id = str(message.get("Message-ID") or "").strip()
-        parent = str(message.get("In-Reply-To") or "").strip()
+        message_id = str(message.get("Message-ID") or "").strip()[:500]
+        parent = str(message.get("In-Reply-To") or "").strip()[:500]
         references = str(message.get("References") or "").split()
-        thread_reference = references[0] if references else parent or message_id or f"{mailbox}:{uid}"
-        sender = str(make_header(decode_header(str(message.get("From") or ""))))
+        thread_reference = (references[0] if references else parent or message_id or f"{mailbox}:{uid}")[:500]
+        sender = str(make_header(decode_header(str(message.get("From") or ""))))[:500]
         recipients = tuple(address for _name, address in getaddresses(message.get_all("To", [])))
-        subject = str(make_header(decode_header(str(message.get("Subject") or "(sem assunto)"))))
+        subject = str(make_header(decode_header(str(message.get("Subject") or "(sem assunto)"))))[:500]
+        opaque_reference = hashlib.sha256(
+            f"{mailbox}\0{uidvalidity}\0{uid}".encode("utf-8")
+        ).hexdigest()[:24]
         return EmailMessageRecord(
-            reference=f"imap:{mailbox}:{uidvalidity}:{uid}",
+            reference=f"imap:{opaque_reference}",
             thread_reference=thread_reference,
             folder_role=role,  # type: ignore[arg-type]
             sender=sender,
@@ -251,18 +291,18 @@ class YahooImapEmailReader:
         status, structure_data = client.uid("fetch", uid, "(BODYSTRUCTURE)")
         if status != "OK":
             return ""
-        section = _first_text_section(repr(structure_data))
-        if section is None:
+        text_part = _select_text_part(repr(structure_data))
+        if text_part is None:
             return ""
         status, body_data = client.uid(
             "fetch",
             uid,
-            f"(BODY.PEEK[{section}]<0.{self.body_preview_chars}>)",
+            f"(BODY.PEEK[{text_part.section}]<0.{self.body_preview_chars}>)",
         )
         if status != "OK":
             return ""
         raw = _response_bytes(body_data)[: self.body_preview_chars]
-        return raw.decode("utf-8", errors="replace").strip()
+        return _decode_text_part(raw, text_part)[: self.body_preview_chars].strip()
 
     @staticmethod
     def _uidvalidity(client: object) -> str:
@@ -287,17 +327,119 @@ def _response_bytes(data: object) -> bytes:
     return b""
 
 
+@dataclass(frozen=True)
+class _TextPart:
+    section: str
+    charset: str
+    encoding: str
+    subtype: str
+
+
 def _first_text_section(structure: str) -> str | None:
-    """Select only a textual section; never fall back to a whole multipart body."""
-    upper = structure.upper()
-    if re.search(r"BODYSTRUCTURE\s+\(\s*['\"]TEXT['\"]", upper):
-        return "TEXT"
-    if re.search(r"BODYSTRUCTURE\s+\(\s*\(\s*['\"]TEXT['\"]", upper):
-        return "1.TEXT"
-    return None
+    part = _select_text_part(structure)
+    return part.section if part else None
 
 
-def query_timezone_placeholder():
-    from datetime import timezone
+def _select_text_part(structure: str) -> _TextPart | None:
+    marker = re.search(r"BODYSTRUCTURE\s*", structure, flags=re.IGNORECASE)
+    if marker is None:
+        return None
+    tokens = re.findall(r'\(|\)|"(?:\\.|[^"\\])*"|NIL|[^\s()]+', structure[marker.end() :])
+    if not tokens:
+        return None
+    position = 0
 
-    return timezone.utc
+    def parse() -> object:
+        nonlocal position
+        if position >= len(tokens):
+            raise ValueError("BODYSTRUCTURE incompleto")
+        token = tokens[position]
+        position += 1
+        if token == "(":
+            values = []
+            while position < len(tokens) and tokens[position] != ")":
+                values.append(parse())
+            if position >= len(tokens):
+                raise ValueError("BODYSTRUCTURE sem fechamento")
+            position += 1
+            return values
+        if token == ")":
+            raise ValueError("BODYSTRUCTURE invalido")
+        if token.upper() == "NIL":
+            return None
+        if token.startswith('"'):
+            return bytes(token[1:-1], "utf-8").decode("unicode_escape")
+        return token
+
+    try:
+        root = parse()
+    except (UnicodeDecodeError, ValueError):
+        return None
+    candidates: list[_TextPart] = []
+
+    def visit(node: object, prefix: str, *, root_part: bool = False) -> None:
+        if not isinstance(node, list) or not node:
+            return
+        if isinstance(node[0], list):
+            child_index = 1
+            for child in node:
+                if not isinstance(child, list):
+                    break
+                child_prefix = f"{prefix}.{child_index}" if prefix else str(child_index)
+                visit(child, child_prefix)
+                child_index += 1
+            return
+        media_type = str(node[0] or "").upper()
+        subtype = str(node[1] or "").upper() if len(node) > 1 else ""
+        if media_type != "TEXT":
+            return
+        params = node[2] if len(node) > 2 and isinstance(node[2], list) else []
+        charset = "utf-8"
+        for index in range(0, len(params) - 1, 2):
+            if str(params[index]).upper() == "CHARSET":
+                charset = str(params[index + 1])
+                break
+        encoding = str(node[5] or "8BIT").upper() if len(node) > 5 else "8BIT"
+        candidates.append(
+            _TextPart(
+                section="TEXT" if root_part else prefix,
+                charset=charset,
+                encoding=encoding,
+                subtype=subtype,
+            )
+        )
+
+    visit(root, "", root_part=True)
+    return next((part for part in candidates if part.subtype == "PLAIN"), None) or (
+        next((part for part in candidates if part.subtype == "HTML"), None)
+    )
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def _decode_text_part(raw: bytes, part: _TextPart) -> str:
+    try:
+        if part.encoding == "BASE64":
+            decoded = base64.b64decode(raw, validate=False)
+        elif part.encoding == "QUOTED-PRINTABLE":
+            decoded = quopri.decodestring(raw)
+        else:
+            decoded = raw
+    except (ValueError, binascii.Error):
+        decoded = raw
+    try:
+        text = decoded.decode(part.charset or "utf-8", errors="replace")
+    except LookupError:
+        text = decoded.decode("utf-8", errors="replace")
+    if part.subtype == "HTML":
+        parser = _HTMLTextExtractor()
+        parser.feed(text)
+        text = " ".join(parser.parts)
+    return " ".join(text.split())

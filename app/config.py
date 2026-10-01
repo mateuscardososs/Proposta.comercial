@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     email_imap_host: str = "imap.mail.yahoo.com"
     email_imap_port: int = 993
     email_imap_username: str = ""
-    email_imap_app_password: str = ""
+    email_imap_app_password: SecretStr = SecretStr("")
     email_imap_timeout_seconds: float = 10.0
     email_max_messages: int = 30
     email_cache_retention_days: int = 14

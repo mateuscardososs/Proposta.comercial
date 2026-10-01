@@ -29,7 +29,7 @@ from app.assistant.capabilities import CapabilityRegistry
 from app.assistant.email.contracts import EmailQuery
 from app.assistant.email.provider import EmailReader
 from app.assistant.dates import normalize_text, resolve_date_expression
-from app.assistant.evidence import validate_execution_claims
+from app.assistant.evidence import references_prior_email_context, validate_execution_claims
 from app.assistant.provider import (
     AssistantProvider,
     ProviderMessage,
@@ -173,6 +173,8 @@ class AssistantService:
                     clean_message,
                 )
             if command is None:
+                command = self._direct_email_task_command(clean_message)
+            if command is None:
                 direct_query = self._direct_board_query(clean_message)
                 if direct_query is not None:
                     execution = self._execute_task_query(
@@ -259,7 +261,12 @@ class AssistantService:
                         break
                     tool_results.append(execution.result)
                     executed_tools.append(command.tool)
+                    if execution.result.state == "failed":
+                        reply = execution.reply
+                        break
                     allowed_tools = self._follow_up_tools()
+                    if command.tool == "consultar_emails":
+                        allowed_tools = {"responder_conversa"}
                     if len(tool_results) >= self.max_tool_rounds:
                         allowed_tools.discard("consultar_tarefas")
                         allowed_tools.discard("consultar_emails")
@@ -382,7 +389,10 @@ class AssistantService:
                     )
                 else:
                     reply = self._conversation_reply(
-                        conversation.id, command, tool_results=tool_results
+                        conversation.id,
+                        command,
+                        tool_results=tool_results,
+                        current_message=clean_message,
                     )
             else:  # pragma: no cover - protected by the provider contract
                 raise ProviderResponseError("Comando desconhecido.")
@@ -448,15 +458,34 @@ class AssistantService:
                 allowed_tools=allowed_tools,
             )
             traces.extend(interpretation.inferences)
-            return interpretation.command
-        return self.provider.interpret(
-            messages,
-            today=today,
-            timezone=timezone,
-            tool_results=tool_results,
-            pending_action=pending_action,
-            allowed_tools=allowed_tools,
+            command = interpretation.command
+        else:
+            command = self.provider.interpret(
+                messages,
+                today=today,
+                timezone=timezone,
+                tool_results=tool_results,
+                pending_action=pending_action,
+                allowed_tools=allowed_tools,
+            )
+        guarded_pending_control = pending_action is not None and isinstance(
+            command, (ConfirmActionCommand, CancelActionCommand)
         )
+        clarification_rewrite = (
+            pending_action is not None
+            and pending_action.status == "needs_clarification"
+            and isinstance(command, TaskCreateCommand)
+            and allowed_tools is not None
+            and "corrigir_tarefa" in allowed_tools
+        )
+        if (
+            allowed_tools is not None
+            and command.tool not in allowed_tools
+            and not guarded_pending_control
+            and not clarification_rewrite
+        ):
+            raise ProviderResponseError("O provedor solicitou uma ferramenta nao permitida nesta rodada.")
+        return command
 
     @staticmethod
     def _direct_control_command(
@@ -567,6 +596,20 @@ class AssistantService:
         if due_date is None:
             return None
         return TaskDraftCorrectionCommand(due_date=due_date)
+
+    @staticmethod
+    def _direct_email_task_command(message: str) -> TaskCreateCommand | None:
+        normalized = normalize_text(message)
+        explicit_creation = bool(
+            re.search(r"\b(?:crie|cria|criar|prepare)\b.{0,40}\b(?:tarefa|lembrete)\b", normalized)
+            or re.search(r"\b(?:tarefa|lembrete)\b.{0,40}\b(?:responder|resposta)\b", normalized)
+        )
+        email_reference = bool(
+            re.search(r"\b(?:responder|resposta)\b.{0,60}\b(?:e[- ]?mail|esse|este|primeiro|segundo|terceiro)\b", normalized)
+        )
+        if explicit_creation and email_reference:
+            return TaskCreateCommand(title="Responder")
+        return None
 
     def confirm_action(self, action_id: int, confirmation_token: str) -> AssistantReply:
         action = self.db.get(AssistantAction, action_id)
@@ -709,6 +752,9 @@ class AssistantService:
         conversation = self.db.get(AssistantConversation, conversation_id)
         if conversation is None:
             raise ValueError("Conversa nao encontrada.")
+        if self._prune_expired_email_details():
+            self.db.commit()
+            self.db.refresh(conversation)
         return [
             AssistantMessageView(
                 role=message.role,
@@ -892,7 +938,7 @@ class AssistantService:
             messages.append(ProviderMessage(role=row.role, content=content))
         return messages
 
-    def _prune_expired_email_details(self) -> None:
+    def _prune_expired_email_details(self) -> bool:
         cutoff = self._request_now() - timedelta(days=self.email_history_retention_days)
         changed = False
         rows = self.db.query(AssistantMessage).filter(AssistantMessage.created_at < cutoff).all()
@@ -918,6 +964,7 @@ class AssistantService:
             changed = True
         if changed:
             self.db.flush()
+        return changed
 
     def _provider_pending_action(
         self, conversation_id: int
@@ -1177,7 +1224,7 @@ class AssistantService:
                 attention_only=command.attention_only,
                 awaiting_reply=command.awaiting_reply,
                 reference=command.reference,
-                limit=command.limit,
+                limit=min(command.limit, 3),
             )
         )
         interval = (
@@ -1192,7 +1239,18 @@ class AssistantService:
                     message=result.user_message or "A consulta de e-mail falhou. Nenhum resultado foi presumido.",
                     consulted_interval=interval,
                     limitations=result.limitations,
-                )
+                ),
+                ProviderToolResult(
+                    tool="consultar_emails",
+                    evidence_id=f"email:{secrets.token_hex(12)}",
+                    state="failed",
+                    payload={
+                        "state": "failed",
+                        "interval": interval,
+                        "count": 0,
+                        "limitations": result.limitations,
+                    },
+                ),
             )
         email_items = [item.model_dump(mode="json") for item in result.messages]
         payload = {
@@ -1402,12 +1460,13 @@ class AssistantService:
             )
         )
 
-    @staticmethod
     def _conversation_reply(
+        self,
         conversation_id: int,
         command: ConversationCommand,
         *,
         tool_results: Sequence[ProviderToolResult] = (),
+        current_message: str = "",
     ) -> AssistantReply:
         internal_markers = (
             "HISTORICO_JSON=",
@@ -1421,7 +1480,33 @@ class AssistantService:
         if any(marker in command.message for marker in internal_markers):
             raise ProviderResponseError("Resposta expos contexto interno do provedor.")
         try:
-            validate_execution_claims(command.message, tool_results=tool_results)
+            normalized_message = normalize_text(command.message)
+            historical_label = bool(
+                re.search(
+                    r"\b(?:resultado|consulta|mensagens?|e[- ]?mails?)\s+(?:anterior|anteriores)\b|"
+                    r"\bapresentad[oa]s? anteriormente\b",
+                    normalized_message,
+                )
+            )
+            validate_execution_claims(
+                command.message,
+                tool_results=tool_results,
+                allow_historical_email_claim=(
+                    historical_label and self._has_historical_email_evidence(conversation_id)
+                ),
+            )
+            has_current_email_evidence = any(
+                result.tool == "consultar_emails" for result in tool_results
+            )
+            if (
+                not has_current_email_evidence
+                and references_prior_email_context(current_message)
+                and self._has_historical_email_evidence(conversation_id)
+                and not historical_label
+            ):
+                raise ValueError(
+                    "Fatos historicos de e-mail devem ser identificados como resultado anterior."
+                )
         except ValueError as exc:
             raise ProviderResponseError(str(exc)) from exc
         normalized = normalize_text(command.message)
@@ -1456,14 +1541,30 @@ class AssistantService:
             raw_limitations = email_result.payload.get("limitations", [])
             if isinstance(raw_limitations, list):
                 limitations = [str(item) for item in raw_limitations]
+        reply_message = command.message.strip()
+        if limitations and normalize_text(limitations[0]) not in normalize_text(reply_message):
+            reply_message = f"{reply_message} Limitação: {limitations[0]}"
         return AssistantReply(
             conversation_id=conversation_id,
             kind="text",
-            message=command.message.strip(),
+            message=reply_message,
             email_items=email_items,
             consulted_interval=consulted_interval,
             limitations=limitations,
         )
+
+    def _has_historical_email_evidence(self, conversation_id: int) -> bool:
+        rows = (
+            self.db.query(AssistantMessage)
+            .filter(
+                AssistantMessage.conversation_id == conversation_id,
+                AssistantMessage.role == "assistant",
+            )
+            .order_by(AssistantMessage.id.desc())
+            .limit(self.context_messages)
+            .all()
+        )
+        return any(bool(row.details_json.get("email_items")) for row in rows)
 
     def _confirm_latest(self, conversation_id: int) -> AssistantReply:
         action = self._latest_create_action(conversation_id)

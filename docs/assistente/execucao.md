@@ -252,3 +252,88 @@ export VOICE_SILENCE_MS=1800
 
 Abra `http://127.0.0.1:8011/web/assistente`. Depois de atualizar o codigo, use
 `Cmd+Shift+R` no Mac ou `Ctrl+F5` no Windows para ignorar scripts em cache.
+
+## Leitura local de e-mail
+
+O padrão é `EMAIL_PROVIDER=disabled`. A demonstração isolada usa:
+
+```bash
+EMAIL_PROVIDER=synthetic
+EMAIL_MAX_MESSAGES=30
+EMAIL_CACHE_RETENTION_DAYS=14
+EMAIL_BODY_PREVIEW_CHARS=4000
+```
+
+Para conectar o Yahoo posteriormente, use variáveis locais fora do Git:
+
+```bash
+EMAIL_PROVIDER=imap_yahoo
+EMAIL_IMAP_HOST=imap.mail.yahoo.com
+EMAIL_IMAP_PORT=993
+EMAIL_IMAP_USERNAME='endereco-completo-da-conta'
+EMAIL_IMAP_APP_PASSWORD='senha-de-aplicativo-gerada-no-Yahoo'
+EMAIL_IMAP_TIMEOUT_SECONDS=10
+EMAIL_MAX_MESSAGES=30
+EMAIL_CACHE_RETENTION_DAYS=14
+EMAIL_BODY_PREVIEW_CHARS=4000
+```
+
+Não use a senha comum da conta. A documentação atual do Yahoo indica senha de aplicativo para esse
+tipo de cliente IMAP: [configuração IMAP](https://ca.help.yahoo.com/kb/SLN4075.html) e
+[senha para aplicativo](https://help.yahoo.com/kb/SLN15241.html).
+
+O adaptador abre `imap.mail.yahoo.com:993` com SSL, seleciona pastas em modo somente leitura e usa
+`BODY.PEEK` apenas para cabeçalhos e uma seção textual limitada. Não há SMTP, abertura de links,
+alteração de flags ou download deliberado de anexos. Entrada e Enviados são descobertas primeiro
+pelos atributos especiais do servidor; nomes localizados são apenas fallback.
+
+### Instância isolada atual
+
+Ollama estritamente local:
+
+```bash
+OLLAMA_HOST=127.0.0.1:11434 OLLAMA_NO_CLOUD=true ollama serve
+```
+
+Aplicação de teste:
+
+```bash
+cd /Users/mateuscardoso/dev/pai/Proposta.comercial
+DATABASE_URL=sqlite:////tmp/ad-balancas-conversational.xFP65K/manual.sqlite3 \
+OUTPUT_DIR=/tmp/ad-balancas-conversational.xFP65K/output \
+TEMPLATE_DOC_PATH=/tmp/ad-balancas-conversational.xFP65K/doc_templates/proposta_template.docx \
+APP_HOST=127.0.0.1 APP_PORT=8011 APP_RELOAD=false \
+OLLAMA_BASE_URL=http://127.0.0.1:11434 \
+OLLAMA_MODEL=qwen3:4b-instruct-2507-q4_K_M \
+ASSISTANT_TIMEZONE=America/Recife \
+EMAIL_PROVIDER=synthetic EMAIL_MAX_MESSAGES=30 EMAIL_CACHE_RETENTION_DAYS=14 \
+VOICE_ENABLED=true \
+VOICE_MODEL_DIR="$PWD/.models/assistant_voice" \
+VOICE_PIPER_MODEL_PATH="$PWD/.models/assistant_voice/pt_BR-faber-medium.onnx" \
+.venv/bin/python run.py
+```
+
+Abra `http://127.0.0.1:8011/web/assistente`. A porta 8000 pertence à aplicação antiga e não faz
+parte desta instância.
+
+### Persistência e retenção
+
+O histórico persiste a resposta apresentada e, por `EMAIL_CACHE_RETENTION_DAYS`, remetente, assunto,
+data, flag de leitura, resumo limitado, classificação, referência opaca e limitações. Após a retenção,
+os itens estruturados e as mensagens dentro do resultado da ferramenta são removidos; o texto da
+conversa permanece. Não há cache separado nesta primeira versão: as consultas IMAP são delimitadas
+por período e quantidade, então a caixa inteira não é relida nem enviada ao modelo. Credenciais nunca
+são persistidas no banco, histórico ou telemetria.
+
+### Roteiro posterior para a conta real
+
+1. Gerar no Yahoo uma senha exclusiva para este aplicativo.
+2. Guardar endereço completo e senha de aplicativo no `.env` local ou gerenciador de segredos.
+3. Iniciar uma instância isolada com `EMAIL_PROVIDER=imap_yahoo` e banco temporário.
+4. Conferir `/api/assistant/capabilities` antes da primeira consulta.
+5. Consultar um período curto e comparar referências, datas e flags com o Outlook/Yahoo.
+6. Verificar se o servidor expõe uma pasta com atributo `\\Sent`; sem ela, respostas pendentes
+   continuam marcadas como inconclusivas.
+7. Confirmar no Yahoo/Outlook que nenhuma mensagem mudou para lida.
+
+Esse roteiro ainda não foi executado com a conta da empresa.
