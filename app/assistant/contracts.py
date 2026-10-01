@@ -73,7 +73,7 @@ class ConversationCommand(BaseModel):
     tool: Literal["responder_conversa"] = "responder_conversa"
     message: str = Field(
         min_length=1,
-        max_length=800,
+        max_length=2400,
         description=(
             "Resposta natural em portugues, sem alegar consultas ou alteracoes que nao ocorreram."
         ),
@@ -196,6 +196,8 @@ class VoiceTranscriptionResponse(BaseModel):
     language_probability: float = Field(ge=0, le=1)
     audio_duration_seconds: float = Field(gt=0)
     transcription_seconds: float = Field(ge=0)
+    queue_wait_seconds: float = Field(default=0, ge=0)
+    total_seconds: float = Field(default=0, ge=0)
 
 
 class VoiceSpeechRequest(BaseModel):

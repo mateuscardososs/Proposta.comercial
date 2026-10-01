@@ -56,7 +56,7 @@ def test_conversation_command_accepts_a_natural_validated_reply():
     assert isinstance(command, ConversationCommand)
 
 
-@pytest.mark.parametrize("message", ["", "x" * 801])
+@pytest.mark.parametrize("message", ["", "x" * 2401])
 def test_conversation_command_rejects_empty_or_excessive_replies(message):
     with pytest.raises(ValidationError):
         ConversationCommand(message=message)

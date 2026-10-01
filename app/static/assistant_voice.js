@@ -1,7 +1,7 @@
 export class VoiceSessionController {
   constructor(options) {
     this.options = options;
-    this.silenceMs = options.silenceMs ?? 1200;
+    this.silenceMs = options.silenceMs ?? 1800;
     this.speechThreshold = options.speechThreshold ?? 0.018;
     this.maxUtteranceMs = options.maxUtteranceMs ?? 30000;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 120000;

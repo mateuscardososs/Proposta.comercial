@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+import re
+
 
 DETAILS_SUFFIX = "Os detalhes estao na tela."
+ERROR_SPEECH = "Nao consegui concluir a resposta. Veja os detalhes na tela."
+
+
+def _remove_visual_markup(text: str) -> str:
+    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
+    text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    text = re.sub(r"[`*_~]", "", text)
+    text = re.sub(r"(?<!\w)#\d+\b", "", text)
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"\s+([.,;:!?])", r"\1", text)
+    return " ".join(text.strip().split())
 
 
 def spoken_text(text: str, kind: str, *, max_characters: int = 300) -> str:
-    clean_text = " ".join(text.strip().split())
+    if kind == "error" and re.search(
+        r"\b(ollama|http|timeout|traceback|exception|ollama_model|modelo configurado)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return ERROR_SPEECH
+    clean_text = _remove_visual_markup(text)
     original_lines = [line.strip() for line in text.splitlines() if line.strip()]
     task_lines = [line for line in original_lines if line.startswith("-")]
     if task_lines:

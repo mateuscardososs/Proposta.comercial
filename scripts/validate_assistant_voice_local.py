@@ -87,7 +87,7 @@ def run_validation(*, model_dir: Path, ollama_model: str) -> dict[str, object]:
 
             from app.db import Base, SessionLocal, engine
             from app.main import app
-            from app.models import Task, User
+            from app.models import AssistantAction, Task, User
             from scripts.validate_assistant_local import seed_synthetic_data
 
             Base.metadata.drop_all(bind=engine)
@@ -147,7 +147,31 @@ def run_validation(*, model_dir: Path, ollama_model: str) -> dict[str, object]:
                         )
                         assistant_seconds = monotonic() - assistant_started
                         if reply.status_code != 200:
-                            raise RuntimeError(reply.text)
+                            with SessionLocal() as diagnostic_db:
+                                actions = [
+                                    {
+                                        "id": action.id,
+                                        "status": action.status,
+                                        "arguments": action.arguments_json,
+                                    }
+                                    for action in diagnostic_db.query(AssistantAction)
+                                    .order_by(AssistantAction.id)
+                                    .all()
+                                ]
+                            raise RuntimeError(
+                                json.dumps(
+                                    {
+                                        "step": index,
+                                        "input": phrase,
+                                        "transcript": transcript,
+                                        "status_code": reply.status_code,
+                                        "response": reply.text,
+                                        "prior_records": records,
+                                        "actions": actions,
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            )
                         payload = reply.json()
                         conversation_id = payload["conversation_id"]
                         records.append(

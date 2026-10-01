@@ -4,6 +4,7 @@ import hashlib
 import re
 import secrets
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TypeVar
 from zoneinfo import ZoneInfo
@@ -27,7 +28,11 @@ from app.assistant.dates import normalize_text, resolve_date_expression
 from app.assistant.provider import (
     AssistantProvider,
     ProviderMessage,
+    ProviderInferenceTrace,
+    ProviderInterpretation,
+    ProviderPendingAction,
     ProviderResponseError,
+    ProviderToolResult,
     ProviderUnavailableError,
 )
 from app.models import (
@@ -52,6 +57,24 @@ STATUS_LABELS = {
     "concluido": "Concluido",
 }
 
+FOLLOW_UP_TOOLS = {
+    "responder_conversa",
+    "consultar_tarefas",
+}
+
+INITIAL_TOOLS = {
+    "responder_conversa",
+    "consultar_tarefas",
+    "criar_tarefa",
+    "fora_do_escopo",
+}
+
+
+@dataclass(frozen=True)
+class TaskQueryExecution:
+    reply: AssistantReply
+    result: ProviderToolResult | None = None
+
 
 class AssistantService:
     def __init__(
@@ -63,6 +86,7 @@ class AssistantService:
         timezone: str = "America/Recife",
         context_messages: int = 12,
         request_lease_seconds: int = 120,
+        max_tool_rounds: int = 2,
     ) -> None:
         self.db = db
         self.provider = provider
@@ -71,6 +95,7 @@ class AssistantService:
         self.now = now or (lambda: datetime.now(self.timezone))
         self.context_messages = max(2, min(context_messages, 30))
         self.request_lease_seconds = max(30, min(request_lease_seconds, 900))
+        self.max_tool_rounds = max(1, min(max_tool_rounds, 3))
 
     def handle_message(
         self,
@@ -102,18 +127,115 @@ class AssistantService:
         conversation = claimed_request
 
         current_date = self._local_now().date()
+        tool_results: list[ProviderToolResult] = []
+        provider_inferences: list[ProviderInferenceTrace] = []
+        executed_tools: list[str] = []
+        reply: AssistantReply | None = None
         try:
             direct_control = self._direct_control_command(clean_message)
             command = direct_control
             if command is None:
+                command = self._direct_pending_date_correction(
+                    conversation.id,
+                    clean_message,
+                )
+            if command is None:
+                direct_query = self._direct_board_query(clean_message)
+                if direct_query is not None:
+                    execution = self._execute_task_query(
+                        conversation.id, direct_query, current_date
+                    )
+                    if execution.result is None:
+                        command = direct_query
+                        reply = execution.reply
+                    else:
+                        if self.provider is None:
+                            raise ProviderUnavailableError("Provedor nao configurado.")
+                        result_payload = dict(execution.result.payload)
+                        result_tasks = list(result_payload.get("tasks", []))
+                        result_payload["tasks_considered"] = len(result_tasks)
+                        result_payload["tasks"] = result_tasks[:1]
+                        result_payload["selection"] = (
+                            "A primeira tarefa foi selecionada pela ordenacao real de prioridades do backend."
+                        )
+                        focused_result = execution.result.model_copy(
+                            update={"payload": result_payload}
+                        )
+                        tool_results.append(focused_result)
+                        executed_tools.append("consultar_tarefas")
+                        command = self._interpret_provider(
+                            self._provider_messages(conversation.id),
+                            today=current_date,
+                            timezone=self.timezone_name,
+                            tool_results=tuple(tool_results),
+                            pending_action=self._provider_pending_action(conversation.id),
+                            allowed_tools={"responder_conversa"},
+                            traces=provider_inferences,
+                        )
+            if command is None:
                 if self.provider is None:
                     raise ProviderUnavailableError("Provedor nao configurado.")
-                command = self.provider.interpret(
+                pending_action = self._provider_pending_action(conversation.id)
+                initial_tools = set(INITIAL_TOOLS)
+                if pending_action is not None:
+                    initial_tools.discard("criar_tarefa")
+                    initial_tools.add("corrigir_tarefa")
+                command = self._interpret_provider(
                     self._provider_messages(conversation.id),
                     today=current_date,
                     timezone=self.timezone_name,
+                    pending_action=pending_action,
+                    allowed_tools=initial_tools,
+                    traces=provider_inferences,
                 )
-            if direct_control is None and isinstance(
+                seen_queries: set[str] = set()
+                last_query_reply: AssistantReply | None = None
+                while isinstance(command, TaskQueryCommand):
+                    command = self._ground_task_query(clean_message, command)
+                    query_key = command.model_dump_json()
+                    if query_key in seen_queries:
+                        if last_query_reply is None or not tool_results:  # pragma: no cover - defensive
+                            raise ProviderResponseError("Consulta repetida sem resultado anterior.")
+                        forced_reply_tools = set(FOLLOW_UP_TOOLS)
+                        forced_reply_tools.discard("consultar_tarefas")
+                        command = self._interpret_provider(
+                            self._provider_messages(conversation.id),
+                            today=current_date,
+                            timezone=self.timezone_name,
+                            tool_results=tuple(tool_results),
+                            pending_action=self._provider_pending_action(conversation.id),
+                            allowed_tools=forced_reply_tools,
+                            traces=provider_inferences,
+                        )
+                        reply = None
+                        break
+                    seen_queries.add(query_key)
+                    execution = self._execute_task_query(
+                        conversation.id, command, current_date
+                    )
+                    last_query_reply = execution.reply
+                    if execution.result is None:
+                        reply = execution.reply
+                        break
+                    tool_results.append(execution.result)
+                    executed_tools.append("consultar_tarefas")
+                    allowed_tools = set(FOLLOW_UP_TOOLS)
+                    if len(tool_results) >= self.max_tool_rounds:
+                        allowed_tools.discard("consultar_tarefas")
+                    command = self._interpret_provider(
+                        self._provider_messages(conversation.id),
+                        today=current_date,
+                        timezone=self.timezone_name,
+                        tool_results=tuple(tool_results),
+                        pending_action=self._provider_pending_action(conversation.id),
+                        allowed_tools=allowed_tools,
+                        traces=provider_inferences,
+                    )
+                else:
+                    reply = None
+            if reply is not None:
+                pass
+            elif direct_control is None and isinstance(
                 command, (ConfirmActionCommand, CancelActionCommand)
             ):
                 reply = AssistantReply(
@@ -125,25 +247,47 @@ class AssistantService:
                     ),
                 )
             elif isinstance(command, TaskQueryCommand):
-                reply = self._query_tasks(conversation.id, command, current_date)
+                # The bounded loop only leaves a query here when no provider was used.
+                reply = self._execute_task_query(
+                    conversation.id, command, current_date
+                ).reply
             elif isinstance(command, TaskCreateCommand):
-                command = self._ground_task_creation(
-                    conversation.id,
-                    clean_message,
-                    command,
-                )
-                reply = self._prepare_task(
+                if self._task_creation_is_forbidden(clean_message):
+                    reply = AssistantReply(
+                        conversation_id=conversation.id,
+                        kind="error",
+                        message=(
+                            "Ainda nao executo esse tipo de operacao. Posso ajudar a organizar "
+                            "o relato ou preparar uma tarefa, se voce pedir isso explicitamente."
+                        ),
+                    )
+                else:
+                    executed_tools.append("criar_tarefa")
+                    command = self._ground_task_creation(
+                        conversation.id,
+                        clean_message,
+                        command,
+                    )
+                    reply = self._prepare_task(
+                        conversation.id,
+                        clean_request_id,
+                        command,
+                        current_date,
+                    )
+            elif isinstance(command, ConfirmActionCommand):
+                executed_tools.append("confirmar_acao")
+                reply = self._confirm_latest(conversation.id)
+            elif isinstance(command, CancelActionCommand):
+                executed_tools.append("cancelar_acao")
+                reply = self._cancel_latest(conversation.id)
+            elif isinstance(command, TaskDraftCorrectionCommand):
+                executed_tools.append("corrigir_tarefa")
+                reply = self._correct_pending_task(
                     conversation.id,
                     clean_request_id,
                     command,
                     current_date,
                 )
-            elif isinstance(command, ConfirmActionCommand):
-                reply = self._confirm_latest(conversation.id)
-            elif isinstance(command, CancelActionCommand):
-                reply = self._cancel_latest(conversation.id)
-            elif isinstance(command, TaskDraftCorrectionCommand):
-                reply = self._correct_pending_task(conversation.id, command, current_date)
             elif isinstance(command, UnsupportedCommand):
                 reply = AssistantReply(
                     conversation_id=conversation.id,
@@ -151,7 +295,21 @@ class AssistantService:
                     message=command.message,
                 )
             elif isinstance(command, ConversationCommand):
-                reply = self._conversation_reply(conversation.id, command)
+                if self._request_targets_unavailable_operation(
+                    clean_message
+                ) and not self._response_states_limitation(command.message):
+                    reply = AssistantReply(
+                        conversation_id=conversation.id,
+                        kind="error",
+                        message=(
+                            "Essa funcao ainda nao esta disponivel. Posso ajudar a organizar o "
+                            "conteudo sem registrar, enviar, excluir ou alterar dados fora do quadro."
+                        ),
+                    )
+                else:
+                    reply = self._conversation_reply(
+                        conversation.id, command, tool_results=tool_results
+                    )
             else:  # pragma: no cover - protected by the provider contract
                 raise ProviderResponseError("Comando desconhecido.")
         except ProviderUnavailableError:
@@ -163,17 +321,68 @@ class AssistantService:
                     "Confira se o Ollama esta iniciado e se OLLAMA_MODEL corresponde a um modelo instalado."
                 ),
             )
-        except ProviderResponseError:
+        except ProviderResponseError as exc:
+            provider_inferences.extend(
+                trace for trace in exc.inferences if trace not in provider_inferences
+            )
+            if self._request_targets_unavailable_operation(clean_message):
+                message = (
+                    "Essa funcao ainda nao esta disponivel no assistente. Nada foi executado. "
+                    "Posso ajudar a organizar ou redigir o conteudo sem registrar, enviar, "
+                    "excluir ou alterar dados fora do quadro."
+                )
+            else:
+                message = (
+                    "O Ollama respondeu fora do formato esperado. "
+                    "Nada foi alterado; reformule a mensagem e tente novamente."
+                )
             reply = AssistantReply(
                 conversation_id=conversation.id,
                 kind="error",
-                message=(
-                    "O Ollama respondeu fora do formato esperado. "
-                    "Nada foi alterado; reformule a mensagem e tente novamente."
-                ),
+                message=message,
             )
 
-        return self._save_reply(clean_request_id, reply)
+        return self._save_reply(
+            clean_request_id,
+            reply,
+            tool_results=tool_results,
+            provider_inferences=provider_inferences,
+            executed_tools=executed_tools,
+        )
+
+    def _interpret_provider(
+        self,
+        messages: Sequence[ProviderMessage],
+        *,
+        today: date,
+        timezone: str,
+        traces: list[ProviderInferenceTrace],
+        tool_results: Sequence[ProviderToolResult] = (),
+        pending_action: ProviderPendingAction | None = None,
+        allowed_tools: set[str] | None = None,
+    ):
+        if self.provider is None:  # pragma: no cover - guarded by caller
+            raise ProviderUnavailableError("Provedor nao configurado.")
+        traced_interpreter = getattr(self.provider, "interpret_with_trace", None)
+        if callable(traced_interpreter):
+            interpretation: ProviderInterpretation = traced_interpreter(
+                messages,
+                today=today,
+                timezone=timezone,
+                tool_results=tool_results,
+                pending_action=pending_action,
+                allowed_tools=allowed_tools,
+            )
+            traces.extend(interpretation.inferences)
+            return interpretation.command
+        return self.provider.interpret(
+            messages,
+            today=today,
+            timezone=timezone,
+            tool_results=tool_results,
+            pending_action=pending_action,
+            allowed_tools=allowed_tools,
+        )
 
     @staticmethod
     def _direct_control_command(
@@ -186,6 +395,78 @@ class AssistantService:
         if normalized in {"cancela", "cancelar", "nao cancela"}:
             return CancelActionCommand()
         return None
+
+    @staticmethod
+    def _ground_task_query(message: str, command: TaskQueryCommand) -> TaskQueryCommand:
+        normalized = normalize_text(message)
+        priority_cues = (
+            "prioridade",
+            "priorizar",
+            "primeiro",
+            "por onde comecar",
+            "por onde começo",
+            "recomende",
+            "recomendacao",
+        )
+        if not command.priorities and any(cue in normalized for cue in priority_cues):
+            return command.model_copy(update={"priorities": True})
+        return command
+
+    @staticmethod
+    def _direct_board_query(message: str) -> TaskQueryCommand | None:
+        normalized = normalize_text(message)
+        has_board_scope = "quadro" in normalized and any(
+            term in normalized for term in ("pendencia", "tarefa")
+        )
+        asks_recommendation = any(
+            term in normalized
+            for term in ("recomende", "prioridade", "priorizar", "primeiro", "por onde comecar")
+        )
+        if has_board_scope and asks_recommendation:
+            return TaskQueryCommand(priorities=True)
+        return None
+
+    def _direct_pending_date_correction(
+        self,
+        conversation_id: int,
+        message: str,
+    ) -> TaskDraftCorrectionCommand | None:
+        action = self._latest_create_action(conversation_id)
+        if action is None or action.status != "pending":
+            return None
+        normalized = normalize_text(message)
+        correction_cues = ("na verdade", "prazo", "data", "vence", "vencimento")
+        if not any(cue in normalized for cue in correction_cues):
+            return None
+        if "sem prazo" in normalized:
+            return TaskDraftCorrectionCommand(clear_due_date=True)
+        relative_dates = (
+            "depois de amanha",
+            "fim da semana",
+            "esta semana",
+            "nesta semana",
+            "amanha",
+            "hoje",
+            "segunda",
+            "terca",
+            "quarta",
+            "quinta",
+            "sexta",
+            "sabado",
+            "domingo",
+        )
+        due_date = next((term for term in relative_dates if term in normalized), None)
+        if due_date is None:
+            match = re.search(
+                r"\b(?:daqui a|em)\s+\d{1,3}\s+dias?\b|"
+                r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|"
+                r"\b\d{4}-\d{2}-\d{2}\b",
+                normalized,
+            )
+            due_date = match.group(0) if match else None
+        if due_date is None:
+            return None
+        return TaskDraftCorrectionCommand(due_date=due_date)
 
     def confirm_action(self, action_id: int, confirmation_token: str) -> AssistantReply:
         action = self.db.get(AssistantAction, action_id)
@@ -282,7 +563,10 @@ class AssistantService:
 
         cancelled = self.db.execute(
             update(AssistantAction)
-            .where(AssistantAction.id == action.id, AssistantAction.status == "pending")
+            .where(
+                AssistantAction.id == action.id,
+                AssistantAction.status.in_(("pending", "needs_clarification")),
+            )
             .values(status="cancelled"),
             execution_options={"synchronize_session": False},
         )
@@ -477,6 +761,27 @@ class AssistantService:
             for row in reversed(rows)
         ]
 
+    def _provider_pending_action(
+        self, conversation_id: int
+    ) -> ProviderPendingAction | None:
+        action = (
+            self.db.query(AssistantAction)
+            .filter(
+                AssistantAction.conversation_id == conversation_id,
+                AssistantAction.action_type == "create_task",
+                AssistantAction.status.in_(("pending", "needs_clarification")),
+            )
+            .order_by(AssistantAction.id.desc())
+            .first()
+        )
+        if action is None:
+            return None
+        return ProviderPendingAction(
+            action_type="create_task",
+            status=action.status,
+            arguments=dict(action.arguments_json),
+        )
+
     def _cached_reply(self, request_id: str) -> AssistantReply | None:
         message = (
             self.db.query(AssistantMessage)
@@ -517,17 +822,36 @@ class AssistantService:
         self.db.commit()
         return reply.model_copy(update={"confirmation_token": confirmation_token})
 
-    def _save_reply(self, request_id: str, reply: AssistantReply) -> AssistantReply:
+    def _save_reply(
+        self,
+        request_id: str,
+        reply: AssistantReply,
+        *,
+        tool_results: Sequence[ProviderToolResult] = (),
+        provider_inferences: Sequence[ProviderInferenceTrace] = (),
+        executed_tools: Sequence[str] = (),
+    ) -> AssistantReply:
         existing = self._cached_reply(request_id)
         if existing is not None:
             return existing
+        details = self._safe_reply_details(reply.model_dump(mode="json"))
+        if tool_results:
+            details["tool_results"] = [
+                result.model_dump(mode="json") for result in tool_results
+            ]
+        if provider_inferences:
+            details["provider_inferences"] = [
+                trace.model_dump(mode="json") for trace in provider_inferences
+            ]
+        if executed_tools:
+            details["executed_tools"] = list(executed_tools)
         reply_message = AssistantMessage(
             conversation_id=reply.conversation_id,
             role="assistant",
             kind=reply.kind,
             content=reply.message,
             reply_to_request_id=request_id,
-            details_json=self._safe_reply_details(reply.model_dump(mode="json")),
+            details_json=details,
         )
         self.db.add(reply_message)
         try:
@@ -554,22 +878,22 @@ class AssistantService:
         """Return audit-safe structured metadata without action credentials."""
         return {key: value for key, value in details.items() if key != "confirmation_token"}
 
-    def _query_tasks(
+    def _execute_task_query(
         self,
         conversation_id: int,
         command: TaskQueryCommand,
         today: date,
-    ) -> AssistantReply:
+    ) -> TaskQueryExecution:
         client, client_question = self._resolve_client(command.client)
         if client_question:
-            return AssistantReply(conversation_id=conversation_id, kind="clarification", message=client_question)
+            return TaskQueryExecution(AssistantReply(conversation_id=conversation_id, kind="clarification", message=client_question))
         user, user_question = self._resolve_user(command.responsible)
         if user_question:
-            return AssistantReply(conversation_id=conversation_id, kind="clarification", message=user_question)
+            return TaskQueryExecution(AssistantReply(conversation_id=conversation_id, kind="clarification", message=user_question))
         try:
             due_before = resolve_date_expression(command.due_before, today=today)
         except ValueError as exc:
-            return AssistantReply(conversation_id=conversation_id, kind="clarification", message=str(exc))
+            return TaskQueryExecution(AssistantReply(conversation_id=conversation_id, kind="clarification", message=str(exc)))
 
         tasks = board_service.query_tasks(
             self.db,
@@ -584,12 +908,22 @@ class AssistantService:
             limit=command.limit,
         )
         if not tasks:
-            return AssistantReply(
+            reply = AssistantReply(
                 conversation_id=conversation_id,
                 kind="text",
                 message=(
                     "Não há tarefas cadastradas com esses critérios. "
                     "Se quiser, posso ajudar a criar uma nova tarefa."
+                ),
+            )
+            return TaskQueryExecution(
+                reply,
+                ProviderToolResult(
+                    tool="consultar_tarefas",
+                    payload={
+                        "criteria": command.model_dump(mode="json"),
+                        "tasks": [],
+                    },
                 ),
             )
         lines = ["Encontrei estas tarefas:"]
@@ -604,7 +938,44 @@ class AssistantService:
             lines.append(
                 f"- #{task.id} {task.titulo} — {STATUS_LABELS.get(task.status, task.status)} — {deadline}{suffix}"
             )
-        return AssistantReply(conversation_id=conversation_id, kind="text", message="\n".join(lines))
+        reply = AssistantReply(conversation_id=conversation_id, kind="text", message="\n".join(lines))
+        result_tasks = [
+            {
+                "id": task.id,
+                "title": task.titulo,
+                "status": STATUS_LABELS.get(task.status, task.status),
+                "due_date": task.prazo.strftime("%d/%m/%Y") if task.prazo else None,
+                "client": task.client.razao_social if task.client else None,
+                "responsible": task.user.nome if task.user else None,
+                "is_overdue": bool(task.prazo and task.prazo < today),
+                "days_from_today": (task.prazo - today).days if task.prazo else None,
+                "due_relation": self._task_due_relation(task.prazo, today),
+                "priority_position": position,
+            }
+            for position, task in enumerate(tasks, start=1)
+        ]
+        return TaskQueryExecution(
+            reply,
+            ProviderToolResult(
+                tool="consultar_tarefas",
+                payload={
+                    "criteria": command.model_dump(mode="json"),
+                    "tasks": result_tasks,
+                },
+            ),
+        )
+
+    @staticmethod
+    def _task_due_relation(due_date: date | None, today: date) -> str:
+        if due_date is None:
+            return "sem prazo"
+        difference = (due_date - today).days
+        if difference < 0:
+            days = abs(difference)
+            return f"atrasada ha {days} dia" + ("s" if days != 1 else "")
+        if difference == 0:
+            return "vence hoje"
+        return f"vence em {difference} dia" + ("s" if difference != 1 else "")
 
     def _ground_task_creation(
         self,
@@ -612,8 +983,14 @@ class AssistantService:
         source_message: str,
         command: TaskCreateCommand,
     ) -> TaskCreateCommand:
+        normalized_source = normalize_text(source_message)
+        updates: dict[str, object] = {}
+        if command.client and normalize_text(command.client) not in normalized_source:
+            updates["client"] = None
+        if command.responsible and normalize_text(command.responsible) not in normalized_source:
+            updates["responsible"] = None
         if command.due_date is None or self._message_mentions_date(source_message):
-            return command
+            return command.model_copy(update=updates) if updates else command
         clarification = (
             self.db.query(AssistantAction)
             .filter(
@@ -627,7 +1004,8 @@ class AssistantService:
         preserved_due_date = None
         if clarification is not None:
             preserved_due_date = clarification.arguments_json.get("due_date")
-        return command.model_copy(update={"due_date": preserved_due_date})
+        updates["due_date"] = preserved_due_date
+        return command.model_copy(update=updates)
 
     @staticmethod
     def _message_mentions_date(message: str) -> bool:
@@ -653,21 +1031,64 @@ class AssistantService:
         )
 
     @staticmethod
+    def _task_creation_is_forbidden(message: str) -> bool:
+        return AssistantService._request_targets_unavailable_operation(message)
+
+    @staticmethod
+    def _request_targets_unavailable_operation(message: str) -> bool:
+        normalized = normalize_text(message)
+        return bool(
+            re.search(
+                r"\b(atendimento|pagamento|financeiro|conta paga|nota fiscal|emitir nota|"
+                r"enviar (?:e-mail|email|mensagem)|excluir|apagar)\b",
+                normalized,
+            )
+        )
+
+    @staticmethod
+    def _response_states_limitation(message: str) -> bool:
+        normalized = normalize_text(message)
+        return bool(
+            re.search(
+                r"\b(?:ainda )?nao (?:posso|consigo|cadastro|registro|executo|esta disponivel|tenho suporte)\b|"
+                r"\bindisponivel\b",
+                normalized,
+            )
+        )
+
+    @staticmethod
     def _conversation_reply(
         conversation_id: int,
         command: ConversationCommand,
+        *,
+        tool_results: Sequence[ProviderToolResult] = (),
     ) -> AssistantReply:
+        internal_markers = (
+            "HISTORICO_JSON=",
+            "ULTIMA_RESPOSTA_ASSISTENTE=",
+            "ACAO_PENDENTE_JSON=",
+            "RESULTADOS_FERRAMENTAS_JSON=",
+            "PEDIDO_ATUAL=",
+            "INSTRUCAO_DE_SAIDA=",
+        )
+        if any(marker in command.message for marker in internal_markers):
+            raise ProviderResponseError("Resposta expos contexto interno do provedor.")
         normalized = normalize_text(command.message)
         ungrounded_claims = (
             r"\b(criei|alterei|atualizei|consultei|executei|exclui|apaguei|salvei|registrei)\b",
             r"\b(tarefa|acao|registro)s?\s+(foi|foram)\s+(criad[ao]s?|alterad[ao]s?|excluid[ao]s?)\b",
+            r"\btarefas?\b.{0,80}\b(?:sera|serao|vai ser|vao ser)\s+criad[ao]s?\b",
             r"\b(encontrei|localizei)\b.{0,80}\btarefas?\b",
-            r"\bvoce\s+tem\b.{0,80}\btarefas?\b",
         )
         if any(re.search(pattern, normalized) for pattern in ungrounded_claims):
-            raise ProviderResponseError(
-                "Resposta conversacional alegou uma operacao ou consulta nao executada."
-            )
+            if not tool_results or re.search(
+                r"\b(criei|alterei|atualizei|executei|exclui|apaguei|salvei|registrei)\b|"
+                r"\btarefas?\b.{0,80}\b(?:sera|serao|vai ser|vao ser)\s+criad[ao]s?\b",
+                normalized,
+            ):
+                raise ProviderResponseError(
+                    "Resposta conversacional alegou uma operacao ou consulta nao executada."
+                )
         return AssistantReply(
             conversation_id=conversation_id,
             kind="text",
@@ -724,6 +1145,7 @@ class AssistantService:
     def _correct_pending_task(
         self,
         conversation_id: int,
+        request_id: str,
         command: TaskDraftCorrectionCommand,
         today: date,
     ) -> AssistantReply:
@@ -732,7 +1154,7 @@ class AssistantService:
             .filter(
                 AssistantAction.conversation_id == conversation_id,
                 AssistantAction.action_type == "create_task",
-                AssistantAction.status == "pending",
+                AssistantAction.status.in_(("pending", "needs_clarification")),
             )
             .order_by(AssistantAction.id.desc())
             .first()
@@ -742,6 +1164,32 @@ class AssistantService:
                 conversation_id=conversation_id,
                 kind="clarification",
                 message="Nao ha um rascunho pendente para corrigir.",
+            )
+
+        if action.status == "needs_clarification":
+            draft = TaskCreateCommand.model_validate(action.arguments_json)
+            updates: dict[str, object] = {}
+            if command.title is not None:
+                updates["title"] = command.title
+            if command.clear_due_date:
+                updates["due_date"] = None
+            elif command.due_date is not None:
+                updates["due_date"] = command.due_date
+            if command.clear_client:
+                updates["client"] = None
+            elif command.client is not None:
+                updates["client"] = command.client
+            if command.clear_responsible:
+                updates["responsible"] = None
+            elif command.responsible is not None:
+                updates["responsible"] = command.responsible
+            action.status = "cancelled"
+            self.db.flush()
+            return self._prepare_task(
+                conversation_id,
+                request_id,
+                draft.model_copy(update=updates),
+                today,
             )
 
         arguments = dict(action.arguments_json)
@@ -992,6 +1440,18 @@ class AssistantService:
         if name is None or not name.strip():
             return None, None
         needle = normalize_text(name)
+        absent_values = {
+            "none",
+            "null",
+            "nenhum",
+            "nenhuma",
+            "sem cliente",
+            "sem responsavel",
+            "nao informado",
+            "nao informada",
+        }
+        if needle in absent_values or needle.startswith(("nao especificad", "nao definid")):
+            return None, None
         exact = [candidate for candidate in candidates if normalize_text(label(candidate)) == needle]
         if len(exact) == 1:
             return exact[0], None

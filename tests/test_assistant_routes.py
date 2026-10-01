@@ -11,7 +11,7 @@ class RouteProvider:
     def __init__(self):
         self.command = TaskQueryCommand()
 
-    def interpret(self, messages, *, today, timezone):
+    def interpret(self, messages, *, today, timezone, **_context):
         return self.command
 
 

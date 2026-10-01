@@ -13,8 +13,21 @@ def test_spoken_text_preserves_short_success():
     from app.assistant.voice.speech import spoken_text
 
     assert spoken_text("Tarefa #12 criada com sucesso no quadro.", "success") == (
-        "Tarefa #12 criada com sucesso no quadro."
+        "Tarefa criada com sucesso no quadro."
     )
+
+
+def test_spoken_text_removes_markdown_links_and_technical_diagnostics():
+    from app.assistant.voice.speech import spoken_text
+
+    assert spoken_text(
+        "**Sugestao:** veja [a tarefa](/web/board/12/edit).",
+        "text",
+    ) == "Sugestao: veja a tarefa."
+    assert spoken_text(
+        "O Ollama respondeu com HTTP 503. Confira OLLAMA_MODEL.",
+        "error",
+    ) == "Nao consegui concluir a resposta. Veja os detalhes na tela."
 
 
 def test_spoken_text_truncates_long_detail_safely():

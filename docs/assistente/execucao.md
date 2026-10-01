@@ -20,9 +20,11 @@ As conversas, requisicoes, comandos normalizados e acoes ficam nas tabelas `assi
 | `OLLAMA_MODEL` | vazio | Nome exato de um modelo ja instalado. Obrigatorio para interpretar mensagens. |
 | `OLLAMA_CONNECT_TIMEOUT` | `3` | Segundos para conectar. |
 | `OLLAMA_READ_TIMEOUT` | `60` | Segundos para aguardar a interpretacao. |
+| `OLLAMA_MAX_OUTPUT_TOKENS` | `180` | Limite de geracao por inferencia; reduz respostas excessivas sem alterar as validacoes. |
 | `ASSISTANT_TIMEZONE` | `America/Recife` | Base para hoje, amanha e demais datas relativas. |
 | `ASSISTANT_CONTEXT_MESSAGES` | `12` | Quantidade maxima de mensagens recentes enviada ao interpretador. |
 | `ASSISTANT_REQUEST_LEASE_SECONDS` | `120` | Expiracao de requisicoes interrompidas antes de permitir retomada segura. |
+| `ASSISTANT_MAX_TOOL_ROUNDS` | `2` | Maximo de consultas reais distintas antes da resposta final. |
 
 Nao ha fallback para API paga ou servico externo.
 
@@ -57,7 +59,7 @@ hash da voz e aplica limite total de 2 GB. O startup nunca baixa modelos.
 | `VOICE_MAX_DURATION_SECONDS` | `30` | Limite conferido durante a decodificacao. |
 | `VOICE_TRANSCRIPTION_TIMEOUT_SECONDS` | `60` | Espera maxima pelo STT. |
 | `VOICE_SYNTHESIS_TIMEOUT_SECONDS` | `30` | Espera maxima pelo TTS. |
-| `VOICE_SILENCE_MS` | `1200` | Silencio que encerra uma fala no navegador. |
+| `VOICE_SILENCE_MS` | `1800` | Silencio que encerra uma fala no navegador; valor mais tolerante a pausas naturais. |
 | `VOICE_IDLE_TIMEOUT_SECONDS` | `120` | Libera microfone sem fala. |
 
 Ha um worker e no maximo uma espera pendente por STT e por TTS. O terceiro trabalho
@@ -93,6 +95,7 @@ export OLLAMA_BASE_URL=http://127.0.0.1:11434
 export OLLAMA_MODEL=qwen3:4b-instruct-2507-q4_K_M
 export OLLAMA_CONNECT_TIMEOUT=3
 export OLLAMA_READ_TIMEOUT=60
+export OLLAMA_MAX_OUTPUT_TOKENS=180
 export ASSISTANT_TIMEZONE=America/Recife
 export ASSISTANT_REQUEST_LEASE_SECONDS=120
 export VOICE_ENABLED=true
@@ -125,6 +128,7 @@ $env:OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 $env:OLLAMA_MODEL = "<modelo-escolhido>"
 $env:OLLAMA_CONNECT_TIMEOUT = "3"
 $env:OLLAMA_READ_TIMEOUT = "90"
+$env:OLLAMA_MAX_OUTPUT_TOKENS = "180"
 $env:ASSISTANT_TIMEZONE = "America/Recife"
 $env:ASSISTANT_REQUEST_LEASE_SECONDS = "120"
 $env:VOICE_ENABLED = "true"
@@ -234,6 +238,7 @@ export OLLAMA_CONNECT_TIMEOUT=3
 export OLLAMA_READ_TIMEOUT=90
 export ASSISTANT_TIMEZONE=America/Recife
 export ASSISTANT_REQUEST_LEASE_SECONDS=30
+export ASSISTANT_MAX_TOOL_ROUNDS=2
 export VOICE_ENABLED=true
 export VOICE_MODEL_DIR="$PWD/.models/assistant_voice"
 export VOICE_WHISPER_MODEL=small
@@ -241,6 +246,7 @@ export VOICE_WHISPER_DEVICE=cpu
 export VOICE_WHISPER_COMPUTE_TYPE=int8
 export VOICE_LANGUAGE=pt
 export VOICE_PIPER_MODEL_PATH="$PWD/.models/assistant_voice/pt_BR-faber-medium.onnx"
+export VOICE_SILENCE_MS=1800
 .venv/bin/python run.py
 ```
 

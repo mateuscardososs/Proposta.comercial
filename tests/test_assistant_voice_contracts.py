@@ -32,6 +32,7 @@ def test_voice_settings_have_cpu_safe_defaults(tmp_path, monkeypatch):
     assert settings.voice_whisper_compute_type == "int8"
     assert settings.voice_max_upload_bytes == 8 * 1024 * 1024
     assert settings.voice_max_duration_seconds == 30
+    assert settings.voice_silence_ms == 1800
     assert settings.voice_min_duration_seconds == 0.25
     assert isinstance(settings.voice_model_dir, Path)
 

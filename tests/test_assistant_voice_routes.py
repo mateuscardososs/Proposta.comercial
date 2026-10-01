@@ -88,6 +88,8 @@ def test_transcription_route_validates_audio_and_returns_safe_text():
     assert response.json()["text"].startswith("Crie uma tarefa")
     assert response.json()["audio_duration_seconds"] == 0.5
     assert response.json()["transcription_seconds"] == 0.12
+    assert response.json()["queue_wait_seconds"] >= 0
+    assert response.json()["total_seconds"] >= response.json()["transcription_seconds"]
     assert transcriber.calls == 1
 
 
@@ -188,5 +190,7 @@ def test_speech_route_returns_wav_without_interpreting_again():
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("audio/wav")
     assert response.content.startswith(b"RIFF")
-    assert synthesizer.texts == ["Tarefa #5 criada com sucesso no quadro."]
+    assert synthesizer.texts == ["Tarefa criada com sucesso no quadro."]
     assert float(response.headers["x-synthesis-seconds"]) == 0.04
+    assert float(response.headers["x-queue-wait-seconds"]) >= 0
+    assert float(response.headers["x-total-seconds"]) >= 0.04

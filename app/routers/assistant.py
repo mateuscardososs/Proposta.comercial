@@ -54,6 +54,7 @@ def get_assistant_provider() -> AssistantProvider:
         model=settings.ollama_model,
         connect_timeout=settings.ollama_connect_timeout,
         read_timeout=settings.ollama_read_timeout,
+        max_output_tokens=settings.ollama_max_output_tokens,
     )
 
 
@@ -96,6 +97,7 @@ def _service(db: Session, provider: AssistantProvider | None = None) -> Assistan
         timezone=settings.assistant_timezone,
         context_messages=settings.assistant_context_messages,
         request_lease_seconds=settings.assistant_request_lease_seconds,
+        max_tool_rounds=settings.assistant_max_tool_rounds,
     )
 
 
@@ -173,9 +175,18 @@ async def assistant_voice_transcription(
             path.unlink(missing_ok=True)
 
     try:
-        return await _transcription_executor.submit(
+        execution = await _transcription_executor.submit_with_metrics(
             process,
             timeout=settings.voice_transcription_timeout_seconds,
+        )
+        return execution.value.model_copy(
+            update={
+                "queue_wait_seconds": execution.queue_wait_seconds,
+                "total_seconds": max(
+                    execution.total_seconds,
+                    execution.queue_wait_seconds + execution.value.transcription_seconds,
+                ),
+            }
         )
     except VoiceBusyError as exc:
         path.unlink(missing_ok=True)
@@ -198,10 +209,11 @@ async def assistant_voice_speech(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="A voz esta desativada.")
     text = spoken_text(payload.text, payload.kind)
     try:
-        result = await _synthesis_executor.submit(
+        execution = await _synthesis_executor.submit_with_metrics(
             lambda: synthesizer.synthesize(text),
             timeout=settings.voice_synthesis_timeout_seconds,
         )
+        result = execution.value
     except VoiceBusyError as exc:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from exc
     except VoiceTimeoutError as exc:
@@ -211,7 +223,11 @@ async def assistant_voice_speech(
     return Response(
         content=result.data,
         media_type=result.media_type,
-        headers={"X-Synthesis-Seconds": f"{result.synthesis_seconds:g}"},
+        headers={
+            "X-Synthesis-Seconds": f"{result.synthesis_seconds:g}",
+            "X-Queue-Wait-Seconds": f"{execution.queue_wait_seconds:g}",
+            "X-Total-Seconds": f"{max(execution.total_seconds, execution.queue_wait_seconds + result.synthesis_seconds):g}",
+        },
     )
 
 
