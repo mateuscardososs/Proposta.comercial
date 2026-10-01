@@ -5,6 +5,8 @@ import importlib.util
 import os
 from pathlib import Path
 import tempfile
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
@@ -19,6 +21,10 @@ from app.assistant.contracts import (
     VoiceTranscriptionResponse,
 )
 from app.assistant.ollama import OllamaProvider
+from app.assistant.capabilities import CapabilityRegistry
+from app.assistant.email.imap import YahooImapEmailReader
+from app.assistant.email.provider import EmailReader
+from app.assistant.email.synthetic import SyntheticEmailReader, synthetic_messages
 from app.assistant.provider import AssistantProvider
 from app.assistant.service import AssistantService
 from app.assistant.voice.audio import inspect_audio
@@ -49,13 +55,51 @@ _synthesis_executor = BoundedVoiceExecutor(name="voice-tts", max_pending=1)
 
 def get_assistant_provider() -> AssistantProvider:
     settings = get_settings()
+    capabilities = _capability_registry(settings)
     return OllamaProvider(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
         connect_timeout=settings.ollama_connect_timeout,
         read_timeout=settings.ollama_read_timeout,
         max_output_tokens=settings.ollama_max_output_tokens,
+        capabilities=capabilities.provider_context(),
     )
+
+
+@lru_cache
+def _configured_email_reader() -> EmailReader | None:
+    settings = get_settings()
+    provider = settings.email_provider.strip().casefold()
+    if provider == "synthetic":
+        now = datetime.now(ZoneInfo(settings.assistant_timezone))
+        return SyntheticEmailReader(messages=synthetic_messages(now))
+    if provider == "imap_yahoo":
+        if not settings.email_imap_username or not settings.email_imap_app_password:
+            return None
+        return YahooImapEmailReader(
+            username=settings.email_imap_username,
+            app_password=settings.email_imap_app_password,
+            host=settings.email_imap_host,
+            port=settings.email_imap_port,
+            timeout_seconds=settings.email_imap_timeout_seconds,
+            max_messages=settings.email_max_messages,
+            body_preview_chars=settings.email_body_preview_chars,
+        )
+    return None
+
+
+def get_email_reader() -> EmailReader | None:
+    return _configured_email_reader()
+
+
+def _capability_registry(settings: object) -> CapabilityRegistry:
+    provider = str(settings.email_provider).strip().casefold()
+    configured = provider == "synthetic" or (
+        provider == "imap_yahoo"
+        and bool(settings.email_imap_username)
+        and bool(settings.email_imap_app_password)
+    )
+    return CapabilityRegistry(email_provider=provider if configured else "disabled")
 
 
 @lru_cache
@@ -89,7 +133,11 @@ def get_voice_synthesizer() -> SpeechSynthesizer:
     return _configured_voice_synthesizer()
 
 
-def _service(db: Session, provider: AssistantProvider | None = None) -> AssistantService:
+def _service(
+    db: Session,
+    provider: AssistantProvider | None = None,
+    email_reader: EmailReader | None = None,
+) -> AssistantService:
     settings = get_settings()
     return AssistantService(
         db,
@@ -98,6 +146,9 @@ def _service(db: Session, provider: AssistantProvider | None = None) -> Assistan
         context_messages=settings.assistant_context_messages,
         request_lease_seconds=settings.assistant_request_lease_seconds,
         max_tool_rounds=settings.assistant_max_tool_rounds,
+        email_reader=email_reader,
+        capabilities=_capability_registry(settings),
+        email_history_retention_days=settings.email_cache_retention_days,
     )
 
 
@@ -108,6 +159,11 @@ def assistant_page(request: Request) -> object:
         "assistant.html",
         {"title": "Assistente operacional", "full_width": True},
     )
+
+
+@router.get("/api/assistant/capabilities")
+def assistant_capabilities() -> dict[str, object]:
+    return {"capabilities": _capability_registry(get_settings()).provider_context()}
 
 
 @router.get("/api/assistant/voice/status", response_model=VoiceStatus)
@@ -236,9 +292,10 @@ def assistant_message(
     payload: AssistantMessageRequest,
     db: Session = Depends(get_db),
     provider: AssistantProvider = Depends(get_assistant_provider),
+    email_reader: EmailReader | None = Depends(get_email_reader),
 ) -> AssistantReply:
     try:
-        return _service(db, provider).handle_message(
+        return _service(db, provider, email_reader).handle_message(
             message=payload.message,
             request_id=payload.request_id,
             conversation_id=payload.conversation_id,

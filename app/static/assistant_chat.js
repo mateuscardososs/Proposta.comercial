@@ -167,6 +167,43 @@ export function bootstrapAssistantChat(root = document) {
       controls.appendChild(link);
       article.appendChild(controls);
     }
+    if (Array.isArray(details.email_items) && details.email_items.length) {
+      const list = document.createElement("div");
+      list.className = "assistant-email-list";
+      for (const item of details.email_items) {
+        const card = document.createElement("section");
+        card.className = "assistant-email-card";
+        const heading = document.createElement("strong");
+        heading.textContent = item.subject || "(sem assunto)";
+        const meta = document.createElement("span");
+        const readState = item.seen ? "Lido no servidor" : "Não lido no servidor";
+        const date = item.received_at ? new Date(item.received_at).toLocaleString("pt-BR") : "data indisponível";
+        meta.textContent = `${item.sender || "Remetente desconhecido"} · ${date} · ${readState}`;
+        const summary = document.createElement("p");
+        summary.textContent = item.summary || "Sem trecho disponível.";
+        const priority = document.createElement("p");
+        priority.textContent = `Prioridade sugerida: ${item.priority || "normal"}. ${item.priority_reason || ""}`;
+        card.append(heading, meta, summary, priority);
+        if (item.action_suggested) {
+          const action = document.createElement("p");
+          action.textContent = `Ação sugerida: ${item.action_suggested}`;
+          card.appendChild(action);
+        }
+        list.appendChild(card);
+      }
+      if (details.consulted_interval) {
+        const interval = document.createElement("small");
+        interval.textContent = `Período consultado: ${details.consulted_interval}`;
+        list.appendChild(interval);
+      }
+      for (const limitation of details.limitations || []) {
+        const note = document.createElement("small");
+        note.className = "assistant-email-limitation";
+        note.textContent = limitation;
+        list.appendChild(note);
+      }
+      article.appendChild(list);
+    }
     history.appendChild(article);
     history.scrollTop = history.scrollHeight;
   }

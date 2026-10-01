@@ -33,6 +33,21 @@ class TaskQueryCommand(BaseModel):
     limit: int = Field(default=20, ge=1, le=50, description="Quantidade maxima de resultados.")
 
 
+class EmailQueryCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["consultar_emails"] = "consultar_emails"
+    period: Literal["today", "week", "custom"] = "today"
+    start_date: str | None = Field(default=None, max_length=40)
+    end_date: str | None = Field(default=None, max_length=40)
+    unread_only: bool = False
+    sender: str | None = Field(default=None, max_length=255)
+    attention_only: bool = False
+    awaiting_reply: bool = False
+    reference: str | None = Field(default=None, max_length=160)
+    limit: int = Field(default=20, ge=1, le=50)
+
+
 class TaskCreateCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -54,6 +69,7 @@ class TaskCreateCommand(BaseModel):
         default=None, max_length=120, description="Nome do responsavel como foi falado."
     )
     proposal_number: int | None = Field(default=None, ge=1)
+    source_email_reference: str | None = Field(default=None, max_length=160)
 
 
 class UnsupportedCommand(BaseModel):
@@ -133,6 +149,7 @@ class TaskDraftCorrectionCommand(BaseModel):
 
 AssistantCommand = Annotated[
     TaskQueryCommand
+    | EmailQueryCommand
     | TaskCreateCommand
     | UnsupportedCommand
     | ConversationCommand
@@ -153,6 +170,9 @@ class AssistantReply(BaseModel):
     task_id: int | None = None
     task_url: str | None = None
     fields: dict[str, str] = Field(default_factory=dict)
+    email_items: list[dict[str, object]] = Field(default_factory=list)
+    consulted_interval: str | None = None
+    limitations: list[str] = Field(default_factory=list)
 
 
 class AssistantMessageView(BaseModel):
