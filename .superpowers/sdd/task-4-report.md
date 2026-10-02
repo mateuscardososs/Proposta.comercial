@@ -21,7 +21,7 @@
 
 ## Integracao posterior
 
-O adaptador da Tarefa 5 deve fornecer `ProviderToolResult.payload` com `count` e `service_calls`. Cada item pode fornecer `id`, `client`, `summary`, `execution_status`, `administrative_status`, `next_pending_step`, `opened_on`, `technically_completed_at` e `administratively_closed_at`. A Tarefa 6 deve colocar as ferramentas de servico na allowlist da rodada apropriada. Esta tarefa nao integrou `AssistantService`, rotas ou `app/main.py`.
+O adaptador da Tarefa 5 fornece `ProviderToolResult.payload` com `count` e `service_calls`; cada item inclui as projecoes do chamado e os estados das etapas administrativas. A integracao subsequente coloca as ferramentas de servico na allowlist da rodada apropriada. `AssistantService`, rotas e paginas sao integrados nas tarefas 5 a 7.
 
 Nenhum commit, push ou deploy foi feito.
 

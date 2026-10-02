@@ -219,3 +219,58 @@ def test_service_result_datetime_date_can_be_repeated_in_brazilian_format():
         command, tool_results=(result,), current_message="Quando foi concluído?",
     )
     assert grounded.message == command.message
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "O chamado #1 tem execução concluída.",
+        "No chamado #1 o relatório está concluído.",
+        "O chamado #99 está em andamento.",
+    ],
+)
+def test_service_status_claims_must_match_the_consulted_projection(message):
+    from app.assistant.contracts import ConversationCommand
+    from app.assistant.ollama import _validate_conversation_grounding
+
+    result = ProviderToolResult(
+        tool="consultar_servicos", evidence_id="services:projection", state="success",
+        payload={"count": 1, "service_calls": [{
+            "id": 1, "execution_status": "not_started", "administrative_status": "open",
+            "workflow_steps": [{"step_type": "report", "status": "pending"}],
+        }]},
+    )
+    with pytest.raises(ValueError, match="chamado|tecnica|administrativo|estado"):
+        _validate_conversation_grounding(
+            ConversationCommand(message=message), tool_results=(result,),
+            current_message="Mostre o chamado e sua situação.",
+        )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "A inspeção da Alfa Serviços Sintética ainda não foi executada.",
+        "O chamado da Alfa Serviços Sintética está aberto, com a inspeção de balança ainda não iniciada.",
+        "Não há rascunho de tarefa criado.",
+    ],
+)
+def test_service_query_cannot_confuse_event_history_or_assert_unqueried_board_state(message):
+    from app.assistant.contracts import ConversationCommand
+    from app.assistant.ollama import _validate_conversation_grounding
+
+    result = ProviderToolResult(
+        tool="consultar_servicos", evidence_id="services:event-history", state="success",
+        payload={"count": 1, "service_calls": [{
+            "id": 1, "client": "Alfa Serviços Sintética", "execution_status": "not_started",
+            "administrative_status": "open", "effective_event_count": 1,
+            "event_types": ["inspection"], "recent_events": [{
+                "event_type": "inspection", "description": "Inspeção sintética realizada.",
+            }], "workflow_steps": [],
+        }]},
+    )
+    with pytest.raises(ValueError):
+        _validate_conversation_grounding(
+            ConversationCommand(message=message), tool_results=(result,),
+            current_message="Consulte os chamados da Alfa Serviços Sintética.",
+        )

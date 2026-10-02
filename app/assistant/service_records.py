@@ -87,6 +87,15 @@ class AssistantServiceRecordAdapter:
         ))
         items = []
         for call in calls:
+            effective_events = service_record_service.effective_service_events(call.events)
+            recent_events = [
+                {
+                    "event_type": item.event_type,
+                    "occurred_on": item.occurred_on.isoformat(),
+                    "description": item.description[:240],
+                }
+                for item in effective_events[-3:]
+            ]
             pending = next((step.step_type for step in call.workflow_steps
                             if step.status in {"pending", "waiting_customer", "unknown"}), None)
             items.append({
@@ -96,6 +105,13 @@ class AssistantServiceRecordAdapter:
                 "next_pending_step": pending, "opened_on": call.opened_on.isoformat(),
                 "technically_completed_at": call.technically_completed_at.isoformat() if call.technically_completed_at else None,
                 "administratively_closed_at": call.administratively_closed_at.isoformat() if call.administratively_closed_at else None,
+                "workflow_steps": [
+                    {"step_type": step.step_type, "status": step.status}
+                    for step in call.workflow_steps
+                ],
+                "event_types": sorted({item.event_type for item in effective_events}),
+                "effective_event_count": len(effective_events),
+                "recent_events": recent_events,
             })
         result = ProviderToolResult(
             tool="consultar_servicos", evidence_id=secrets.token_urlsafe(16),
@@ -401,7 +417,8 @@ class AssistantServiceRecordAdapter:
         return self._prepare_confirm_action(
             conversation_id, request_id, "correct_service_event", payload.model_dump(mode="json"),
             {"chamado": f"#{call.id} — {call.summary}", "evento_original": f"#{event.id}",
-             "correcao": corrected_type or description or (corrected_date.isoformat() if corrected_date else "")},
+             "correcao": corrected_type or description or "Data corrigida",
+             **({"data_corrigida": corrected_date.strftime("%d/%m/%Y")} if corrected_date else {})},
             "Confirme para acrescentar uma correção ao histórico; o evento original será preservado.",
         )
 
@@ -515,7 +532,10 @@ class AssistantServiceRecordAdapter:
         return self._prepare_confirm_action(
             conversation_id, request_id, "create_service_reminders",
             {"service_call_id": call.id, "reminders": reminders},
-            {"chamado": f"#{call.id} — {call.summary}", "lembretes": "; ".join(item["title"] for item in reminders)},
+            {"chamado": f"#{call.id} — {call.summary}", "lembretes": "; ".join(
+                f"{item['title']}" + (f" — {date.fromisoformat(item['due_date']).strftime('%d/%m/%Y')}" if item["due_date"] else "")
+                for item in reminders
+            )},
             "Confirme para criar os lembretes no quadro.",
         )
 

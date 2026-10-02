@@ -121,7 +121,18 @@ def validate_execution_claims(
     if service_absence_claim and service_result is not None:
         count = service_result.payload.get("count")
         if isinstance(count, int) and count > 0:
-            raise ValueError("A resposta descreveu a consulta de servicos como vazia, mas foram encontrados registros.")
+                raise ValueError("A resposta descreveu a consulta de servicos como vazia, mas foram encontrados registros.")
+
+    if service_result is not None and "consultar_tarefas" not in evidence:
+        task_state_claim = bool(re.search(
+            r"\b(?:nao ha|nao existe|nao encontrei|sem|existe|tem|possui|foi criada|"
+            r"foram criadas|esta criada|estao criadas|esta pendente|estao pendentes)\b"
+            r".{0,45}\b(?:tarefas?|rascunhos?|quadro)\b|"
+            r"\b(?:tarefas?|rascunhos?)\b.{0,35}\b(?:criada[os]?|registrada[os]?|pendente[es]?|no quadro)\b",
+            normalized,
+        ))
+        if task_state_claim:
+            raise ValueError("A resposta afirmou estado de tarefa sem consulta ao quadro.")
 
     service_registration_claim = _positive_claim(
         normalized,

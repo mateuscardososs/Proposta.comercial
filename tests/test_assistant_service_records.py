@@ -205,19 +205,21 @@ def test_confirmed_service_reminders_create_once_and_return_task_links(db):
     db.commit()
     reminder_assistant = service(db, ServiceReminderDraftCommand(
         service_call_id=1, reminders=[ServiceReminderItemCommand(
-            title="Preparar relatório", description="Chamado #1", step_type="report",
+            title="Preparar relatório", description="Chamado #1", step_type="report", due_date="amanhã",
         )],
     ))
     pending = reminder_assistant.handle_message(
-        message="Crie um lembrete Preparar relatório para o chamado #1.",
+        message="Crie um lembrete Preparar relatório para o chamado #1 para amanhã.",
         request_id="reminder-create", conversation_id=draft.conversation_id,
     )
     assert pending.kind == "confirmation", pending.message
+    assert pending.fields["lembretes"] == "Preparar relatório — 03/10/2026"
     first = reminder_assistant.confirm_action(pending.action_id, pending.confirmation_token)
     second = reminder_assistant.confirm_action(pending.action_id, pending.confirmation_token)
     assert first.kind == "success" and first.task_urls == ["/web/board/1/edit"]
     assert second == first
     assert db.query(Task).count() == db.query(ServiceTaskLink).count() == 1
+    assert db.query(Task).one().prazo == date(2026, 10, 3)
     assert db.get(AssistantAction, draft.action_id).result_json["service_call_id"] == db.query(ServiceCall).one().id
 
 
@@ -235,6 +237,31 @@ def test_service_query_uses_real_evidence_and_bounded_result(db):
     assert "Alfa" in reply.message
     assert assistant.provider.calls[-1]["tool_results"][0].tool == "consultar_servicos"
     assert assistant.provider.calls[-1]["tool_results"][0].payload["count"] == 1
+    assert assistant.provider.calls[-1]["allowed_tools"] == {"responder_conversa"}
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("A resposta contradiz o evento de inspecao registrado.", "service_event_conflict"),
+        ("A resposta afirmou estado de tarefa sem consulta ao quadro.", "unqueried_task_state"),
+    ],
+)
+def test_service_grounding_repairs_have_specific_safe_hints(message, expected):
+    from app.assistant.ollama import _repair_hint, _repair_reason
+
+    reason = _repair_reason(ValueError(message))
+    assert reason == expected
+    assert _repair_hint(reason)
+
+
+def test_empty_service_answer_repair_hint_uses_only_the_verified_count():
+    from app.assistant.ollama import _repair_hint
+
+    result = ProviderToolResult(tool="consultar_servicos", state="success", payload={"count": 1})
+    hint = _repair_hint("service_result_conflict", (result,))
+    assert "retornou 1 chamado" in hint
+    assert "Alfa" not in hint
 
 
 def test_single_open_call_is_shown_in_confirmation(db):
@@ -470,6 +497,10 @@ def test_service_result_sent_to_ollama_contains_at_most_ten_compact_calls():
             "opened_on": "2026-10-02",
             "technically_completed_at": None,
             "administratively_closed_at": None,
+            "event_types": ["inspection"],
+            "effective_event_count": 1,
+            "recent_events": [{"event_type": "inspection", "occurred_on": "2026-10-02", "description": "x" * 400}],
+            "workflow_steps": [{"step_type": "report", "status": "pending"}],
             "events": [{"description": "historico confidencial"}],
         }
         for number in range(12)
@@ -486,7 +517,10 @@ def test_service_result_sent_to_ollama_contains_at_most_ten_compact_calls():
     assert set(compact[0]) == {
         "id", "client", "summary", "execution_status", "administrative_status",
         "next_pending_step", "opened_on", "technically_completed_at", "administratively_closed_at",
+        "event_types", "effective_event_count", "recent_events", "workflow_steps",
     }
+    assert compact[0]["recent_events"][0]["description"] == "x" * 240
+    assert compact[0]["workflow_steps"] == [{"step_type": "report", "status": "pending"}]
 
 
 def test_large_service_result_is_bounded_before_ollama_prompt():
@@ -521,6 +555,17 @@ def test_service_clarification_requires_service_tools_in_the_round():
         current_message="Cadastre um atendimento de inspeção.",
         allowed_tools={"registrar_evento_servico", "responder_conversa"},
     ) == clarification
+
+
+def test_successful_service_query_allows_natural_answer_without_repeating_tool():
+    command = ConversationCommand(message="O chamado está aberto e falta o relatório.")
+    result = ProviderToolResult(tool="consultar_servicos", state="success", payload={"count": 1})
+    assert _validate_tool_scope(
+        command,
+        current_message="Consulte os chamados e diga o que está pendente.",
+        allowed_tools={"responder_conversa"},
+        tool_results=(result,),
+    ) == command
 
 
 def test_financial_request_cannot_be_substituted_with_a_task():

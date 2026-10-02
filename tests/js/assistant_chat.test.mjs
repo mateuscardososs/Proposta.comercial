@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AssistantChatController } from "../../app/static/assistant_chat.js";
+import { AssistantChatController, bootstrapAssistantChat } from "../../app/static/assistant_chat.js";
 
 
 function response(payload, { ok = true, status = 200 } = {}) {
@@ -58,6 +58,63 @@ test("send gives immediate feedback and always clears busy state", async () => {
   assert.equal(reply.message, "Olá!");
   assert.equal(sample.getConversationId(), 9);
   assert.deepEqual(sample.events.at(-1), ["busy", false]);
+});
+
+
+test("service and reminder links returned after confirmation are rendered in history", async () => {
+  const oldWindow = globalThis.window;
+  const oldDocument = globalThis.document;
+  const makeElement = (tagName = "div") => ({
+    tagName, children: [], classList: { toggle() {} }, listeners: {},
+    addEventListener(name, callback) { this.listeners[name] = callback; },
+    append(...items) { this.children.push(...items); },
+    appendChild(item) { this.children.push(item); },
+    remove() { this.removed = true; },
+    focus() {}, requestSubmit() {},
+    querySelectorAll(selector) {
+      const matches = [];
+      const walk = (item) => {
+        if (selector === "button" && item.tagName === "button") matches.push(item);
+        for (const child of item.children || []) walk(child);
+      };
+      walk(this);
+      return matches;
+    },
+  });
+  const elements = new Map([
+    ["assistant-form", makeElement("form")],
+    ["assistant-message", makeElement("textarea")],
+    ["assistant-send", makeElement("button")],
+    ["assistant-history", makeElement("main")],
+    ["assistant-empty", makeElement("div")],
+    ["assistant-status", makeElement("div")],
+    ["assistant-retry", makeElement("button")],
+  ]);
+  globalThis.window = {
+    location: { href: "http://127.0.0.1:8011/web/assistant" },
+    history: { replaceState() {} }, crypto: { randomUUID: () => "ui-test" },
+    fetch: async () => response({ conversation_id: 8, kind: "success", message: "Pronto.",
+      service_call_id: 7, service_url: "/web/services/7", task_urls: ["/web/board/21/edit", "/web/board/22/edit"] }),
+  };
+  globalThis.document = { createElement: makeElement };
+  try {
+    const controller = bootstrapAssistantChat({ getElementById: (id) => elements.get(id) });
+    await controller.send("Crie os lembretes");
+    const anchors = [];
+    const walk = (item) => {
+      if (item.tagName === "a") anchors.push([item.textContent, item.href]);
+      for (const child of item.children || []) walk(child);
+    };
+    walk(elements.get("assistant-history"));
+    assert.deepEqual(anchors, [
+      ["Abrir chamado", "/web/services/7"],
+      ["Abrir lembrete 1", "/web/board/21/edit"],
+      ["Abrir lembrete 2", "/web/board/22/edit"],
+    ]);
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.document = oldDocument;
+  }
 });
 
 

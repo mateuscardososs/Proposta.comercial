@@ -277,9 +277,23 @@ Depois do preenchimento, inicie exclusivamente essa instância com:
 ```
 
 O inicializador usa `APP_ENV_FILE` para o Pydantic ler o arquivo dentro do processo Python, sem
-interpolar credenciais na linha de comando. Ele mantém banco e documentos isolados em
-`/tmp/ad-balancas-conversational.xFP65K`, escuta somente em `127.0.0.1:8011` e recusa iniciar se os
-dois campos estiverem vazios.
+interpolar credenciais na linha de comando. Para a validação de serviços, mantém o banco e os
+documentos separados em `/tmp/ad-balancas-services-8011`, escuta somente em `127.0.0.1:8011` e recusa
+iniciar se os dois campos estiverem vazios. O banco anterior em
+`/tmp/ad-balancas-conversational.xFP65K` não é removido nem reutilizado.
+
+Para carregar somente registros sintéticos nesse novo banco, use explicitamente:
+
+```bash
+DATABASE_URL=sqlite:////tmp/ad-balancas-services-8011/app.sqlite3 \
+SERVICE_VALIDATION_ALLOW_SYNTHETIC_SEED=1 PYTHONPATH=. \
+.venv/bin/python scripts/seed_assistant_service_validation.py
+```
+
+O script rejeita qualquer outro caminho ou banco que não seja SQLite. A carga não acessa a caixa
+Yahoo. Ela cria clientes com nomes parecidos, o responsável `Carlos Teste Sintético`, chamados e
+tarefas identificados como sintéticos. A integração Yahoo continua configurada como somente leitura;
+não foi consultada durante a validação do fluxo de serviços.
 
 Para conectar o Yahoo posteriormente, use variáveis locais fora do Git:
 
@@ -304,7 +318,7 @@ O adaptador abre `imap.mail.yahoo.com:993` com SSL, seleciona pastas em modo som
 alteração de flags ou download deliberado de anexos. Entrada e Enviados são descobertas primeiro
 pelos atributos especiais do servidor; nomes localizados são apenas fallback.
 
-### Instância isolada atual
+### Instância isolada de validação de serviços
 
 Ollama estritamente local:
 
@@ -312,23 +326,26 @@ Ollama estritamente local:
 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_NO_CLOUD=true ollama serve
 ```
 
-Aplicação de teste:
+Aplicação de teste (após verificar que o Ollama já está ativo e carregar os dados sintéticos):
 
 ```bash
 cd /Users/mateuscardoso/dev/pai/Proposta.comercial
-DATABASE_URL=sqlite:////tmp/ad-balancas-conversational.xFP65K/manual.sqlite3 \
-OUTPUT_DIR=/tmp/ad-balancas-conversational.xFP65K/output \
-TEMPLATE_DOC_PATH=/tmp/ad-balancas-conversational.xFP65K/doc_templates/proposta_template.docx \
+./scripts/run_assistant_8011_yahoo.sh
+```
+
+O inicializador seleciona a configuração Yahoo local sem imprimir os valores e usa:
+
+```text
+DATABASE_URL=sqlite:////tmp/ad-balancas-services-8011/app.sqlite3
+OUTPUT_DIR=/tmp/ad-balancas-services-8011/output
+TEMPLATE_DOC_PATH=/tmp/ad-balancas-services-8011/doc_templates/proposta_template.docx
 APP_HOST=127.0.0.1 APP_PORT=8011 APP_RELOAD=false \
 OLLAMA_BASE_URL=http://127.0.0.1:11434 \
 OLLAMA_MODEL=qwen3:4b-instruct-2507-q4_K_M \
-ASSISTANT_TIMEZONE=America/Recife \
-EMAIL_PROVIDER=synthetic EMAIL_MAX_MESSAGES=30 EMAIL_CACHE_RETENTION_DAYS=14 \
-VOICE_ENABLED=true \
-VOICE_MODEL_DIR="$PWD/.models/assistant_voice" \
-VOICE_PIPER_MODEL_PATH="$PWD/.models/assistant_voice/pt_BR-faber-medium.onnx" \
-.venv/bin/python run.py
+ASSISTANT_TIMEZONE=America/Recife
 ```
+
+O script também mantém a voz local habilitada com os modelos já baixados.
 
 Abra `http://127.0.0.1:8011/web/assistente`. A porta 8000 pertence à aplicação antiga e não faz
 parte desta instância.
