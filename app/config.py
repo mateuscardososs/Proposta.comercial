@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     email_max_messages: int = 30
     email_cache_retention_days: int = 14
     email_body_preview_chars: int = 4000
+    email_sync_enabled: bool = False
+    email_auto_task_creation_enabled: bool = False
+    email_sync_interval_seconds: int = Field(default=900, ge=60, le=86400)
+    email_sync_lookback_days: int = Field(default=30, ge=1, le=90)
+    email_sync_batch_size: int = Field(default=30, ge=1, le=100)
+    email_sync_mailbox_key: str = "primary"
+    today_lookahead_days: int = Field(default=7, ge=1, le=31)
     voice_enabled: bool = True
     voice_model_dir: Path = VOICE_MODEL_DIR
     voice_whisper_model: str = "small"

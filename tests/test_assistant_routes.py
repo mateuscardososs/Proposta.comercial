@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.assistant.contracts import ConversationCommand, TaskCreateCommand, TaskQueryCommand
+from app.assistant.contracts import (
+    ConversationCommand,
+    TaskCreateCommand,
+    TaskQueryCommand,
+)
 from app.main import app
 from app.routers.assistant import get_assistant_provider
 
@@ -33,7 +37,8 @@ def test_assistant_page_uses_existing_shell_and_local_warning():
     assert 'src="/assets/assistant_voice_bootstrap.js"' in response.text
     assert 'id="assistant-retry"' in response.text
     assert 'id="voice-level"' in response.text
-    assert 'href="/web/assistente" class="active"' in response.text
+    assert 'href="/web/assistente" aria-label="Assistente"' in response.text
+    assert 'class="active"' in response.text
 
 
 def test_assistant_api_creates_preview_then_idempotent_task():
@@ -44,7 +49,10 @@ def test_assistant_api_creates_preview_then_idempotent_task():
         with TestClient(app) as client:
             preview = client.post(
                 "/api/assistant/messages",
-                json={"message": "Crie a tarefa revisar proposta", "request_id": "route-create-1"},
+                json={
+                    "message": "Crie a tarefa revisar proposta",
+                    "request_id": "route-create-1",
+                },
             )
             assert preview.status_code == 200
             payload = preview.json()
@@ -74,7 +82,10 @@ def test_conversation_history_endpoint_returns_messages():
         with TestClient(app) as client:
             sent = client.post(
                 "/api/assistant/messages",
-                json={"message": "Mostre minhas tarefas", "request_id": "route-history-1"},
+                json={
+                    "message": "Mostre minhas tarefas",
+                    "request_id": "route-history-1",
+                },
             )
             conversation_id = sent.json()["conversation_id"]
             history = client.get(f"/api/assistant/conversations/{conversation_id}")
@@ -82,14 +93,15 @@ def test_conversation_history_endpoint_returns_messages():
         app.dependency_overrides.clear()
 
     assert history.status_code == 200
-    assert [item["role"] for item in history.json()["messages"]] == ["user", "assistant"]
+    assert [item["role"] for item in history.json()["messages"]] == [
+        "user",
+        "assistant",
+    ]
 
 
 def test_assistant_api_returns_a_natural_structured_conversation_reply():
     provider = RouteProvider()
-    provider.command = ConversationCommand(
-        message="Olá! Posso consultar tarefas e preparar uma nova tarefa com você."
-    )
+    provider.command = ConversationCommand(message="Olá! Posso consultar tarefas e preparar uma nova tarefa com você.")
     app.dependency_overrides[get_assistant_provider] = lambda: provider
     try:
         with TestClient(app) as client:
@@ -117,9 +129,7 @@ def test_conversation_history_never_exposes_confirmation_credentials():
                 json={"message": "Crie uma tarefa", "request_id": "route-secret-1"},
             )
             payload = preview.json()
-            history = client.get(
-                f"/api/assistant/conversations/{payload['conversation_id']}"
-            )
+            history = client.get(f"/api/assistant/conversations/{payload['conversation_id']}")
     finally:
         app.dependency_overrides.clear()
 

@@ -1,5 +1,7 @@
 # Assistente operacional local — arquitetura e plano de implementacao
 
+> **Atualizacao de escopo (02/10/2026):** este documento registra a arquitetura e a primeira entrega. O estado implementado posteriormente inclui voz local, leitura Yahoo somente leitura e registro/acompanhamento de servicos. A especificacao de produto vigente e as proximas fases independentes estao em [especificacao-produto-evolucao.md](especificacao-produto-evolucao.md) e [plano-evolucao.md](plano-evolucao.md). As fases de automacao de e-mail, pagina Hoje, WhatsApp e navegacao redesenhada descritas ali sao propostas futuras, nao implementadas por esta atualizacao documental.
+
 > **Status:** texto e opcao 1 de voz local implementados na branch local `docs/assistente-local-plano` em 2026-09-30. O desenho detalhado da voz esta em `docs/superpowers/specs/2026-09-30-assistente-voz-local-design.md` e a evidencia em `docs/assistente/validacao-voz-local.md`.
 
 **Objetivo:** criar, primeiro, uma conversa por texto com IA local capaz de consultar prioridades e criar tarefas reais no quadro; depois reutilizar o mesmo nucleo para entrada e saida por voz.

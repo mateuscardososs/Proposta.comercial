@@ -162,9 +162,51 @@
       box-shadow: 0 6px 16px rgba(13, 90, 157, 0.3);
     }
 
+    .app-frame { max-width: 1320px; margin: 0 auto; padding: 0 20px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; align-items: start; }
+    .sidebar { position: sticky; top: 82px; max-height: calc(100vh - 96px); overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); padding: 10px; }
+    .sidebar .nav { display: grid; justify-content: stretch; gap: 4px; }
+    .sidebar .nav a { display: flex; gap: 10px; align-items: center; width: 100%; border-radius: 10px; padding: 10px; }
+    .nav-mark { display: inline-grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border-radius: 7px; color: var(--brand-dark); background: #e8f2fc; font-size: 11px; font-weight: 800; }
+    .sidebar .nav a.active .nav-mark { color: var(--brand-dark); background: #fff; }
+    .app-frame.is-collapsed { grid-template-columns: 72px minmax(0, 1fr); }
+    .app-frame.is-collapsed .sidebar .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+    .app-frame.is-collapsed .sidebar .nav a { justify-content: center; padding: 10px 4px; }
+    .app-frame.is-collapsed .nav-mark { width: 34px; height: 34px; flex-basis: 34px; }
+    .topbar-inner { align-items: center; }
+    .topbar-head { width: auto; }
+    .menu-toggle { display: inline-flex; }
+    .skip-link { position: absolute; left: 8px; top: -80px; z-index: 100; padding: 10px; border-radius: 8px; background: #fff; color: var(--brand-dark); }
+    .skip-link:focus { top: 8px; }
+    .breadcrumbs { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; color: var(--text-soft); font-size: 13px; }
+    .breadcrumbs a { font-weight: 700; }
+    .breadcrumbs button { border: 0; padding: 0; background: transparent; color: var(--brand-dark); text-decoration: underline; cursor: pointer; font: inherit; }
+    .today-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .today-items, .message-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .today-item, .message-item { border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); padding: 14px; }
+    .today-item { display: flex; gap: 14px; align-items: center; justify-content: space-between; border-left: 4px solid var(--accent); }
+    .today-item-overdue { border-left-color: var(--danger); }
+    .today-item-main { min-width: 0; }
+    .today-item-meta, .message-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+    .today-item h3, .message-item h3 { margin: 9px 0 4px; font-size: 17px; }
+    .today-item p, .message-item p { margin: 4px 0; color: var(--text-soft); }
+    .today-secondary summary { cursor: pointer; display: grid; gap: 4px; }
+    .today-secondary summary span { color: var(--text-soft); font-size: 13px; }
+    .eyebrow { margin: 0 0 5px; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .sync-status { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin: 0; }
+    .sync-status div { background: var(--surface-muted); border-radius: 10px; padding: 12px; }
+    .sync-status dt { color: var(--text-soft); font-size: 12px; }
+    .sync-status dd { margin: 4px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+    .message-heading { justify-content: space-between; }
+    .message-sender { font-size: 13px; }
+    .message-reason { font-size: 13px; }
+    .review-form { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-top: 10px; }
+    .review-form label { display: grid; gap: 5px; font-size: 13px; }
+
     .app-main {
       padding-top: 20px;
       padding-bottom: 24px;
+      max-width: none;
+      margin: 0;
     }
 
     .layout-grid {
@@ -782,21 +824,16 @@
       .form-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .kanban-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       table { min-width: 600px; }
-      .topbar-inner { padding: 10px 0; }
-      .menu-toggle { display: inline-flex; }
-      .nav {
-        display: none;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 6px;
-        width: 100%;
-      }
-      .nav.is-open { display: flex; }
-      .nav a {
-        width: 100%;
-        border-radius: 10px;
-        padding: 10px 12px;
-      }
+      .app-frame { grid-template-columns: minmax(0,1fr); padding: 0 16px; }
+      .sidebar { position: fixed; z-index: 60; left: 10px; top: 70px; width: min(290px, calc(100vw - 20px)); max-height: calc(100vh - 82px); transform: translateX(calc(-100% - 20px)); transition: transform .18s ease; }
+    .sidebar.is-open { transform: translateX(0); }
+      .nav-overlay { position: fixed; inset: 58px 0 0; z-index: 55; background: rgba(10, 23, 39, .42); border: 0; padding: 0; }
+      .app-frame.is-collapsed { grid-template-columns: minmax(0,1fr); }
+      .app-frame.is-collapsed .sidebar .nav-label { position: static; width: auto; height: auto; clip: auto; overflow: visible; }
+      .app-frame.is-collapsed .sidebar .nav a { justify-content: flex-start; padding: 10px; }
+      .app-frame.is-collapsed .nav-mark { width: 24px; height: 24px; flex-basis: 24px; }
+      .today-counts { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .sync-status { grid-template-columns: repeat(2,minmax(0,1fr)); }
       .mobile-collapsible .collapse-toggle {
         display: inline-flex;
       }
@@ -806,6 +843,7 @@
       .shell { padding: 0 12px; }
       .topbar { backdrop-filter: blur(8px); }
       .topbar-inner { min-height: 58px; }
+      .app-frame { padding: 0 12px; }
       .page-header,
       .card,
       .aside-card { padding: 12px; }
@@ -825,6 +863,7 @@
         padding: 8px 7px;
       }
       .app-main { padding-top: 14px; }
+      .today-item { align-items: flex-start; flex-direction: column; }
       .mobile-bottom-actions {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
@@ -873,6 +912,7 @@
         width: auto;
       }
       table { min-width: 470px; }
+      .today-counts { grid-template-columns: minmax(0,1fr); }
     }
 
     @media (max-width: 420px) {
@@ -886,9 +926,14 @@
         padding: 6px 10px;
       }
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+    }
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#mainContent">Pular para o conteúdo</a>
   <header class="topbar">
     <div class="shell topbar-inner">
       <div class="topbar-head">
@@ -897,27 +942,32 @@
           <p class="brand-subtitle">Gestao interna de propostas comerciais</p>
         </div>
         <button type="button" class="menu-toggle" id="menuToggle" aria-controls="siteNav" aria-expanded="false">
-          <span aria-hidden="true" id="menuToggleIcon">|||</span>
-          <span class="menu-toggle-label">Abrir menu</span>
+          <span aria-hidden="true" id="menuToggleIcon">☰</span>
+          <span class="menu-toggle-label" id="menuToggleLabel">Abrir navegação</span>
         </button>
       </div>
-      <nav class="nav" id="siteNav">
-        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Inicio</a>
-        <a href="/web/board" class="{% if request.url.path.startswith('/web/board') %}active{% endif %}">Quadro</a>
-        <a href="/web/services" class="{% if request.url.path.startswith('/web/services') %}active{% endif %}">Servicos</a>
-        <a href="/web/assistente" class="{% if request.url.path.startswith('/web/assistente') %}active{% endif %}">Assistente</a>
-        <a href="/web/contas-a-receber" class="{% if request.url.path.startswith('/web/contas-a-receber') %}active{% endif %}">Contas a Receber</a>
-        <a href="/web/contas-a-pagar" class="{% if request.url.path.startswith('/web/contas-a-pagar') %}active{% endif %}">Contas a Pagar</a>
-        <a href="/web/proposals/new" class="{% if request.url.path.startswith('/web/proposals/new') %}active{% endif %}">Nova proposta</a>
-        <a href="/web/proposals" class="{% if request.url.path.startswith('/web/proposals') and not request.url.path.startswith('/web/proposals/new') %}active{% endif %}">Propostas</a>
-        <a href="/web/clients" class="{% if request.url.path.startswith('/web/clients') %}active{% endif %}">Clientes</a>
-        <a href="/web/users" class="{% if request.url.path.startswith('/web/users') %}active{% endif %}">Usuarios</a>
-        <a href="/import-proposals" class="{% if request.url.path.startswith('/import-proposals') %}active{% endif %}">Importar PDFs</a>
-      </nav>
     </div>
   </header>
 
-  <main class="shell app-main">
+  <div class="app-frame" id="appFrame">
+    <button class="nav-overlay" id="navOverlay" type="button" aria-label="Fechar navegação" hidden></button>
+    <aside class="sidebar" id="siteNav" aria-label="Navegação principal">
+      <nav class="nav">
+        <a href="/" aria-label="Hoje" title="Hoje" {% if request.url.path == '/' %}aria-current="page"{% endif %} class="{% if request.url.path == '/' %}active{% endif %}"><span class="nav-mark" aria-hidden="true">H</span><span class="nav-label">Hoje</span></a>
+        <a href="/web/board" aria-label="Tarefas" title="Tarefas" {% if request.url.path.startswith('/web/board') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/board') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">T</span><span class="nav-label">Tarefas</span></a>
+        <a href="/web/services" aria-label="Serviços" title="Serviços" {% if request.url.path.startswith('/web/services') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/services') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">S</span><span class="nav-label">Serviços</span></a>
+        <a href="/web/mensagens" aria-label="E-mails e mensagens" title="E-mails e mensagens" {% if request.url.path.startswith('/web/mensagens') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/mensagens') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">@</span><span class="nav-label">E-mails e mensagens</span></a>
+        <a href="/web/assistente" aria-label="Assistente" title="Assistente" {% if request.url.path.startswith('/web/assistente') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/assistente') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">A</span><span class="nav-label">Assistente</span></a>
+        <a href="/web/proposals" aria-label="Propostas" title="Propostas" class="{% if request.url.path.startswith('/web/proposals') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">P</span><span class="nav-label">Propostas</span></a>
+        <a href="/web/clients" aria-label="Clientes" title="Clientes" class="{% if request.url.path.startswith('/web/clients') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">C</span><span class="nav-label">Clientes</span></a>
+        <a href="/web/contas-a-pagar" aria-label="Contas a pagar" title="Contas a pagar" class="{% if request.url.path.startswith('/web/contas-a-pagar') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">↓</span><span class="nav-label">Contas a pagar</span></a>
+        <a href="/web/contas-a-receber" aria-label="Contas a receber" title="Contas a receber" class="{% if request.url.path.startswith('/web/contas-a-receber') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">↑</span><span class="nav-label">Contas a receber</span></a>
+        <a href="/web/users" aria-label="Usuários" title="Usuários" class="{% if request.url.path.startswith('/web/users') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">U</span><span class="nav-label">Usuários</span></a>
+        <a href="/import-proposals" aria-label="Importar propostas" title="Importar propostas" class="{% if request.url.path.startswith('/import-proposals') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">I</span><span class="nav-label">Importar propostas</span></a>
+      </nav>
+    </aside>
+  <main class="app-main" id="mainContent" tabindex="-1">
+    {% if request.url.path != '/' %}<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Hoje</a><span aria-hidden="true">/</span><span>{{ title or request.url.path.split('/')[-1]|replace('-', ' ')|replace('_', ' ')|title }}</span><button type="button" id="backButton" data-fallback="/" aria-label="Voltar">Voltar</button></nav>{% endif %}
     <div class="layout-grid{% if full_width %} full-width{% endif %}">
       <div class="content-stack">
         {% block content %}{% endblock %}
@@ -949,12 +999,15 @@
       Plataforma interna para emissao de propostas e revisoes.
     </footer>
   </main>
+  </div>
 
   <script>
     (function () {
       const toggleBtn = document.getElementById("menuToggle");
-      const toggleIcon = document.getElementById("menuToggleIcon");
       const nav = document.getElementById("siteNav");
+      const frame = document.getElementById("appFrame");
+      const label = document.getElementById("menuToggleLabel");
+      const overlay = document.getElementById("navOverlay");
 
       if (!toggleBtn || !nav) return;
 
@@ -964,38 +1017,69 @@
 
       function closeNav() {
         nav.classList.remove("is-open");
+        if (overlay) overlay.hidden = true;
+        nav.removeAttribute("role");
+        nav.removeAttribute("aria-modal");
         toggleBtn.setAttribute("aria-expanded", "false");
-        if (toggleIcon) toggleIcon.textContent = "|||";
+        if (label) label.textContent = "Abrir navegação";
       }
 
       function openNav() {
         nav.classList.add("is-open");
+        if (overlay) overlay.hidden = false;
+        nav.setAttribute("role", "dialog");
+        nav.setAttribute("aria-modal", "true");
         toggleBtn.setAttribute("aria-expanded", "true");
-        if (toggleIcon) toggleIcon.textContent = "X";
+        if (label) label.textContent = "Fechar navegação";
+        const firstLink = nav.querySelector("a");
+        if (firstLink) firstLink.focus();
       }
 
       function syncNavForViewport() {
         if (!isMobileNav()) {
-          nav.classList.remove("is-open");
-          toggleBtn.setAttribute("aria-expanded", "false");
-          if (toggleIcon) toggleIcon.textContent = "|||";
+          closeNav();
+          const collapsed = localStorage.getItem("adbalancas-nav-collapsed") === "true";
+          frame.classList.toggle("is-collapsed", collapsed);
+          toggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
         }
       }
 
       toggleBtn.addEventListener("click", () => {
         const isOpen = nav.classList.contains("is-open");
         if (isOpen) closeNav();
-        else openNav();
+        else if (isMobileNav()) openNav();
+        else {
+          const collapsed = frame.classList.toggle("is-collapsed");
+          localStorage.setItem("adbalancas-nav-collapsed", collapsed ? "true" : "false");
+          toggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        }
       });
 
-      nav.addEventListener("click", (ev) => {
-        const link = ev.target.closest("a");
-        if (!link || !isMobileNav()) return;
-        closeNav();
+      nav.addEventListener("click", (ev) => { if (ev.target.closest("a") && isMobileNav()) closeNav(); });
+      if (overlay) overlay.addEventListener("click", () => { closeNav(); toggleBtn.focus(); });
+      document.addEventListener("keydown", (ev) => {
+        if (!nav.classList.contains("is-open")) return;
+        if (ev.key === "Escape") { closeNav(); toggleBtn.focus(); return; }
+        if (ev.key === "Tab") {
+          const links = Array.from(nav.querySelectorAll("a[href]"));
+          if (!links.length) return;
+          const first = links[0], last = links[links.length - 1];
+          if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+          else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+        }
       });
 
       window.addEventListener("resize", syncNavForViewport);
       syncNavForViewport();
+    })();
+
+    (function () {
+      const button = document.getElementById("backButton");
+      if (!button) return;
+      button.addEventListener("click", () => {
+        if (window.history.length > 1 && document.referrer.startsWith(window.location.origin)) window.history.back();
+        else window.location.assign(button.dataset.fallback || "/");
+      });
     })();
 
     (function () {

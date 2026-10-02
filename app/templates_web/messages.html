@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Inbox operacional</p>
+  <h1 class="page-title">E-mails e mensagens</h1>
+  <p class="page-subtitle">Classificação local com evidências. Ler mensagens não altera flags, não envia respostas e não processa anexos.</p>
+  <div class="meta-line">
+    <span class="badge primary">{% if sync_enabled %}Sincronização periódica habilitada{% else %}Sincronização automática desligada{% endif %}</span>
+    <span class="badge">Provedor: {{ "configurado" if provider_configured else "não configurado" }}</span>
+    {% if sync_state and sync_state.paused %}<span class="badge warning">Pausada</span>{% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div><h2 class="card-title">Estado da sincronização</h2><p class="card-subtitle">Uma falha é diferente de uma caixa vazia.</p></div>
+    <div class="actions">
+      <form method="post" action="/web/mensagens/sync-state">
+        {% if sync_state and sync_state.paused %}<input type="hidden" name="action" value="resume"><button class="btn btn-ghost" type="submit">Retomar</button>
+        {% else %}<input type="hidden" name="action" value="pause"><button class="btn btn-ghost" type="submit">Pausar</button>{% endif %}
+      </form>
+    </div>
+  </div>
+  <dl class="sync-status">
+    <div><dt>Última tentativa</dt><dd>{{ sync_state.last_attempt_at.strftime('%d/%m/%Y %H:%M') if sync_state and sync_state.last_attempt_at else "Ainda não executada" }}</dd></div>
+    <div><dt>Último ciclo concluído</dt><dd>{{ sync_state.last_success_at.strftime('%d/%m/%Y %H:%M') if sync_state and sync_state.last_success_at else "Nenhum" }}</dd></div>
+    <div><dt>Mensagens no último ciclo</dt><dd>{{ sync_state.last_count if sync_state else 0 }}</dd></div>
+    <div><dt>Estado</dt><dd>{% if sync_state and sync_state.last_error %}Parcial ou falha ({{ sync_state.last_error }}){% elif sync_state and sync_state.last_success_at %}Concluído{% else %}Sem consulta registrada{% endif %}</dd></div>
+    <div><dt>Intervalo</dt><dd>{{ (sync_interval_seconds // 60) }} min; o próximo ciclo começa após esse intervalo.</dd></div>
+  </dl>
+  <p class="muted">Pausar impede novas consultas no próximo ciclo; uma leitura já iniciada termina sem alterar mensagens ou flags.</p>
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2 class="card-title">Mensagens recentes</h2><p class="card-subtitle">Metadados e resumo reduzido; corpo integral não é armazenado pelo sincronizador.</p></div></div>
+  {% if messages %}
+  <div class="message-list">
+    {% for message in messages %}
+    <article class="message-item">
+      <div class="message-heading"><div><span class="badge{% if message.seen %}{% else %} warning{% endif %}">{{ "Lida no servidor" if message.seen else "Não lida no servidor" }}</span> <span class="badge">{{ message.category|replace("_", " ") }}</span> <span class="badge">Confiança {{ message.confidence_band }}</span>{% if message.category == "pending_reply" %}<span class="badge{% if message.awaiting_reply == 'yes' %} warning{% endif %}">{% if message.awaiting_reply == "yes" and message.sent_coverage %}Possível retorno pendente (Enviados consultados){% elif message.awaiting_reply == "no" and message.sent_coverage %}Resposta posterior encontrada em Enviados{% else %}Não verificável: cobertura de Enviados insuficiente{% endif %}</span>{% endif %}</div><time datetime="{{ message.received_at.isoformat() }}">{{ message.received_at.strftime('%d/%m/%Y %H:%M') }}</time></div>
+      <h3>{{ message.subject }}</h3><p class="message-sender">{{ message.sender }}</p><p>{{ message.summary }}</p>
+      <p class="message-reason"><strong>Prioridade {{ message.priority }}:</strong> {{ message.classification_reason }}</p>
+      {% if message.review_status == "pending" %}
+      <form method="post" action="/web/mensagens/{{ message.id }}/review" class="review-form">
+        <label>Revisar categoria
+          <select name="category">
+            {% for category in ["customer_quote_request", "vendor_quotation", "purchase_order", "invoice_request", "invoice_received", "accounts_payable", "accounts_receivable", "payment_proof", "service_request", "pending_reply", "informational", "other_review"] %}
+              <option value="{{ category }}"{% if category == message.category %} selected{% endif %}>{{ category|replace("_", " ") }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="btn btn-ghost" type="submit">Salvar revisão</button>
+      </form>
+      {% else %}<span class="badge success">{{ "Tarefa vinculada" if message.review_status == "task_created" else "Classificada" if message.review_status == "classified" else "Revisada" }}</span>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}<div class="empty-state"><h3>Nenhuma mensagem sincronizada</h3><p>{% if sync_state and sync_state.last_error %}A consulta falhou ou ficou parcial; isso não confirma que a caixa esteja vazia.{% elif not sync_enabled %}Ative e configure o sincronizador em ambiente de teste sintético para iniciar a triagem.{% else %}A sincronização ainda não concluiu uma consulta.{% endif %}</p></div>{% endif %}
+</section>
+{% endblock %}
