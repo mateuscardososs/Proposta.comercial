@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, event, inspect, text
@@ -20,14 +21,15 @@ engine = create_engine(
 )
 
 
-if settings.database_url.startswith("sqlite"):
-
-    @event.listens_for(engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
-        del connection_record
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+@event.listens_for(Engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
+    del connection_record
+    if not isinstance(dbapi_connection, sqlite3.Connection):
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA recursive_triggers=ON")
+    cursor.close()
 
 
 SessionLocal = sessionmaker(
@@ -83,6 +85,57 @@ def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
 
 def ensure_schema_compatibility() -> None:
     ensure_schema_compatibility_for_engine(engine)
+    ensure_service_history_guards_for_engine(engine)
+
+
+def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
+    tables = set(inspect(target_engine).get_table_names())
+    if not {"service_events", "service_workflow_transitions"}.issubset(tables):
+        return
+
+    if target_engine.dialect.name == "sqlite":
+        with target_engine.begin() as conn:
+            for table in ("service_events", "service_workflow_transitions"):
+                for operation in ("UPDATE", "DELETE"):
+                    trigger = f"{table}_reject_{operation.lower()}"
+                    conn.execute(text(
+                        f"CREATE TRIGGER IF NOT EXISTS {trigger} "
+                        f"BEFORE {operation} ON {table} BEGIN "
+                        "SELECT RAISE(ABORT, 'service history is immutable'); END"
+                    ))
+    elif target_engine.dialect.name == "postgresql":
+        with target_engine.begin() as conn:
+            conn.execute(text("""
+                CREATE OR REPLACE FUNCTION reject_service_history_mutation()
+                RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE EXCEPTION 'service history is immutable';
+                END;
+                $$
+            """))
+            for table in ("service_events", "service_workflow_transitions"):
+                trigger = f"{table}_reject_mutation"
+                conn.execute(text(f"DROP TRIGGER IF EXISTS {trigger} ON {table}"))
+                conn.execute(text(
+                    f"CREATE TRIGGER {trigger} BEFORE UPDATE OR DELETE ON {table} "
+                    "FOR EACH ROW EXECUTE FUNCTION reject_service_history_mutation()"
+                ))
+
+
+@event.listens_for(Session, "before_flush")
+def _reject_service_history_mutation(session: Session, flush_context, instances) -> None:
+    from .models import ServiceEvent, ServiceWorkflowTransition
+
+    del flush_context, instances
+    historical = (ServiceEvent, ServiceWorkflowTransition)
+    if any(isinstance(obj, historical) for obj in session.deleted):
+        raise ValueError("Historico de servico imutavel: exclusao nao permitida.")
+    for obj in session.dirty:
+        state = inspect(obj)
+        if isinstance(obj, historical) and state.persistent and any(
+            state.attrs[column.key].history.has_changes() for column in state.mapper.column_attrs
+        ):
+            raise ValueError("Historico de servico imutavel: alteracao nao permitida.")
 
 
 def get_db() -> Generator[Session, None, None]:
