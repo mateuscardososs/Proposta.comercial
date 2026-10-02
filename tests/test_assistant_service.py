@@ -5,14 +5,16 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.assistant.capabilities import CapabilityRegistry
 from app.assistant.contracts import (
-    ConversationCommand,
     ConfirmActionCommand,
+    ConversationCommand,
     TaskCreateCommand,
     TaskDraftCorrectionCommand,
     TaskQueryCommand,
 )
 from app.assistant.dates import normalize_text
+from app.assistant.email.synthetic import SyntheticEmailReader, synthetic_messages
 from app.assistant.provider import (
     ProviderInferenceTrace,
     ProviderInterpretation,
@@ -156,6 +158,115 @@ def test_natural_conversation_reply_is_returned_and_persisted(db):
     assert reply.action_id is None
     assert reply.task_id is None
     assert db.query(Task).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("phrase", "category", "period"),
+    [
+        ("Quais e-mails pedem orçamento?", "customer_quote_request", "week"),
+        ("Me diga quais emails tem solicitação de orçamento", "customer_quote_request", "week"),
+        ("Tem alguma solicitação de cotação na caixa?", "customer_quote_request", "week"),
+        ("Chegou hoje algum pedido de orçamento?", "customer_quote_request", "today"),
+        ("Tem conta a pagar nos e-mails?", "accounts_payable", "week"),
+        ("Recebi alguma nota fiscal por e-mail?", "invoice_received", "week"),
+    ],
+)
+def test_known_email_category_queries_route_without_relying_on_model_tool_choice(
+    db, phrase, category, period
+):
+    command = AssistantService(db, QueueProvider(ConversationCommand(message="ok")), now=_now)
+    routed = command._direct_email_query(phrase)
+
+    assert routed is not None
+    assert routed.category == category
+    assert routed.period == period
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Quais e-mails pedem emissão de nota fiscal?",
+        "Tem algum e-mail sobre conta a pagar?",
+        "Me diga quais emails têm solicitação de orçamento.",
+    ],
+)
+def test_email_read_category_is_not_mapped_to_an_unavailable_write(phrase):
+    assert AssistantService._request_targets_email_read(phrase)
+    assert not AssistantService._request_targets_unavailable_operation(phrase)
+
+
+@pytest.mark.parametrize(
+    ("phrase", "period"),
+    [
+        ("O que chegou hoje?", "today"),
+        ("O que chegou nesta semana?", "week"),
+        ("O que recebi no e-mail durante a semana?", "week"),
+        ("Quais mensagens chegaram esta semana?", "week"),
+    ],
+)
+def test_indirect_incoming_message_period_queries_route_to_email_reader(db, phrase, period):
+    service = AssistantService(db, QueueProvider(), now=_now)
+    routed = service._direct_email_query(phrase)
+
+    assert routed is not None
+    assert routed.period == period
+
+
+def test_retry_reuses_prior_email_result_and_updates_same_conversation_message(db):
+    class CountingReader(SyntheticEmailReader):
+        calls = 0
+
+        def query(self, query):
+            self.calls += 1
+            return super().query(query)
+
+    reader = CountingReader(messages=synthetic_messages(_now()))
+    provider = QueueProvider(
+        ProviderResponseError("invalid response"),
+        ConversationCommand(message="Consultei a caixa e encontrei mensagens no período."),
+    )
+    service = AssistantService(
+        db, provider, now=_now, email_reader=reader,
+        capabilities=CapabilityRegistry(email_provider="synthetic"),
+    )
+    request = {"message": "Quais e-mails chegaram hoje?", "request_id": "email-retry-1"}
+
+    first = service.handle_message(**request)
+    message_count = db.query(AssistantMessage).count()
+    retried = service.handle_message(**request, retry=True)
+
+    assert first.kind == "error"
+    assert first.retryable is True
+    assert retried.kind == "text"
+    assert reader.calls == 1
+    assert db.query(AssistantMessage).count() == message_count
+    assert db.query(AssistantRequest).filter_by(request_id="email-retry-1").one().attempts == 2
+
+
+def test_email_query_logs_only_safe_metadata_not_message_content(db, caplog):
+    from app.assistant.email.contracts import EmailMessageRecord
+
+    private_marker = "BODY-MUST-NOT-APPEAR-IN-LOGS"
+    message = EmailMessageRecord(
+        reference="synthetic-log-check", thread_reference="synthetic-log-thread",
+        folder_role="inbox", sender="Remetente sintético", subject="Assunto sintético",
+        received_at=_now(), seen=False, text=private_marker,
+    )
+    service = AssistantService(
+        db, QueueProvider(), now=_now,
+        email_reader=SyntheticEmailReader(messages=[message]),
+        capabilities=CapabilityRegistry(email_provider="synthetic"),
+    )
+
+    with caplog.at_level("INFO", logger="app.assistant.service"):
+        execution = service._execute_email_query(
+            1, service._direct_email_query("Quais e-mails chegaram hoje?")
+        )
+
+    assert execution.reply.kind == "text"
+    assert "assistant_email stage=read outcome=success" in caplog.text
+    assert private_marker not in caplog.text
+    assert "Assunto sintético" not in caplog.text
 
 
 def test_natural_clarifying_question_about_user_tasks_is_not_a_false_data_claim(db):
@@ -816,7 +927,7 @@ def test_provider_unavailable_is_clear_and_does_not_mutate_tasks(db):
 
     assert reply.kind == "error"
     assert "Ollama" in reply.message
-    assert "disponivel" in reply.message
+    assert "dispon" in reply.message
     assert db.query(Task).count() == 0
     assert db.query(AssistantMessage).count() == 2
 

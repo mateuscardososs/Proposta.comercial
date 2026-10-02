@@ -15,6 +15,9 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
   const voiceEnd = root.getElementById("voice-end");
   const voiceState = root.getElementById("voice-state");
   const voiceLevel = root.getElementById("voice-level");
+  const transcriptReview = root.getElementById("voice-transcript-review");
+  const transcriptSend = root.getElementById("voice-transcript-send");
+  const messageInput = root.getElementById("assistant-message");
   let controller = null;
   let voiceReady = false;
 
@@ -23,6 +26,7 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
     requesting: "Solicitando acesso ao microfone...",
     listening: "Ouvindo. Fale naturalmente; o silêncio encerra a fala.",
     transcribing: "Transcrevendo localmente...",
+    reviewing: "Confira ou corrija a transcrição antes de enviar.",
     processing: "Consultando o assistente local...",
     speaking: "Reproduzindo a resposta...",
     error: "A voz encontrou um problema. O texto continua disponível.",
@@ -38,6 +42,8 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
     voiceStop.disabled = state !== "speaking";
     voiceRepeat.disabled = !active || (!controller?.lastAudioBlob && !controller?.lastReply);
     voiceEnd.disabled = !active;
+    if (transcriptSend) transcriptSend.disabled = state !== "reviewing";
+    if (transcriptReview) transcriptReview.hidden = state !== "reviewing";
     if (state !== "listening") voiceLevel.value = 0;
   }
 
@@ -96,6 +102,10 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
       maxUtteranceMs: configuration.max_duration_seconds * 1000,
       idleTimeoutMs: configuration.idle_timeout_seconds * 1000,
       onState: renderState,
+      onTranscript: (text) => {
+        if (messageInput) messageInput.value = text;
+        voiceState.textContent = `Transcrição para revisar: ${text}`;
+      },
       onLevel: (level) => { voiceLevel.value = Math.min(1, level * 8); },
       onError: (error) => {
         renderState("error");
@@ -124,6 +134,9 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
     else controller.retrySpeech();
   });
   voiceEnd.addEventListener("click", () => controller.stop());
+  transcriptSend?.addEventListener("click", () => {
+    controller.submitTranscript(messageInput?.value || "");
+  });
   window.addEventListener("pagehide", () => controller.stop());
   return controller;
 }

@@ -4,6 +4,8 @@
 **Auditoria do codigo:** 02/10/2026.  
 **Escopo:** priorizar (1) automacao de e-mail, (2) agenda “Hoje” e (3) reformulacao gradual da interface/navegacao. WhatsApp permanece ideia futura, sem configuracao Meta, API, numero, webhook, SDK ou servico de terceiro.
 
+**Atualizacao de validacao em 02/10/2026:** consultas conhecidas de categorias de e-mail agora sao roteadas deterministicamente antes do Ollama; a classificacao acontece sobre os candidatos consultados no periodo antes do limite visual/de contexto. A verificacao de escopo e o tratamento de erro distinguem leitura de mensagens sobre nota/conta de pedidos para emitir ou pagar. A falha do Ollama continua explicita e retryavel, sem afirmar resultado quando a resposta estruturada e invalida. A voz pausa apos a transcricao para revisao/edicao antes do envio. Foram executados 467 testes Python, 21 testes JavaScript e cinco smoke cases com Ollama real e mensagens sinteticas; nenhuma consulta Yahoo real foi feita. A interface completa no navegador continua pendente por indisponibilidade de browser de teste.
+
 ## 1. Visao e principios
 
 O assistente e uma interface operacional por texto e voz, nao um agente com acesso livre. Interpretacao e classificacao podem sugerir; servicos Python validam, consultam dados reais e controlam escritas. Toda resposta factual precisa apontar para consulta executada ou dado persistido; toda alteracao operacional requer confirmacao humana, exceto a criacao automatica restrita de tarefas de e-mail explicitamente autorizada nesta especificacao.
@@ -19,7 +21,7 @@ Principios que atravessam as fases:
 - usar dados, bancos, contas e mensagens sinteticas nos testes; nao usar o banco operacional na implementacao;
 - nao abrir publicamente a aplicacao atual. A auditoria nao encontrou autenticacao efetiva nas rotas web/API; esse e um bloqueio antes de qualquer exposicao de paginas ou dados a rede externa.
 - sincronizacao automatica inicia desligada por padrao; testes nunca leem caixa Yahoo nem acionam sincronizacao real;
-- preservar as portas 8000/8011 e nao alterar nem reiniciar instancias existentes nesta etapa.
+- nao alterar a porta 8000 nem instancias fora da 8011; a 8011 e a instancia de validacao explicitamente autorizada para reinicio em modo sintetico, banco e arquivos isolados.
 
 ## 2. Linha de base auditada
 

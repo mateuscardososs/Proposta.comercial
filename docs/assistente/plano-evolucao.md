@@ -1,8 +1,8 @@
 # Plano de evolucao do Assistente AD Balancas
 
-> Escopo aprovado para execucao local com provedor sintetico. Nao autoriza processar Yahoo real, alterar instancias/portas, configurar WhatsApp, publicar ou expor a rede.
+> Escopo aprovado para execucao local, com leitor sintetico por padrao nesta validacao. Nao autoriza processar Yahoo real, alterar a porta 8000, configurar WhatsApp, publicar ou expor a rede. A porta 8011 e a unica instancia autorizada para reinicio em modo sintetico, com banco e arquivos isolados.
 
-> **Estado em 02/10/2026:** etapas 1–3 implementadas localmente nesta branch. Validacao executada com SQLite temporario e fixtures sinteticas; nenhuma consulta real Yahoo foi iniciada. PostgreSQL, navegador manual e operacao das portas 8000/8011 nao foram testados nem alterados.
+> **Estado atualizado em 02/10/2026:** funcionalidades sinteticas de e-mail, Hoje e shell estao implementadas nesta branch. Esta execucao corrigiu o roteamento direto de consultas por categoria, a confusao entre leitura de e-mail e operacao financeira/fiscal, o limite entre candidatos analisados e itens apresentados ao modelo, o tratamento especifico de erros Ollama, retry idempotente e revisao de transcricao antes de enviar voz. Regressao automatizada e cinco casos de smoke test com Ollama real + mensagens sinteticas/banco temporario passaram. Nenhuma consulta Yahoo foi iniciada. A 8000 nao foi alterada; a verificacao manual da 8011 depende de browser, que nao estava disponivel. PostgreSQL segue pendente.
 
 **Objetivo:** entregar, nesta ordem, automacao segura de e-mail com fixtures sinteticas, agenda Hoje e reformulacao progressiva da interface/navegacao.
 
@@ -23,7 +23,7 @@
 - Nao ler ou imprimir arquivos de credencial `.env*`; testes devem fornecer segredos sinteticos injetados.
 - `EMAIL_SYNC_ENABLED=false` e `EMAIL_AUTO_TASK_CREATION_ENABLED=false` por padrao; Yahoo real nunca sera instanciado nos testes.
 - Nao processar a caixa Yahoo real nem iniciar sincronizacao real durante esta etapa.
-- Preservar as instancias existentes nas portas 8000/8011; nao reiniciar nem reconfigurar seus ambientes.
+- Preservar a instancia da porta 8000 e toda instancia fora da 8011. A 8011 pode ser reiniciada apenas para esta validacao, sempre com `DATABASE_URL`, `OUTPUT_DIR`, `EMAIL_PROVIDER=synthetic`, `EMAIL_SYNC_ENABLED=false` e `EMAIL_AUTO_TASK_CREATION_ENABLED=false` em ambiente temporario. Nunca carregar a configuracao Yahoo local na instancia sintetica.
 - WhatsApp esta fora de escopo: nao configurar Meta/API/numero/webhook/tunel/SDK/terceiros.
 - Nao fazer commit, push, merge, deploy nem publicar.
 
@@ -210,4 +210,19 @@ Nao sao bloqueio para este plano documental; tornam-se pre-requisitos apenas par
 - Inspecao executada: rotas, paginas Jinja2, modelos, servicos e contratos listados na secao de linha de base da especificacao.
 - Pesquisa atual executada em 02/10/2026: fontes oficiais Meta/Postman e termos/politica WhatsApp citados em `especificacao-produto-evolucao.md`; paginas `developers.facebook.com` deram rate limit ao navegador, por isso as referencias oficiais Postman da Meta foram usadas para requisitos tecnicos acessiveis.
 - Nao foram executados testes de aplicacao, consultas a Yahoo, acesso a banco, validacao com WABA/numero, webhook ou verificacao manual de numero existente. Nao houve alteracao de codigo, ambiente, dados, credenciais, porta ou processo.
+
+## Correcao de consulta natural e estado desta rodada (02/10/2026)
+
+O fluxo auditado e navegador/chat → endpoint texto ou endpoint voz → STT → `AssistantService` → roteamento deterministico/Ollama → `EmailReader` → Yahoo IMAP ou leitor sintetico → classificacao/evidencia → validacao da resposta estruturada → historico/cartoes. O texto digitado ignora STT, mas passa pelo mesmo `AssistantService` e validadores.
+
+**Causas encontradas e correcoes:**
+
+- Frases sobre categorias nao tinham roteamento suficientemente deterministico e poderiam depender do modelo. Foram acrescentadas consultas diretas por categoria/periodo no servico; os candidatos sao consultados e classificados antes do limite de apresentacao, e o modelo recebe apenas um subconjunto limitado para redigir.
+- A validacao de escopo e o conversor de erro confundiam “quais e-mails pedem emissao de nota” com pedido de emitir nota, e “conta a pagar” em pergunta de leitura com ordem de pagamento. Agora uma pergunta reconhecivel como leitura e validada separadamente; erros de formato nao sao traduzidos como funcao ausente; comandos de escrita continuam bloqueados.
+- A interface enviava imediatamente qualquer transcricao STT. A tela agora apresenta a transcricao para revisao/edicao antes de encaminhar; baixa confianca permanece em revisao. Erros de provedor indicam indisponibilidade de conexao, modelo ausente, timeout ou resposta estruturada invalida; somente uma tentativa de reparo e feita para formato invalido. A acao de retry reutiliza o mesmo identificador da solicitacao.
+- Logs de diagnostico contem apenas etapa, classe de erro, duracao e contagens seguras; nao recebem audio, corpo de e-mail ou credencial.
+
+**Evidencia executada:** `PYTHONPATH=. .venv/bin/pytest -q`: 467 passaram, 10 ignorados; SQLite temporario, sem dados operacionais. `node --test tests/js/assistant_chat.test.mjs tests/js/assistant_voice.test.mjs`: 21 passaram. Ruff de imports e `git diff --check` passaram nos arquivos verificados. Smoke test opt-in com Ollama real local (`qwen3:4b-instruct-2507-q4_K_M`) e fixtures sinteticas para consulta de orcamento, conta a pagar, nota fiscal, hoje e semana: 5/5 passaram apos a correcao; o caso de nota fiscal passou novamente em teste isolado. Uma rodada inicial expos a confusao entre leitura e operacao fiscal; apos corrigir tambem o mapeamento de erro, a validacao passou. A matriz usou somente mensagens sinteticas, sem Yahoo real. O modelo ainda pode retornar formato invalido em casos probabilisticos; nesse caso a solicitacao encerra com erro explicito apos uma reparacao e pode ser tentada novamente sem criar uma segunda mensagem.
+
+**Estado das fases seguintes:** Inbox/triagem sintetica, agenda Hoje e shell Jinja2 continuam implementados conforme secao de linha de base; regressao especifica de email, agenda, paginas e voz foi executada nesta rodada. Nao foi iniciada nova sincronizacao Yahoo. O redesenho incremental esta parcialmente entregue: sidebar, drawer, estado ativo, breadcrumbs/retorno e teclado existem; busca conectada e tema escuro permanecem adiados. A aplicacao da porta 8011 e para a validacao sintetica autorizada; a 8000 permanece intocada. Validacao visual manual em navegador continua pendente, pois nao havia browser disponivel no ambiente.
 </details>

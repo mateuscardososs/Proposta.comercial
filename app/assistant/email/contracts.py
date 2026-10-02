@@ -33,6 +33,7 @@ class EmailQuery(BaseModel):
     attention_only: bool = False
     awaiting_reply: bool = False
     reference: str | None = Field(default=None, max_length=160)
+    category: EmailCategory | None = None
     limit: int = Field(default=20, ge=1, le=100)
 
 

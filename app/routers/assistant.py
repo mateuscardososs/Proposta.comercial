@@ -1,16 +1,27 @@
 from __future__ import annotations
 
-from functools import lru_cache
 import importlib.util
+import logging
 import os
-from pathlib import Path
 import tempfile
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
+from app.assistant.capabilities import CapabilityRegistry
 from app.assistant.contracts import (
     AssistantConfirmationRequest,
     AssistantHistory,
@@ -20,11 +31,10 @@ from app.assistant.contracts import (
     VoiceStatus,
     VoiceTranscriptionResponse,
 )
-from app.assistant.ollama import OllamaProvider
-from app.assistant.capabilities import CapabilityRegistry
 from app.assistant.email.imap import YahooImapEmailReader
 from app.assistant.email.provider import EmailReader
 from app.assistant.email.synthetic import SyntheticEmailReader, synthetic_messages
+from app.assistant.ollama import OllamaProvider
 from app.assistant.provider import AssistantProvider
 from app.assistant.service import AssistantService
 from app.assistant.voice.audio import inspect_audio
@@ -47,6 +57,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.routers.pages import render_template
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["assistant"])
 _transcription_executor = BoundedVoiceExecutor(name="voice-stt", max_pending=1)
@@ -221,10 +232,20 @@ async def assistant_voice_transcription(
             )
             result = transcriber.transcribe(path)
             safe_text = validate_transcription(result)
+            confidence_score = max(
+                0.0,
+                min(
+                    1.0,
+                    result.language_probability
+                    * (1 - result.no_speech_probability)
+                    * max(0.0, min(1.0, 1 + result.average_log_probability)),
+                ),
+            )
             return VoiceTranscriptionResponse(
                 text=safe_text,
                 language=result.language,
                 language_probability=result.language_probability,
+                confidence_score=confidence_score,
                 audio_duration_seconds=metadata.duration_seconds,
                 transcription_seconds=result.transcription_seconds,
             )
@@ -236,6 +257,13 @@ async def assistant_voice_transcription(
             process,
             timeout=settings.voice_transcription_timeout_seconds,
         )
+        logger.info(
+            "assistant_voice stage=transcription outcome=success queue_wait_ms=%d "
+            "duration_ms=%d audio_duration_ms=%d",
+            round(execution.queue_wait_seconds * 1000),
+            round(execution.value.transcription_seconds * 1000),
+            round(execution.value.audio_duration_seconds * 1000),
+        )
         return execution.value.model_copy(
             update={
                 "queue_wait_seconds": execution.queue_wait_seconds,
@@ -246,13 +274,20 @@ async def assistant_voice_transcription(
             }
         )
     except VoiceBusyError as exc:
+        logger.warning("assistant_voice stage=transcription outcome=failed error_type=busy")
         path.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from exc
     except (InvalidAudioError, NoSpeechError, SuspiciousTranscriptionError) as exc:
+        logger.warning(
+            "assistant_voice stage=transcription outcome=failed error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except VoiceTimeoutError as exc:
+        logger.warning("assistant_voice stage=transcription outcome=failed error_type=timeout")
         raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
     except VoiceUnavailableError as exc:
+        logger.warning("assistant_voice stage=transcription outcome=failed error_type=unavailable")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
@@ -271,11 +306,19 @@ async def assistant_voice_speech(
             timeout=settings.voice_synthesis_timeout_seconds,
         )
         result = execution.value
+        logger.info(
+            "assistant_voice stage=synthesis outcome=success queue_wait_ms=%d duration_ms=%d",
+            round(execution.queue_wait_seconds * 1000),
+            round(result.synthesis_seconds * 1000),
+        )
     except VoiceBusyError as exc:
+        logger.warning("assistant_voice stage=synthesis outcome=failed error_type=busy")
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from exc
     except VoiceTimeoutError as exc:
+        logger.warning("assistant_voice stage=synthesis outcome=failed error_type=timeout")
         raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
     except VoiceUnavailableError as exc:
+        logger.warning("assistant_voice stage=synthesis outcome=failed error_type=unavailable")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return Response(
         content=result.data,
@@ -300,6 +343,7 @@ def assistant_message(
             message=payload.message,
             request_id=payload.request_id,
             conversation_id=payload.conversation_id,
+            retry=payload.retry,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

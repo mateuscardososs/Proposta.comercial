@@ -1,24 +1,23 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
-from time import monotonic
 from collections.abc import Sequence
 from datetime import date
+from time import monotonic
 from urllib.parse import urlparse
 
 import httpx
 from pydantic import ValidationError
 
-from app.assistant.dates import normalize_text
-from app.assistant.evidence import references_prior_email_context, validate_execution_claims
 from app.assistant.contracts import (
     AssistantCommand,
     CancelActionCommand,
+    ConfirmActionCommand,
     ConversationCommand,
     EmailQueryCommand,
-    ConfirmActionCommand,
     ServiceDraftCorrectionCommand,
     ServiceEventDraftCommand,
     ServiceQueryCommand,
@@ -29,16 +28,26 @@ from app.assistant.contracts import (
     UnsupportedCommand,
     assistant_command_adapter,
 )
+from app.assistant.dates import normalize_text
+from app.assistant.evidence import (
+    references_prior_email_context,
+    validate_execution_claims,
+)
 from app.assistant.provider import (
-    ProviderMessage,
+    ProviderConnectionError,
     ProviderInferenceTrace,
     ProviderInterpretation,
+    ProviderMessage,
+    ProviderModelUnavailableError,
     ProviderPendingAction,
     ProviderResponseError,
+    ProviderTimeoutError,
     ProviderToolResult,
     ProviderUnavailableError,
 )
 from app.assistant.technical_knowledge import references_for
+
+logger = logging.getLogger(__name__)
 
 LOCAL_OLLAMA_HOSTS = {"127.0.0.1", "localhost", "::1", "host.docker.internal"}
 OLLAMA_INFERENCE_LOCK = threading.BoundedSemaphore(value=1)
@@ -58,6 +67,15 @@ UNAVAILABLE_OPERATION_PATTERN = re.compile(
 SERVICE_OPERATION_PATTERN = re.compile(
     r"\b(?:registr\w*|cadastr\w*|salv\w*|anot\w*|consult\w*|mostr\w*|list\w*|verific\w*)\b"
     r".{0,80}\b(?:atendimentos?|servicos?|chamados?)\b"
+)
+EMAIL_READ_QUERY_PATTERN = re.compile(
+    r"\b(?:e[- ]?mails?|emails?|mensagens?|caixa(?: de entrada)?|inbox)\b"
+    r"|\b(?:o que chegou|o que recebi|quem (?:esta )?(?:esperando|aguardando)|"
+    r"ficou alguem esperando|ficou alguem aguardando)\b"
+)
+EMAIL_WRITE_COMMAND_PATTERN = re.compile(
+    r"^\s*(?:pague|marque|emita|envie|exclua|apague|mova|altere|baixe|"
+    r"registre|crie|movimente)\b"
 )
 SERVICE_TOOLS = frozenset(
     {"consultar_servicos", "registrar_evento_servico", "corrigir_registro_servico", "criar_lembretes_servico"}
@@ -589,6 +607,15 @@ def _validate_tool_scope(
     normalized_request = normalize_text(current_message)
     unavailable_request = UNAVAILABLE_OPERATION_PATTERN.search(normalized_request)
     service_request = SERVICE_OPERATION_PATTERN.search(normalized_request)
+    email_read_query = bool(
+        EMAIL_READ_QUERY_PATTERN.search(normalized_request)
+        and not EMAIL_WRITE_COMMAND_PATTERN.search(normalized_request)
+        and re.search(
+            r"\b(?:quais?|tem|o que|me diga|mostre|resuma|resume|leia|quem|ficou|"
+            r"cheg\w*|receb\w*|urgente|prioridade|esperando|aguardando)\b",
+            normalized_request,
+        )
+    )
     explicit_task_request = bool(
         re.search(
             r"\b(?:crie|criar|adicione|adicionar|registre|registrar)\s+"
@@ -616,7 +643,14 @@ def _validate_tool_scope(
             result.tool == "consultar_servicos" and result.state in {"success", "empty"}
             for result in tool_results
         )
-        if (unavailable_request or (service_request and not service_tools_available and not service_query_succeeded)) and not states_limitation:
+        unavailable_needs_limit = bool(unavailable_request) and not email_read_query
+        service_needs_limit = bool(
+            service_request
+            and not service_tools_available
+            and not service_query_succeeded
+            and not email_read_query
+        )
+        if (unavailable_needs_limit or service_needs_limit) and not states_limitation:
             raise ValueError("A resposta omitiu a limitacao da funcao solicitada.")
     return command
 
@@ -814,7 +848,7 @@ class OllamaProvider:
         try:
             with httpx.Client(timeout=self.timeout, transport=self.transport) as client:
                 attempt_payload = payload
-                for attempt in range(3):
+                for attempt in range(2):
                     request_started = monotonic()
                     response = client.post(f"{self.base_url}/api/chat", json=attempt_payload)
                     request_seconds = monotonic() - request_started
@@ -871,14 +905,30 @@ class OllamaProvider:
                     if repair_reason is None:
                         return ProviderInterpretation(command=command, inferences=traces)
                     else:
-                        if attempt == 2:
+                        logger.info(
+                            "assistant_provider=ollama stage=response_validation outcome=repair "
+                            "attempt=%d reason=%s duration_ms=%d",
+                            attempt + 1,
+                            repair_reason,
+                            round(request_seconds * 1000),
+                        )
+                        if attempt == 1:
+                            logger.warning(
+                                "assistant_provider=ollama stage=response_validation outcome=failed "
+                                "error_type=invalid_structured_response duration_ms=%d",
+                                round(request_seconds * 1000),
+                            )
                             raise ProviderResponseError(
                                 "O Ollama retornou uma resposta que nao passou na validacao.",
                                 inferences=traces,
                             )
-                    response_message = response.json().get(
-                        "message", {"role": "assistant", "content": ""}
-                    )
+                    try:
+                        response_message = response.json().get(
+                            "message", {"role": "assistant", "content": ""}
+                        )
+                    except (ValueError, TypeError):
+                        # Never echo malformed provider output into the repair context.
+                        response_message = {"role": "assistant", "content": ""}
                     repair_hint = (
                         " Ao usar fatos de e-mail exibidos antes, comece a resposta com "
                         "'No resultado anterior,' para identificar a evidencia historica."
@@ -903,19 +953,39 @@ class OllamaProvider:
                             },
                         ],
                     }
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise ProviderUnavailableError(
-                "Ollama nao esta disponivel no endereco configurado."
+        except httpx.ConnectError as exc:
+            logger.warning(
+                "assistant_provider=ollama stage=connect outcome=failed error_type=connection "
+                "duration_ms=%d",
+                round((monotonic() - request_started) * 1000),
+            )
+            raise ProviderConnectionError(
+                "Nao foi possivel conectar ao servico Ollama local."
+            ) from exc
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "assistant_provider=ollama stage=inference outcome=failed error_type=timeout "
+                "duration_ms=%d",
+                round((monotonic() - request_started) * 1000),
+            )
+            raise ProviderTimeoutError(
+                "O Ollama excedeu o tempo limite configurado para esta solicitacao."
             ) from exc
         except httpx.HTTPStatusError as exc:
-            message = (
-                "O modelo configurado nao esta disponivel no Ollama."
-                if exc.response.status_code == 404
-                else "O Ollama respondeu com erro ao interpretar a mensagem."
-            )
-            raise ProviderUnavailableError(message) from exc
+            if exc.response.status_code == 404:
+                logger.warning(
+                    "assistant_provider=ollama stage=model_lookup outcome=failed "
+                    "error_type=model_missing duration_ms=%d",
+                    round((monotonic() - request_started) * 1000),
+                )
+                raise ProviderModelUnavailableError(
+                    "O Ollama esta ativo, mas o modelo configurado nao foi encontrado localmente."
+                ) from exc
+            raise ProviderConnectionError(
+                "O servico Ollama local respondeu com erro HTTP."
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderUnavailableError("Falha de comunicacao com o Ollama.") from exc
+            raise ProviderConnectionError("Falha de comunicacao com o Ollama local.") from exc
         except (KeyError, TypeError, ValueError, ValidationError) as exc:
             raise ProviderResponseError(
                 "O Ollama retornou uma resposta que nao passou na validacao."
@@ -947,7 +1017,10 @@ def _inference_trace(
     repair_reason: str | None,
     grounding_adjustment: str | None,
 ) -> ProviderInferenceTrace:
-    payload = response.json()
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        payload = {}
     return ProviderInferenceTrace(
         attempt=attempt,
         queue_wait_seconds=queue_wait_seconds,

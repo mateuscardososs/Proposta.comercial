@@ -48,7 +48,12 @@ def classify_message(message: EmailMessageRecord) -> Classification:
         category, destination, confidence = "purchase_order", "review", "medium"
     elif any(term in content for term in ("cotacao recebida", "segue nossa cotacao", "cotacao do fornecedor")):
         category, destination, confidence = "vendor_quotation", "review", "high"
-    elif any(term in content for term in ("pedido de orcamento", "solicito orcamento", "solicitamos orcamento", "cotacao para", "orcar o servico")):
+    elif any(term in content for term in (
+        "pedido de orcamento", "solicitacao de orcamento", "solicito orcamento",
+        "solicitamos orcamento", "orcamento solicitado", "cotacao para",
+        "pedido de cotacao", "solicitacao de cotacao", "solicito cotacao",
+        "solicitamos cotacao", "orcar o servico",
+    )):
         category, destination, confidence = "customer_quote_request", "task", "high"
         auto_task_eligible = True
     elif any(term in content for term in ("conta a pagar", "boleto para pagamento", "fatura para pagamento")):
@@ -130,6 +135,31 @@ def classify_message(message: EmailMessageRecord) -> Classification:
         destination=destination,
         auto_task_eligible=auto_task_eligible and confidence == "high",
     )
+
+
+def matches_category_or_review(message: EmailMessageRecord, category: str) -> bool:
+    """Keep ambiguous but relevant candidates visible for human review."""
+    result = classify_message(message)
+    if result.category == category:
+        return True
+    if result.category != "other_review" or result.confidence_band != "low":
+        return False
+    content = normalize_text(f"{message.subject}\n{message.text}")
+    review_cues = {
+        "customer_quote_request": ("orcamento", "cotacao", "orcar"),
+        "vendor_quotation": ("cotacao", "fornecedor"),
+        "purchase_order": ("pedido", "ordem de compra"),
+        "invoice_request": ("nota fiscal", "nota", "nfe"),
+        "invoice_received": ("nota fiscal", "nfe", "nf-e"),
+        "accounts_payable": ("conta", "boleto", "fatura", "pagamento"),
+        "accounts_receivable": ("cobranca", "receber", "pagamento"),
+        "payment_proof": ("comprovante", "pix", "pagamento"),
+        "service_request": ("servico", "visita", "atendimento", "inspecao"),
+        "pending_reply": ("resposta", "retorno", "responder"),
+        "informational": (),
+        "other_review": (),
+    }
+    return any(cue in content for cue in review_cues.get(category, ()))
 
 
 def to_result(

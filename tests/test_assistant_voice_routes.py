@@ -70,9 +70,10 @@ def test_voice_status_keeps_text_available_when_components_are_missing():
     assert "synthesis_available" in response.json()
 
 
-def test_transcription_route_validates_audio_and_returns_safe_text():
+def test_transcription_route_validates_audio_and_returns_safe_text(caplog):
     from app.routers.assistant import get_voice_transcriber
 
+    caplog.set_level("INFO")
     transcriber = FakeTranscriber()
     app.dependency_overrides[get_voice_transcriber] = lambda: transcriber
     try:
@@ -86,11 +87,15 @@ def test_transcription_route_validates_audio_and_returns_safe_text():
 
     assert response.status_code == 200
     assert response.json()["text"].startswith("Crie uma tarefa")
+    assert 0 <= response.json()["confidence_score"] <= 1
+    assert response.json()["confidence_score"] < 1
     assert response.json()["audio_duration_seconds"] == 0.5
     assert response.json()["transcription_seconds"] == 0.12
     assert response.json()["queue_wait_seconds"] >= 0
     assert response.json()["total_seconds"] >= response.json()["transcription_seconds"]
     assert transcriber.calls == 1
+    assert "assistant_voice stage=transcription outcome=success" in caplog.text
+    assert "Crie uma tarefa para revisar o relatorio" not in caplog.text
 
 
 def test_transcription_route_rejects_invalid_audio_before_model():

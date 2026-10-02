@@ -13,6 +13,7 @@ export class VoiceSessionController {
     this.currentAudio = null;
     this.lastReply = null;
     this.lastAudioBlob = null;
+    this.pendingTranscript = null;
     this.heardSpeech = false;
     this.lastSpeechAt = 0;
     this._inFlight = Promise.resolve();
@@ -94,6 +95,8 @@ export class VoiceSessionController {
     const generation = this.generation;
     const capture = this.capture;
     this.capture = null;
+    this.lastAudioBlob = null;
+    this.lastReply = null;
     this._setState("transcribing");
     const work = this._processUtterance(capture, generation);
     this._inFlight = work;
@@ -107,8 +110,30 @@ export class VoiceSessionController {
       const transcript = await this.options.transcribe(blob);
       if (!this._isCurrent(generation)) return;
       this.options.onTranscript?.(transcript.text);
-      this._setState("processing");
-      const reply = await this.options.sendText(transcript.text);
+      this.pendingTranscript = transcript.text;
+      // Speech recognition is fallible; review or edit before any intent can
+      // reach a read or write operation.
+      this._setState("reviewing");
+    } catch (error) {
+      if (!this._isCurrent(generation)) return;
+      this._failSession(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  async submitTranscript(text = this.pendingTranscript) {
+    if (!this.active || this.state !== "reviewing" || !this.pendingTranscript) return;
+    const cleanText = String(text || "").trim();
+    if (!cleanText) {
+      this.options.onError?.(new Error("Revise a transcrição antes de enviar."));
+      return;
+    }
+    const generation = this.generation;
+    this.pendingTranscript = null;
+    this.lastReply = null;
+    this.lastAudioBlob = null;
+    this._setState("processing");
+    try {
+      const reply = await this.options.sendText(cleanText);
       if (!this._isCurrent(generation)) return;
       this.lastReply = reply;
       this.lastAudioBlob = null;
@@ -184,6 +209,7 @@ export class VoiceSessionController {
   stop() {
     ++this.generation;
     this.active = false;
+    this.pendingTranscript = null;
     this.capture?.cancel();
     this.capture = null;
     this.currentAudio?.stop();

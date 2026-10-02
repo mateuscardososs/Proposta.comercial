@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import imaplib
-import hashlib
 import base64
 import binascii
+import hashlib
+import imaplib
 import quopri
 import re
 import socket
@@ -17,8 +17,12 @@ from email.policy import default
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 
-from app.assistant.email.classification import to_result
-from app.assistant.email.contracts import EmailMessageRecord, EmailQuery, EmailQueryResult
+from app.assistant.email.classification import matches_category_or_review, to_result
+from app.assistant.email.contracts import (
+    EmailMessageRecord,
+    EmailQuery,
+    EmailQueryResult,
+)
 from app.assistant.email.provider import EmailUnavailableError
 
 
@@ -85,6 +89,7 @@ class YahooImapEmailReader:
                         "attention_only": False,
                         "awaiting_reply": False,
                         "reference": None,
+                        "category": None,
                         "limit": self.max_messages,
                     }
                 )
@@ -278,9 +283,12 @@ class YahooImapEmailReader:
                 continue
             if query.reference and query.reference != record.reference:
                 continue
+            if query.category and not matches_category_or_review(record, query.category):
+                continue
             records.append(record)
             if (
-                not query.attention_only
+                not query.category
+                and not query.attention_only
                 and not query.awaiting_reply
                 and len(records) >= min(query.limit, self.max_messages)
             ):
@@ -290,6 +298,8 @@ class YahooImapEmailReader:
             if partial
             else ""
         )
+        if query.category:
+            records = records[: min(query.limit, self.max_messages)]
         return _FolderRead(
             records=records,
             candidate_count=len(exact_uids),

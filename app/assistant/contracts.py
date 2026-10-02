@@ -52,6 +52,11 @@ class EmailQueryCommand(BaseModel):
     attention_only: bool = False
     awaiting_reply: bool = False
     reference: str | None = Field(default=None, max_length=160)
+    category: Literal[
+        "customer_quote_request", "vendor_quotation", "purchase_order", "invoice_request",
+        "invoice_received", "accounts_payable", "accounts_receivable", "payment_proof",
+        "service_request", "pending_reply", "informational", "other_review",
+    ] | None = None
     limit: int = Field(default=20, ge=1, le=50)
 
 
@@ -241,6 +246,7 @@ class AssistantReply(BaseModel):
     conversation_id: int
     kind: Literal["text", "confirmation", "clarification", "success", "error"]
     message: str
+    retryable: bool = False
     action_id: int | None = None
     confirmation_token: str | None = None
     task_id: int | None = None
@@ -266,6 +272,7 @@ class AssistantMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     request_id: str = Field(min_length=1, max_length=100)
     conversation_id: int | None = Field(default=None, ge=1)
+    retry: bool = False
 
 
 class AssistantHistory(BaseModel):
@@ -293,6 +300,7 @@ class VoiceTranscriptionResponse(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     language: str = Field(max_length=20)
     language_probability: float = Field(ge=0, le=1)
+    confidence_score: float = Field(default=0, ge=0, le=1)
     audio_duration_seconds: float = Field(gt=0)
     transcription_seconds: float = Field(ge=0)
     queue_wait_seconds: float = Field(default=0, ge=0)

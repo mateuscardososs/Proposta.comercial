@@ -61,6 +61,18 @@ class ProviderUnavailableError(RuntimeError):
     pass
 
 
+class ProviderConnectionError(ProviderUnavailableError):
+    """The local provider cannot be reached or returned a service-level error."""
+
+
+class ProviderModelUnavailableError(ProviderUnavailableError):
+    """The provider is reachable but the configured local model is absent."""
+
+
+class ProviderTimeoutError(ProviderUnavailableError):
+    """A request to the local provider exceeded its configured timeout."""
+
+
 class ProviderResponseError(RuntimeError):
     def __init__(
         self,

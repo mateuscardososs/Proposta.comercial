@@ -29,6 +29,7 @@ export class AssistantChatController {
           message: attempt.message,
           request_id: attempt.requestId,
           conversation_id: this.options.getConversationId?.() ?? null,
+          retry: Boolean(retry),
         }),
         signal: abortController.signal,
       });
@@ -41,7 +42,12 @@ export class AssistantChatController {
       }
       this.options.setConversationId?.(payload.conversation_id);
       this.options.onAssistantMessage?.(payload);
-      this.pending = null;
+      if (payload.kind === "error" && payload.retryable === true) {
+        this.pending = attempt;
+        this.options.onRetryAvailable?.(true);
+      } else {
+        this.pending = null;
+      }
       return payload;
     } catch (error) {
       const safeError = error?.name === "AbortError"
@@ -202,7 +208,24 @@ export function bootstrapAssistantChat(root = document) {
         summary.textContent = item.summary || "Sem trecho disponível.";
         const priority = document.createElement("p");
         priority.textContent = `Prioridade sugerida: ${item.priority || "normal"}. ${item.priority_reason || ""}`;
-        card.append(heading, meta, summary, priority);
+        const categoryLabels = {
+          customer_quote_request: "Pedido de orçamento de cliente",
+          vendor_quotation: "Cotação de fornecedor",
+          purchase_order: "Pedido/ordem de compra",
+          invoice_request: "Solicitação de nota fiscal",
+          invoice_received: "Nota fiscal recebida",
+          accounts_payable: "Conta a pagar",
+          accounts_receivable: "Cobrança/conta a receber",
+          payment_proof: "Comprovante de pagamento",
+          service_request: "Chamado/serviço",
+          pending_reply: "Possível resposta pendente",
+          informational: "Informativo",
+          other_review: "Triagem necessária",
+        };
+        const category = document.createElement("p");
+        const uncertain = item.confidence_band === "low";
+        category.textContent = `Categoria: ${categoryLabels[item.category] || "Triagem necessária"} · confiança ${item.confidence_band || "baixa"}${uncertain ? " · revisar" : ""}. ${item.classification_reason || ""}`;
+        card.append(heading, meta, summary, priority, category);
         if (item.action_suggested) {
           const action = document.createElement("p");
           action.textContent = `Ação sugerida: ${item.action_suggested}`;

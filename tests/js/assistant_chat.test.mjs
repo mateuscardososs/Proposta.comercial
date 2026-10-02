@@ -118,6 +118,50 @@ test("service and reminder links returned after confirmation are rendered in his
 });
 
 
+test("email result cards show category evidence and mark uncertain classification for review", async () => {
+  const oldWindow = globalThis.window;
+  const oldDocument = globalThis.document;
+  const makeElement = (tagName = "div") => ({
+    tagName, children: [], classList: { toggle() {} }, listeners: {}, textContent: "",
+    addEventListener(name, callback) { this.listeners[name] = callback; },
+    append(...items) { this.children.push(...items); },
+    appendChild(item) { this.children.push(item); },
+    remove() {}, focus() {}, requestSubmit() {},
+  });
+  const elements = new Map([
+    ["assistant-form", makeElement("form")], ["assistant-message", makeElement("textarea")],
+    ["assistant-send", makeElement("button")], ["assistant-history", makeElement("main")],
+    ["assistant-empty", makeElement("div")], ["assistant-status", makeElement("div")],
+    ["assistant-retry", makeElement("button")],
+  ]);
+  globalThis.window = {
+    location: { href: "http://127.0.0.1:8011/web/assistente" },
+    history: { replaceState() {} }, crypto: { randomUUID: () => "category-ui" },
+    fetch: async () => response({ conversation_id: 8, kind: "text", message: "Há uma mensagem para revisar.",
+      email_items: [{ subject: "Consulta comercial", sender: "Cliente sintético", received_at: "2026-10-02T10:00:00-03:00",
+        seen: false, summary: "Texto sintético", priority: "normal", priority_reason: "Sem prazo confirmado.",
+        category: "customer_quote_request", confidence_band: "low", classification_reason: "Menção genérica a orçamento." }] }),
+  };
+  globalThis.document = { createElement: makeElement };
+  try {
+    const controller = bootstrapAssistantChat({ getElementById: (id) => elements.get(id) });
+    await controller.send("Me mostre esta mensagem");
+    const labels = [];
+    const walk = (element) => {
+      if (element.textContent) labels.push(element.textContent);
+      for (const child of element.children) walk(child);
+    };
+    walk(elements.get("assistant-history"));
+    assert.ok(labels.some((text) => text.includes("Pedido de orçamento de cliente")));
+    assert.ok(labels.some((text) => text.includes("revisar")));
+    assert.ok(labels.some((text) => text.includes("Menção genérica a orçamento.")));
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.document = oldDocument;
+  }
+});
+
+
 test("timeout is visible and retry reuses request id without duplicating user message", async () => {
   let calls = 0;
   const sample = harness({
@@ -142,6 +186,29 @@ test("timeout is visible and retry reuses request id without duplicating user me
   assert.equal(sample.requests[0].request_id, sample.requests[1].request_id);
   assert.equal(sample.events.filter(([type]) => type === "user").length, 1);
   assert.deepEqual(sample.events.at(-1), ["busy", false]);
+});
+
+
+test("retryable assistant errors keep the same request and do not duplicate the user bubble", async () => {
+  let calls = 0;
+  const sample = harness({
+    fetchImpl: async (_url, options) => {
+      calls += 1;
+      const payload = JSON.parse(options.body);
+      sample.requests.push(payload);
+      return calls === 1
+        ? response({ conversation_id: 7, kind: "error", retryable: true, message: "Ollama offline." })
+        : response({ conversation_id: 7, kind: "text", message: "Consulta retomada." });
+    },
+  });
+
+  await sample.controller.send("Quais e-mails chegaram?");
+  const reply = await sample.controller.retry();
+
+  assert.equal(reply.message, "Consulta retomada.");
+  assert.equal(sample.requests[0].request_id, sample.requests[1].request_id);
+  assert.equal(sample.requests[1].retry, true);
+  assert.equal(sample.events.filter(([type]) => type === "user").length, 1);
 });
 
 

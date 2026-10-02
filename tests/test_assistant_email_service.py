@@ -321,6 +321,8 @@ def test_email_results_sent_to_model_are_bounded(db):
 
     assert reply.kind == "text"
     assert len(provider.calls[0]["tool_results"][0].payload["messages"]) == 3
+    assert len(reply.email_items) == 3
+    assert reader.queries[0].limit == 100
 
 
 def test_historical_email_reply_requires_an_explicit_previous_result_label(db):
