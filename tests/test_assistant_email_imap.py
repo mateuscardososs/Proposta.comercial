@@ -223,6 +223,53 @@ def test_candidate_count_is_not_reduced_by_visual_output_limit():
     assert result.candidate_count == 2
 
 
+class CategoryAfterNewerMessageImap(MultipleMessageImap):
+    def uid(self, command, *args):
+        self.calls.append(("uid", command, *args))
+        if command == "search":
+            return "OK", [b"10 11"]
+        uid = str(args[0])
+        if command == "fetch" and "BODYSTRUCTURE" in str(args):
+            return "OK", [(f'{uid} (BODYSTRUCTURE ("TEXT" "PLAIN" NIL NIL NIL "7BIT" 80 2)'.encode(), b"")]
+        if command == "fetch" and "HEADER.FIELDS" in str(args):
+            subject = "Solicitação de orçamento" if uid == "10" else "Newsletter"
+            raw = (
+                f"Message-ID: <m{uid}@example>\r\n"
+                "From: Remetente <remetente@example.invalid>\r\n"
+                "To: ad@example.invalid\r\n"
+                f"Subject: {subject}\r\n"
+                "Date: Fri, 02 Oct 2026 08:00:00 -0300\r\n\r\n"
+            ).encode()
+            return "OK", [(f'{uid} (INTERNALDATE "02-Oct-2026 11:00:00 +0000" BODY[HEADER.FIELDS ...]'.encode(), raw)]
+        if command == "fetch" and "BODY.PEEK[TEXT]" in str(args):
+            body = b"Solicitamos orcamento para manutencao." if uid == "10" else b"Newsletter semanal."
+            return "OK", [(f"{uid} (BODY[TEXT] {{{len(body)}}}".encode(), body)]
+        if command == "fetch" and "FLAGS" in str(args):
+            return "OK", [f"{uid} (FLAGS ())".encode()]
+        if command == "fetch" and args[-1] == "(UID INTERNALDATE)":
+            return "OK", []
+        raise AssertionError((command, args))
+
+
+def test_category_matching_scans_candidates_before_visual_limit_without_writing_flags():
+    client = CategoryAfterNewerMessageImap()
+    reader = YahooImapEmailReader(
+        username="synthetic@example.invalid", app_password="never logged",
+        max_messages=10, client_factory=lambda **_kwargs: client,
+    )
+    result = reader.query(EmailQuery(
+        start_at=datetime(2026, 10, 2, 0, 0, tzinfo=ZoneInfo("America/Recife")),
+        end_at=datetime(2026, 10, 2, 23, 59, 59, tzinfo=ZoneInfo("America/Recife")),
+        category="customer_quote_request", limit=1,
+    ))
+
+    assert result.state == "success"
+    assert len(result.messages) == 1
+    assert result.messages[0].category == "customer_quote_request"
+    assert "10" in result.messages[0].reference or result.messages[0].subject == "Solicitação de orçamento"
+    assert all(call[0] != "store" for call in client.calls)
+
+
 def test_yahoo_imap_reports_missing_sent_folder_for_pending_reply_query():
     client = FakeImap()
     client.list = lambda: ("OK", [b'(\\HasNoChildren \\Inbox) "/" "Inbox"'])

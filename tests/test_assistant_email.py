@@ -39,6 +39,62 @@ def test_synthetic_reader_filters_today_and_preserves_seen_flags():
     assert {message.reference: message.seen for message in reader.messages} == flags_before
 
 
+def test_synthetic_category_query_finds_quote_requests_before_applying_visual_limit():
+    messages = [message for message in synthetic_messages(NOW) if message.reference != "syn-in-002"]
+    messages.extend(
+        [
+            messages[1].model_copy(update={
+                "reference": "old-quote",
+                "received_at": NOW - timedelta(days=3),
+                "subject": "Solicitação de orçamento",
+                "text": "Solicitamos orçamento para inspeção.",
+            }),
+            messages[1].model_copy(update={
+                "reference": "newer-news",
+                "received_at": NOW - timedelta(days=1),
+                "subject": "Informativo",
+                "text": "Newsletter semanal.",
+            }),
+        ]
+    )
+    reader = SyntheticEmailReader(messages=messages)
+
+    result = reader.query(
+        EmailQuery(
+            start_at=NOW - timedelta(days=7), end_at=NOW,
+            category="customer_quote_request", limit=1,
+        )
+    )
+
+    assert [message.reference for message in result.messages] == ["old-quote"]
+    assert result.candidate_count >= 1
+
+
+def test_uncertain_quote_message_is_returned_for_review_not_hidden_as_no_match():
+    from app.assistant.email.contracts import EmailMessageRecord
+
+    uncertain = EmailMessageRecord(
+        reference="uncertain-quote",
+        thread_reference="thread-uncertain",
+        folder_role="inbox",
+        sender="Cliente sintético",
+        subject="Vamos conversar",
+        received_at=NOW,
+        seen=False,
+        text="Talvez seja necessário conversar sobre orçamento, ainda sem pedido claro.",
+    )
+    reader = SyntheticEmailReader(messages=[uncertain])
+
+    result = reader.query(EmailQuery(
+        start_at=NOW.replace(hour=0), end_at=NOW,
+        category="customer_quote_request", limit=20,
+    ))
+
+    assert len(result.messages) == 1
+    assert result.messages[0].category == "other_review"
+    assert result.messages[0].confidence_band == "low"
+
+
 def test_synthetic_reader_separates_unread_marketing_and_explicit_deadline():
     reader = SyntheticEmailReader(messages=synthetic_messages(NOW))
 

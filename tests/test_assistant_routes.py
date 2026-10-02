@@ -7,8 +7,11 @@ from app.assistant.contracts import (
     TaskCreateCommand,
     TaskQueryCommand,
 )
+from app.assistant.provider import ProviderResponseError
 from app.main import app
 from app.routers.assistant import get_assistant_provider
+from app.models import AssistantMessage
+from app.db import SessionLocal
 
 
 class RouteProvider:
@@ -37,8 +40,40 @@ def test_assistant_page_uses_existing_shell_and_local_warning():
     assert 'src="/assets/assistant_voice_bootstrap.js"' in response.text
     assert 'id="assistant-retry"' in response.text
     assert 'id="voice-level"' in response.text
+    assert 'id="voice-transcript-review"' in response.text
+    assert 'id="voice-transcript-send"' in response.text
     assert 'href="/web/assistente" aria-label="Assistente"' in response.text
     assert 'class="active"' in response.text
+
+
+def test_assistant_api_retry_reuses_request_and_updates_existing_reply():
+    class RetryProvider:
+        calls = 0
+
+        def interpret(self, messages, *, today, timezone, **_context):
+            self.calls += 1
+            if self.calls == 1:
+                raise ProviderResponseError("invalid structure")
+            return ConversationCommand(message="Retomei a solicitação.")
+
+    provider = RetryProvider()
+    app.dependency_overrides[get_assistant_provider] = lambda: provider
+    try:
+        with TestClient(app) as client:
+            first = client.post("/api/assistant/messages", json={
+                "message": "Oi", "request_id": "route-retry-1",
+            })
+            second = client.post("/api/assistant/messages", json={
+                "message": "Oi", "request_id": "route-retry-1", "retry": True,
+            })
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["retryable"] is True
+    assert second.json()["message"] == "Retomei a solicitação."
+    with SessionLocal() as db:
+        assert db.query(AssistantMessage).count() == 2
 
 
 def test_assistant_api_creates_preview_then_idempotent_task():

@@ -17,6 +17,8 @@ from app.assistant.provider import (
     ProviderMessage,
     ProviderPendingAction,
     ProviderResponseError,
+    ProviderModelUnavailableError,
+    ProviderTimeoutError,
     ProviderToolResult,
     ProviderUnavailableError,
 )
@@ -436,11 +438,41 @@ def test_ollama_failed_validation_exposes_only_safe_attempt_metrics():
             timezone="America/Recife",
         )
 
-    assert len(captured.value.inferences) == 3
+    assert len(captured.value.inferences) == 2
     assert {trace.repair_reason for trace in captured.value.inferences} == {
         "ungrounded_task_claim"
     }
     assert all(trace.prompt_tokens == 100 for trace in captured.value.inferences)
+
+
+def test_ollama_repairs_invalid_json_once_without_logging_or_reusing_raw_response(caplog):
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, content=b"not-json-private-body")
+        return httpx.Response(
+            200, json={"message": {"role": "assistant", "content": "Posso ajudar com isso."}}
+        )
+
+    provider = OllamaProvider(
+        base_url="http://127.0.0.1:11434", model="modelo-local",
+        connect_timeout=1, read_timeout=30, transport=httpx.MockTransport(handler),
+    )
+
+    with caplog.at_level("INFO", logger="app.assistant.ollama"):
+        result = provider.interpret_with_trace(
+            [ProviderMessage(role="user", content="Me ajude")],
+            today=date(2026, 9, 30), timezone="America/Recife",
+        )
+
+    assert result.command.message == "Posso ajudar com isso."
+    assert calls == 2
+    assert len(result.inferences) == 2
+    assert "not-json-private-body" not in caplog.text
+    assert all("not-json-private-body" not in trace.model_dump_json() for trace in result.inferences)
 
 
 def test_ollama_repairs_task_creation_used_for_an_unavailable_operation():
@@ -682,9 +714,28 @@ def test_ollama_timeout_has_specific_error_and_no_fallback():
         transport=httpx.MockTransport(handler),
     )
 
-    with pytest.raises(ProviderUnavailableError, match="Ollama"):
+    with pytest.raises(ProviderTimeoutError, match="tempo limite"):
         provider.interpret(
             [ProviderMessage(role="user", content="Crie uma tarefa")],
+            today=date(2026, 9, 30),
+            timezone="America/Recife",
+        )
+
+
+def test_ollama_404_distinguishes_missing_local_model():
+    provider = OllamaProvider(
+        base_url="http://127.0.0.1:11434",
+        model="modelo-local-ausente",
+        connect_timeout=1,
+        read_timeout=1,
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(404, json={"error": "model not found"})
+        ),
+    )
+
+    with pytest.raises(ProviderModelUnavailableError, match="nao foi encontrado"):
+        provider.interpret(
+            [ProviderMessage(role="user", content="Oi")],
             today=date(2026, 9, 30),
             timezone="America/Recife",
         )

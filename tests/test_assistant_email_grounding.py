@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-import httpx
-import pytest
 from datetime import date
 
+import httpx
+import pytest
+
 from app.assistant.contracts import ConversationCommand
-from app.assistant.ollama import OllamaProvider, _validate_conversation_grounding
+from app.assistant.ollama import (
+    OllamaProvider,
+    _validate_conversation_grounding,
+    _validate_tool_scope,
+)
 from app.assistant.provider import ProviderMessage, ProviderToolResult
 
 
@@ -58,6 +63,48 @@ def test_failed_email_tool_result_cannot_be_described_as_successful_consultation
                 ),
             ),
             current_message="Quais e-mails chegaram hoje?",
+        )
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        "Quais e-mails pedem emissão de nota fiscal?",
+        "Tem algum e-mail sobre conta a pagar?",
+        "Me diga quais emails têm solicitação de orçamento.",
+    ],
+)
+def test_read_only_email_category_queries_are_not_mistaken_for_financial_operations(request_text):
+    command = ConversationCommand(message="Há uma mensagem correspondente na caixa de entrada.")
+    result = ProviderToolResult(
+        tool="consultar_emails",
+        evidence_id="email:synthetic-category",
+        state="success",
+        payload={"count": 1, "messages": []},
+    )
+
+    assert _validate_tool_scope(
+        command,
+        current_message=request_text,
+        allowed_tools={"responder_conversa"},
+        tool_results=(result,),
+    ) == command
+
+
+def test_email_category_read_does_not_exempt_a_payment_or_invoice_write():
+    with pytest.raises(ValueError):
+        _validate_tool_scope(
+            ConversationCommand(message="Tudo certo."),
+            current_message="Marque a conta como paga e emita a nota fiscal.",
+            allowed_tools={"responder_conversa"},
+            tool_results=(
+                ProviderToolResult(
+                    tool="consultar_emails",
+                    evidence_id="email:historical",
+                    state="success",
+                    payload={"count": 1, "messages": []},
+                ),
+            ),
         )
 
 

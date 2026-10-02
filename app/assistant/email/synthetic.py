@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from app.assistant.email.classification import to_result
-from app.assistant.email.contracts import EmailMessageRecord, EmailQuery, EmailQueryResult
-from app.assistant.email.provider import EmailAuthenticationError, EmailProviderError, EmailTimeoutError
+from app.assistant.email.classification import matches_category_or_review, to_result
+from app.assistant.email.contracts import (
+    EmailMessageRecord,
+    EmailQuery,
+    EmailQueryResult,
+)
+from app.assistant.email.provider import (
+    EmailAuthenticationError,
+    EmailProviderError,
+    EmailTimeoutError,
+)
 
 
 class SyntheticEmailReader:
@@ -68,6 +76,8 @@ class SyntheticEmailReader:
                     "A pasta Enviados não está disponível; não é possível avaliar resposta pendente com confiança."
                 )
             result = to_result(item, awaiting_reply=awaiting, limitations=limitations)
+            if query.category and not matches_category_or_review(item, query.category):
+                continue
             if query.awaiting_reply and awaiting != "yes" and self.sent_available:
                 continue
             if query.attention_only and result.priority not in {"high", "critical"}:
@@ -115,7 +125,6 @@ class SyntheticEmailReader:
 
 
 def synthetic_messages(now: datetime) -> list[EmailMessageRecord]:
-    tz = now.tzinfo
     return [
         EmailMessageRecord(
             reference="syn-in-001",

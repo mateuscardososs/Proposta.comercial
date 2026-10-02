@@ -32,7 +32,7 @@ function harness(overrides = {}) {
       captures.push(capture);
       return capture;
     },
-    transcribe: async () => ({ text: "Pode criar" }),
+    transcribe: async () => ({ text: "Pode criar", confidence_score: 1 }),
     sendText: async (text) => ({ message: `Resposta para ${text}`, kind: "success" }),
     synthesize: async () => new Blob(["wav"], { type: "audio/wav" }),
     audioFactory: () => {
@@ -94,13 +94,16 @@ test("recorder startup failure releases the granted microphone", async () => {
 });
 
 
-test("silence after speech automatically finishes the utterance", async () => {
+test("silence finishes capture and pauses for transcript review", async () => {
   const sample = harness();
   await sample.controller.start();
   sample.controller.observeLevel(0.08, 0);
   sample.controller.observeLevel(0.001, 150);
   await sample.controller.whenSettled();
   assert.equal(sample.captures[0].startCalls, 1);
+  assert.equal(sample.audios.length, 0);
+  assert.equal(sample.controller.state, "reviewing");
+  await sample.controller.submitTranscript();
   assert.equal(sample.audios[0].playCalls, 1);
   sample.controller.stop();
 });
@@ -126,8 +129,29 @@ test("manual finish serializes transcription, assistant, and playback", async ()
   });
   await sample.controller.start();
   await sample.controller.finishUtterance();
+  assert.deepEqual(order, ["transcribe"]);
+  assert.equal(sample.controller.state, "reviewing");
+  await sample.controller.submitTranscript("Consulta");
   assert.deepEqual(order, ["transcribe", "assistant", "speech"]);
   assert.equal(sample.captures.length, 1, "listening remains suspended during playback");
+  sample.controller.stop();
+});
+
+
+test("low confidence transcription waits for user correction instead of sending", async () => {
+  let sends = 0;
+  const sample = harness({
+    transcribe: async () => ({ text: "Me diga quase meio", confidence_score: 0.3 }),
+    sendText: async (text) => { sends += 1; return { message: `Resposta para ${text}` }; },
+  });
+  await sample.controller.start();
+  await sample.controller.finishUtterance();
+
+  assert.equal(sends, 0);
+  assert.equal(sample.controller.state, "reviewing");
+  assert.equal(sample.controller.pendingTranscript, "Me diga quase meio");
+  await sample.controller.submitTranscript("Quais e-mails pedem orçamento?");
+  assert.equal(sends, 1);
   sample.controller.stop();
 });
 
@@ -170,6 +194,8 @@ test("speech retry does not resend the assistant request", async () => {
   sample.controller.lastAudioBlob = new Blob(["old-response"]);
   await sample.controller.start();
   await sample.controller.finishUtterance();
+  assert.equal(sample.controller.lastAudioBlob, null);
+  await sample.controller.submitTranscript();
   assert.equal(sample.controller.lastAudioBlob, null, "old audio must not mask a failed new reply");
   await sample.controller.retrySpeech();
   assert.equal(sends, 1);
@@ -182,6 +208,7 @@ test("repeating audio suspends a newly resumed capture", async () => {
   const sample = harness();
   await sample.controller.start();
   await sample.controller.finishUtterance();
+  await sample.controller.submitTranscript();
   sample.audios[0].stop();
   await Promise.resolve();
   await Promise.resolve();

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from time import monotonic
 from typing import TypeVar
 from zoneinfo import ZoneInfo
 
@@ -13,6 +15,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.assistant.capabilities import CapabilityRegistry
 from app.assistant.contracts import (
     AssistantMessageView,
     AssistantReply,
@@ -20,8 +23,8 @@ from app.assistant.contracts import (
     ConfirmActionCommand,
     ConversationCommand,
     EmailQueryCommand,
-    ServiceEventDraftCommand,
     ServiceDraftCorrectionCommand,
+    ServiceEventDraftCommand,
     ServiceQueryCommand,
     ServiceReminderDraftCommand,
     TaskCreateCommand,
@@ -29,18 +32,23 @@ from app.assistant.contracts import (
     TaskQueryCommand,
     UnsupportedCommand,
 )
-from app.assistant.capabilities import CapabilityRegistry
+from app.assistant.dates import normalize_text, resolve_date_expression
 from app.assistant.email.contracts import EmailQuery
 from app.assistant.email.provider import EmailReader
-from app.assistant.dates import normalize_text, resolve_date_expression
-from app.assistant.evidence import references_prior_email_context, validate_execution_claims
+from app.assistant.evidence import (
+    references_prior_email_context,
+    validate_execution_claims,
+)
 from app.assistant.provider import (
     AssistantProvider,
-    ProviderMessage,
+    ProviderConnectionError,
     ProviderInferenceTrace,
     ProviderInterpretation,
+    ProviderMessage,
+    ProviderModelUnavailableError,
     ProviderPendingAction,
     ProviderResponseError,
+    ProviderTimeoutError,
     ProviderToolResult,
     ProviderUnavailableError,
 )
@@ -58,6 +66,7 @@ from app.models import (
 from app.schemas import TaskCreate
 from app.services import board_service
 
+logger = logging.getLogger(__name__)
 ModelT = TypeVar("ModelT", Client, User)
 
 STATUS_LABELS = {
@@ -139,6 +148,7 @@ class AssistantService:
         message: str,
         request_id: str,
         conversation_id: int | None = None,
+        retry: bool = False,
     ) -> AssistantReply:
         clean_message = message.strip()
         clean_request_id = request_id.strip()
@@ -150,13 +160,14 @@ class AssistantService:
             raise ValueError("Identificador de requisicao invalido.")
 
         cached = self._cached_reply(clean_request_id)
-        if cached is not None:
+        if cached is not None and not (retry and cached.retryable):
             return cached
 
         claimed_request = self._claim_or_create_request(
             message=clean_message,
             request_id=clean_request_id,
             conversation_id=conversation_id,
+            retry=retry,
         )
         if isinstance(claimed_request, AssistantReply):
             return claimed_request
@@ -166,6 +177,9 @@ class AssistantService:
         tool_results: list[ProviderToolResult] = []
         provider_inferences: list[ProviderInferenceTrace] = []
         executed_tools: list[str] = []
+        if retry:
+            tool_results.extend(self._retryable_cached_tool_results(clean_request_id))
+            executed_tools.extend(result.tool for result in tool_results)
         reply: AssistantReply | None = None
         try:
             direct_control = self._direct_control_command(clean_message)
@@ -191,8 +205,28 @@ class AssistantService:
             if command is None:
                 direct_email_query = self._direct_email_query(clean_message)
                 if direct_email_query is not None:
-                    execution = self._execute_email_query(conversation.id, direct_email_query)
-                    if execution.result is None or execution.result.state == "failed":
+                    prior_result = next(
+                        (item for item in tool_results if item.tool == "consultar_emails"),
+                        None,
+                    )
+                    execution = (
+                        None
+                        if prior_result is not None
+                        else self._execute_email_query(conversation.id, direct_email_query)
+                    )
+                    if execution is None:
+                        if self.provider is None:
+                            raise ProviderUnavailableError("Provedor nao configurado.")
+                        command = self._interpret_provider(
+                            self._provider_messages(conversation.id),
+                            today=current_date,
+                            timezone=self.timezone_name,
+                            tool_results=tuple(tool_results),
+                            pending_action=self._provider_pending_action(conversation.id),
+                            allowed_tools={"responder_conversa"},
+                            traces=provider_inferences,
+                        )
+                    elif execution.result is None or execution.result.state == "failed":
                         command = direct_email_query
                         reply = execution.reply
                         if execution.result is not None:
@@ -466,13 +500,44 @@ class AssistantService:
                     )
             else:  # pragma: no cover - protected by the provider contract
                 raise ProviderResponseError("Comando desconhecido.")
+        except ProviderModelUnavailableError:
+            reply = AssistantReply(
+                conversation_id=conversation.id,
+                kind="error",
+                retryable=True,
+                message=(
+                    "O serviço Ollama está ativo, mas o modelo configurado não está instalado localmente. "
+                    "Confira OLLAMA_MODEL e os modelos disponíveis."
+                ),
+            )
+        except ProviderTimeoutError:
+            reply = AssistantReply(
+                conversation_id=conversation.id,
+                kind="error",
+                retryable=True,
+                message=(
+                    "O Ollama excedeu o tempo limite desta solicitação. Nada foi alterado; "
+                    "você pode tentar novamente."
+                ),
+            )
+        except ProviderConnectionError:
+            reply = AssistantReply(
+                conversation_id=conversation.id,
+                kind="error",
+                retryable=True,
+                message=(
+                    "Não foi possível alcançar o serviço Ollama local. Verifique se ele está iniciado "
+                    "no endereço configurado; nenhuma ação foi concluída."
+                ),
+            )
         except ProviderUnavailableError:
             reply = AssistantReply(
                 conversation_id=conversation.id,
                 kind="error",
+                retryable=True,
                 message=(
-                    "O Ollama ou o modelo configurado nao esta disponivel. "
-                    "Confira se o Ollama esta iniciado e se OLLAMA_MODEL corresponde a um modelo instalado."
+                    "O serviço Ollama local não está disponível. Nenhuma ação foi concluída; "
+                    "confira a configuração local."
                 ),
             )
         except ProviderResponseError as exc:
@@ -493,6 +558,7 @@ class AssistantService:
             reply = AssistantReply(
                 conversation_id=conversation.id,
                 kind="error",
+                retryable=True,
                 message=message,
             )
 
@@ -620,8 +686,7 @@ class AssistantService:
         words = " ".join(re.sub(r"[^a-z0-9]+", " ", normalized).split())
         explicit_email_scope = bool(
             re.search(
-                r"\b(?:e ?mails?|caixa de entrada|inbox|mensagens? "
-                r"(?:recebid\w*|nao lidas?|de hoje|desta semana|cheg\w*))\b",
+                r"\b(?:e ?mails?|caixa(?: de entrada)?|inbox|mensagens?|correio)\b",
                 words,
             )
         )
@@ -633,6 +698,36 @@ class AssistantService:
         )
         if other_scope and not explicit_email_scope:
             return None
+
+        category: str | None = None
+        if re.search(r"\b(?:cotacao recebida|cotacao do fornecedor|fornecedor.{0,30}cotacao)\b", words):
+            category = "vendor_quotation"
+        elif re.search(r"\b(?:orcamento|cotacao)\b", words) and re.search(
+            r"\b(?:pedido|solicitacao|pedem|pedindo|solicito|solicitamos|orcamento|cotacao)\b",
+            words,
+        ):
+            category = "customer_quote_request"
+        elif re.search(r"\b(?:ordem de compra|pedido de compra|purchase order)\b", words):
+            category = "purchase_order"
+        elif re.search(
+            r"\b(?:emitir|emissao|enviar|envio).{0,35}\bnota fiscal\b|"
+            r"\bsolicitacao.{0,30}\bnota fiscal\b",
+            words,
+        ):
+            category = "invoice_request"
+        elif re.search(
+            r"\b(?:nota fiscal recebida|recebi.{0,30}nota fiscal|nf e recebida|nfe recebida)\b",
+            words,
+        ):
+            category = "invoice_received"
+        elif re.search(r"\b(?:conta a pagar|contas a pagar|boleto|fatura para pagamento)\b", words):
+            category = "accounts_payable"
+        elif re.search(r"\b(?:conta a receber|cobranca|cobrar cliente|cobranca pendente)\b", words):
+            category = "accounts_receivable"
+        elif re.search(r"\b(?:comprovante de pagamento|comprovante pix)\b", words):
+            category = "payment_proof"
+        elif re.search(r"\b(?:chamado|solicitacao de servico|pedido de atendimento)\b", words):
+            category = "service_request"
 
         awaiting_reply = bool(
             re.search(
@@ -659,6 +754,13 @@ class AssistantService:
                 words,
             )
         )
+        arrived_week = bool(
+            re.search(
+                r"\b(?:o que|quais?)\s+(?:cheg\w*|receb\w*)\b.{0,45}"
+                r"\b(?:esta|nesta|essa|na) semana\b",
+                words,
+            )
+        )
         attention_only = bool(
             re.search(
                 r"\b(?:urgente|prioridade|precis(?:o|a|e) resolver|precis(?:o|a|e) de atencao|"
@@ -673,7 +775,11 @@ class AssistantService:
                 words,
             )
         )
-        if not any((explicit_query, awaiting_reply, unread_only, arrived_today)):
+        category_question = category is not None and bool(
+            explicit_email_scope
+            or re.search(r"\b(?:chegou|recebi|recebidos?|caixa)\b", words)
+        )
+        if not any((explicit_query, awaiting_reply, unread_only, arrived_today, arrived_week, category_question)):
             return None
 
         period = "today" if "hoje" in words else "week"
@@ -682,6 +788,7 @@ class AssistantService:
             unread_only=unread_only,
             attention_only=attention_only,
             awaiting_reply=awaiting_reply,
+            category=category,
         )
 
     @staticmethod
@@ -942,6 +1049,7 @@ class AssistantService:
         message: str,
         request_id: str,
         conversation_id: int | None,
+        retry: bool = False,
     ) -> AssistantConversation | AssistantReply:
         now = self._request_now()
         lease_expires_at = now + timedelta(seconds=self.request_lease_seconds)
@@ -959,6 +1067,31 @@ class AssistantService:
             if request_record.status == "completed":
                 cached = self._cached_reply(request_id)
                 if cached is not None:
+                    if retry and cached.retryable:
+                        claimed = self.db.execute(
+                            update(AssistantRequest)
+                            .where(
+                                AssistantRequest.id == request_record.id,
+                                AssistantRequest.status == "completed",
+                            )
+                            .values(
+                                status="processing",
+                                lease_expires_at=lease_expires_at,
+                                attempts=AssistantRequest.attempts + 1,
+                            ),
+                            execution_options={"synchronize_session": False},
+                        )
+                        if claimed.rowcount != 1:
+                            self.db.rollback()
+                            raise ValueError("Esta solicitacao ainda esta sendo processada; aguarde.")
+                        self.db.commit()
+                        request_record.status = "processing"
+                        request_record.lease_expires_at = lease_expires_at
+                        request_record.attempts += 1
+                        conversation = self.db.get(AssistantConversation, request_record.conversation_id)
+                        if conversation is None:
+                            raise ValueError("Conversa da solicitacao nao encontrada.")
+                        return conversation
                     return cached
                 raise ValueError("A solicitacao foi concluida sem uma resposta reconciliavel.")
             if request_record.lease_expires_at > now:
@@ -1190,6 +1323,28 @@ class AssistantService:
         self.db.commit()
         return reply.model_copy(update={"confirmation_token": confirmation_token})
 
+    def _retryable_cached_tool_results(self, request_id: str) -> list[ProviderToolResult]:
+        message = (
+            self.db.query(AssistantMessage)
+            .filter(AssistantMessage.reply_to_request_id == request_id)
+            .first()
+        )
+        raw_results = message.details_json.get("tool_results", []) if message else []
+        if not isinstance(raw_results, list):
+            return []
+        recovered: list[ProviderToolResult] = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            try:
+                result = ProviderToolResult.model_validate(item)
+            except Exception:
+                continue
+            # Retry may reuse successful read evidence, never a write operation.
+            if result.state in {"success", "empty", "partial", "stale"}:
+                recovered.append(result)
+        return recovered
+
     def _save_reply(
         self,
         request_id: str,
@@ -1199,9 +1354,27 @@ class AssistantService:
         provider_inferences: Sequence[ProviderInferenceTrace] = (),
         executed_tools: Sequence[str] = (),
     ) -> AssistantReply:
-        existing = self._cached_reply(request_id)
-        if existing is not None:
-            return existing
+        existing_message = (
+            self.db.query(AssistantMessage)
+            .filter(AssistantMessage.reply_to_request_id == request_id)
+            .first()
+        )
+        request_record = (
+            self.db.query(AssistantRequest)
+            .filter(AssistantRequest.request_id == request_id)
+            .first()
+        )
+        if existing_message is not None:
+            previous_reply = AssistantReply.model_validate(existing_message.details_json)
+            retry_in_progress = (
+                request_record is not None
+                and request_record.status == "processing"
+                and previous_reply.retryable
+            )
+            if not retry_in_progress:
+                existing = self._cached_reply(request_id)
+                if existing is not None:
+                    return existing
         details = self._safe_reply_details(reply.model_dump(mode="json"))
         if tool_results:
             details["tool_results"] = [
@@ -1217,22 +1390,23 @@ class AssistantService:
             ]
         if executed_tools:
             details["executed_tools"] = list(executed_tools)
-        reply_message = AssistantMessage(
-            conversation_id=reply.conversation_id,
-            role="assistant",
-            kind=reply.kind,
-            content=reply.message,
-            reply_to_request_id=request_id,
-            details_json=details,
-        )
-        self.db.add(reply_message)
+        if existing_message is not None:
+            reply_message = existing_message
+            reply_message.kind = reply.kind
+            reply_message.content = reply.message
+            reply_message.details_json = details
+        else:
+            reply_message = AssistantMessage(
+                conversation_id=reply.conversation_id,
+                role="assistant",
+                kind=reply.kind,
+                content=reply.message,
+                reply_to_request_id=request_id,
+                details_json=details,
+            )
+            self.db.add(reply_message)
         try:
             self.db.flush()
-            request_record = (
-                self.db.query(AssistantRequest)
-                .filter(AssistantRequest.request_id == request_id)
-                .first()
-            )
             if request_record is not None:
                 request_record.status = "completed"
                 request_record.reply_message_id = reply_message.id
@@ -1382,6 +1556,7 @@ class AssistantService:
             start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=self.timezone)
             end_at = datetime.combine(end_date, datetime.max.time(), tzinfo=self.timezone)
 
+        query_started = monotonic()
         result = self.email_reader.query(
             EmailQuery(
                 start_at=start_at,
@@ -1391,8 +1566,18 @@ class AssistantService:
                 attention_only=command.attention_only,
                 awaiting_reply=command.awaiting_reply,
                 reference=command.reference,
-                limit=min(command.limit, 3),
+                category=command.category,
+                # Query the bounded candidate set first; presentation is limited below.
+                limit=100,
             )
+        )
+        logger.info(
+            "assistant_email stage=read outcome=%s category=%s candidates=%d results=%d duration_ms=%d",
+            result.state,
+            command.category or "all",
+            result.candidate_count,
+            len(result.messages),
+            max(0, round((monotonic() - query_started) * 1000)),
         )
         interval = (
             f"{start_at.strftime('%d/%m/%Y %H:%M')} a "
@@ -1419,11 +1604,16 @@ class AssistantService:
                     },
                 ),
             )
-        email_items = [item.model_dump(mode="json") for item in result.messages]
+        matched_count = len(result.messages)
+        visible_limit = min(command.limit, 20)
+        email_items = [
+            item.model_dump(mode="json") for item in result.messages[:visible_limit]
+        ]
         payload = {
             "state": result.state,
             "interval": interval,
-            "count": len(email_items),
+            "count": matched_count,
+            "displayed_count": len(email_items),
             "candidate_count": result.candidate_count,
             "returned_count": len(email_items),
             "applied_filters": result.applied_filters,
@@ -1443,7 +1633,17 @@ class AssistantService:
         elif not email_items:
             fallback_message = f"A consulta de {interval} foi concluída sem mensagens."
         else:
-            fallback_message = f"Foram encontradas {len(email_items)} mensagens entre {interval}."
+            fallback_message = f"Foram encontradas {matched_count} mensagens entre {interval}."
+        if command.category and result.state in {"partial", "stale"} and not matched_count:
+            fallback_message = (
+                f"A consulta de {interval} foi {('parcial' if result.partial else 'desatualizada')}; "
+                "não posso concluir que não existam mensagens dessa categoria. Tente novamente ou revise a caixa."
+            )
+        elif command.category and result.candidate_count and not matched_count:
+            fallback_message = (
+                f"Consultei {result.candidate_count} mensagens entre {interval}, mas nenhuma foi classificada "
+                "com segurança na categoria solicitada. Se quiser, posso encaminhar a triagem para revisão."
+            )
         fallback = AssistantReply(
             conversation_id=conversation_id,
             kind="text",
@@ -1458,7 +1658,9 @@ class AssistantService:
                 tool="consultar_emails",
                 evidence_id=f"email:{secrets.token_hex(12)}",
                 state=result.state,
-                payload=payload,
+                # The visual history can show up to 20 ranked matches; the
+                # model only needs the first three to compose a concise answer.
+                payload={**payload, "messages": email_items[:3]},
             ),
         )
 
@@ -1618,6 +1820,8 @@ class AssistantService:
 
     @staticmethod
     def _request_targets_unavailable_operation(message: str) -> bool:
+        if AssistantService._request_targets_email_read(message):
+            return False
         normalized = normalize_text(message)
         return bool(
             re.search(
