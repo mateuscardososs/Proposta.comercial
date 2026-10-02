@@ -20,6 +20,10 @@ from app.assistant.contracts import (
     ConfirmActionCommand,
     ConversationCommand,
     EmailQueryCommand,
+    ServiceEventDraftCommand,
+    ServiceDraftCorrectionCommand,
+    ServiceQueryCommand,
+    ServiceReminderDraftCommand,
     TaskCreateCommand,
     TaskDraftCorrectionCommand,
     TaskQueryCommand,
@@ -40,6 +44,7 @@ from app.assistant.provider import (
     ProviderToolResult,
     ProviderUnavailableError,
 )
+from app.assistant.service_records import AssistantServiceRecordAdapter
 from app.models import (
     AssistantAction,
     AssistantConversation,
@@ -74,6 +79,10 @@ INITIAL_TOOLS = {
     "consultar_tarefas",
     "consultar_emails",
     "criar_tarefa",
+    "consultar_servicos",
+    "registrar_evento_servico",
+    "corrigir_registro_servico",
+    "criar_lembretes_servico",
     "fora_do_escopo",
 }
 
@@ -118,6 +127,11 @@ class AssistantService:
             email_provider="disabled" if email_reader is None else "configured"
         )
         self.email_history_retention_days = max(1, min(email_history_retention_days, 3650))
+        self.service_records = AssistantServiceRecordAdapter(
+            db, today=lambda: self._local_now().date(),
+            resolve_client=self._resolve_client, resolve_user=self._resolve_user,
+            token_hash=self._token_hash,
+        )
 
     def handle_message(
         self,
@@ -240,7 +254,15 @@ class AssistantService:
                     initial_tools.discard("consultar_emails")
                 if pending_action is not None:
                     initial_tools.discard("criar_tarefa")
-                    initial_tools.add("corrigir_tarefa")
+                    if pending_action.action_type == "register_service_event":
+                        initial_tools.add("registrar_evento_servico")
+                        initial_tools.add("corrigir_registro_servico")
+                    elif pending_action.action_type == "correct_service_event":
+                        initial_tools.add("corrigir_registro_servico")
+                    elif pending_action.action_type == "create_service_reminders":
+                        initial_tools.add("criar_lembretes_servico")
+                    else:
+                        initial_tools.add("corrigir_tarefa")
                 command = self._interpret_provider(
                     self._provider_messages(conversation.id),
                     today=current_date,
@@ -251,10 +273,10 @@ class AssistantService:
                 )
                 seen_queries: set[str] = set()
                 last_query_reply: AssistantReply | None = None
-                while isinstance(command, (TaskQueryCommand, EmailQueryCommand)):
+                while isinstance(command, (TaskQueryCommand, EmailQueryCommand, ServiceQueryCommand)):
                     if isinstance(command, TaskQueryCommand):
                         command = self._ground_task_query(clean_message, command)
-                    else:
+                    elif isinstance(command, EmailQueryCommand):
                         command = self._ground_email_query(clean_message, command)
                     query_key = command.model_dump_json()
                     if query_key in seen_queries:
@@ -274,11 +296,15 @@ class AssistantService:
                         reply = None
                         break
                     seen_queries.add(query_key)
-                    execution = (
-                        self._execute_task_query(conversation.id, command, current_date)
-                        if isinstance(command, TaskQueryCommand)
-                        else self._execute_email_query(conversation.id, command)
-                    )
+                    if isinstance(command, TaskQueryCommand):
+                        execution = self._execute_task_query(conversation.id, command, current_date)
+                    elif isinstance(command, EmailQueryCommand):
+                        execution = self._execute_email_query(conversation.id, command)
+                    else:
+                        grounded_query = command
+                        if command.client and normalize_text(command.client) not in normalize_text(clean_message):
+                            grounded_query = command.model_copy(update={"client": None})
+                        execution = self.service_records.execute_query(conversation.id, grounded_query)
                     last_query_reply = execution.reply
                     if execution.result is None:
                         reply = execution.reply
@@ -291,9 +317,12 @@ class AssistantService:
                     allowed_tools = self._follow_up_tools()
                     if command.tool == "consultar_emails":
                         allowed_tools = {"responder_conversa"}
+                    elif command.tool == "consultar_servicos":
+                        allowed_tools = {"responder_conversa", "consultar_servicos"}
                     if len(tool_results) >= self.max_tool_rounds:
                         allowed_tools.discard("consultar_tarefas")
                         allowed_tools.discard("consultar_emails")
+                        allowed_tools.discard("consultar_servicos")
                     command = self._interpret_provider(
                         self._provider_messages(conversation.id),
                         today=current_date,
@@ -325,6 +354,23 @@ class AssistantService:
                 ).reply
             elif isinstance(command, EmailQueryCommand):
                 reply = self._execute_email_query(conversation.id, command).reply
+            elif isinstance(command, ServiceQueryCommand):
+                reply = self.service_records.execute_query(conversation.id, command).reply
+            elif isinstance(command, ServiceEventDraftCommand):
+                executed_tools.append(command.tool)
+                reply = self.service_records.prepare_event(
+                    conversation.id, clean_request_id, command, clean_message,
+                )
+            elif isinstance(command, ServiceDraftCorrectionCommand):
+                executed_tools.append(command.tool)
+                reply = self.service_records.prepare_correction(
+                    conversation.id, clean_request_id, command, clean_message,
+                )
+            elif isinstance(command, ServiceReminderDraftCommand):
+                executed_tools.append(command.tool)
+                reply = self.service_records.prepare_reminders(
+                    conversation.id, clean_request_id, command, clean_message,
+                )
             elif isinstance(command, TaskCreateCommand):
                 if self._task_creation_is_forbidden(clean_message):
                     reply = AssistantReply(
@@ -402,7 +448,7 @@ class AssistantService:
             elif isinstance(command, ConversationCommand):
                 if self._request_targets_unavailable_operation(
                     clean_message
-                ) and not self._response_states_limitation(command.message):
+                ) and not tool_results and not self._response_states_limitation(command.message):
                     reply = AssistantReply(
                         conversation_id=conversation.id,
                         kind="error",
@@ -517,7 +563,10 @@ class AssistantService:
     ) -> ConfirmActionCommand | CancelActionCommand | None:
         normalized = re.sub(r"[^a-z0-9 ]+", " ", normalize_text(message))
         normalized = " ".join(normalized.split())
-        if normalized in {"pode criar", "pode confirmar", "confirmo", "sim pode criar"}:
+        if normalized in {
+            "pode criar", "pode confirmar", "confirmo", "sim pode criar",
+            "pode registrar", "sim pode registrar", "pode salvar",
+        }:
             return ConfirmActionCommand()
         if normalized in {"cancela", "cancelar", "nao cancela"}:
             return CancelActionCommand()
@@ -655,7 +704,7 @@ class AssistantService:
         message: str,
     ) -> TaskDraftCorrectionCommand | None:
         action = self._latest_create_action(conversation_id)
-        if action is None or action.status != "pending":
+        if action is None or action.action_type != "create_task" or action.status != "pending":
             return None
         normalized = normalize_text(message)
         correction_cues = ("na verdade", "prazo", "data", "vence", "vencimento")
@@ -738,6 +787,18 @@ class AssistantService:
 
         arguments = action.arguments_json
         try:
+            if action.action_type in {
+                "register_service_event", "correct_service_event", "create_service_reminders",
+            }:
+                reply = self.service_records.confirm(action)
+                if record_message:
+                    self.db.add(AssistantMessage(
+                        conversation_id=action.conversation_id, role="assistant",
+                        kind="success", content=reply.message,
+                        details_json=reply.model_dump(mode="json"),
+                    ))
+                self.db.commit()
+                return reply
             payload = TaskCreate(
                 titulo=str(arguments["titulo"]),
                 descricao=str(arguments.get("descricao") or ""),
@@ -803,7 +864,7 @@ class AssistantService:
             return AssistantReply(
                 conversation_id=action.conversation_id,
                 kind="text",
-                message="Esta criacao ja foi cancelada.",
+                message="Esta acao ja foi cancelada.",
                 action_id=action.id,
             )
 
@@ -821,7 +882,9 @@ class AssistantService:
             reply = AssistantReply(
                 conversation_id=action.conversation_id,
                 kind="text",
-                message="Criacao cancelada. Nenhuma tarefa foi adicionada ao quadro.",
+                message=("Registro cancelado. Nenhum chamado ou evento foi criado."
+                         if action.action_type == "register_service_event"
+                         else "Criacao cancelada. Nenhuma tarefa foi adicionada ao quadro."),
                 action_id=action.id,
             )
             if record_message:
@@ -1067,7 +1130,9 @@ class AssistantService:
             self.db.query(AssistantAction)
             .filter(
                 AssistantAction.conversation_id == conversation_id,
-                AssistantAction.action_type == "create_task",
+                AssistantAction.action_type.in_(
+                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders")
+                ),
                 AssistantAction.status.in_(("pending", "needs_clarification")),
             )
             .order_by(AssistantAction.id.desc())
@@ -1076,7 +1141,7 @@ class AssistantService:
         if action is None:
             return None
         return ProviderPendingAction(
-            action_type="create_task",
+            action_type=action.action_type,
             status=action.status,
             arguments=dict(action.arguments_json),
         )
@@ -1138,6 +1203,10 @@ class AssistantService:
             details["tool_results"] = [
                 result.model_dump(mode="json") for result in tool_results
             ]
+            service_result = next((result for result in reversed(tool_results)
+                                   if result.tool == "consultar_servicos"), None)
+            if service_result is not None:
+                details["service_calls"] = service_result.payload.get("service_calls", [])
         if provider_inferences:
             details["provider_inferences"] = [
                 trace.model_dump(mode="json") for trace in provider_inferences
@@ -1524,6 +1593,9 @@ class AssistantService:
     def _task_creation_is_forbidden(message: str) -> bool:
         normalized = normalize_text(message)
         explicit_task = bool(re.search(r"\b(?:crie|criar|cria|tarefa|lembrete)\b", normalized))
+        service_request = bool(re.search(r"\b(?:servico|chamado|inspecao|conserto|atendimento)\b", normalized))
+        if service_request and not explicit_task:
+            return True
         return AssistantService._request_targets_unavailable_operation(message) or (
             AssistantService._request_targets_email_read(message) and not explicit_task
         )
@@ -1674,13 +1746,13 @@ class AssistantService:
             return AssistantReply(
                 conversation_id=conversation_id,
                 kind="clarification",
-                message="Nao ha uma criacao de tarefa nesta conversa para confirmar.",
+                message="Nao ha uma acao pendente nesta conversa para confirmar.",
             )
         if action.status == "cancelled":
             return AssistantReply(
                 conversation_id=conversation_id,
                 kind="text",
-                message="Esta criacao ja foi cancelada.",
+                message="Esta acao ja foi cancelada.",
                 action_id=action.id,
             )
         return self._confirm_action_record(action, record_message=False)
@@ -1691,13 +1763,13 @@ class AssistantService:
             return AssistantReply(
                 conversation_id=conversation_id,
                 kind="clarification",
-                message="Nao ha uma criacao de tarefa nesta conversa para cancelar.",
+                message="Nao ha uma acao pendente nesta conversa para cancelar.",
             )
         if action.status == "executed":
             return AssistantReply(
                 conversation_id=conversation_id,
                 kind="error",
-                message="A tarefa ja foi criada e nao pode ser cancelada pelo assistente.",
+                message="A acao ja foi executada e nao pode ser cancelada pelo assistente.",
                 action_id=action.id,
                 task_id=action.task_id,
                 task_url=f"/web/board/{action.task_id}/edit" if action.task_id else None,
@@ -1705,11 +1777,27 @@ class AssistantService:
         return self._cancel_action_record(action, record_message=False)
 
     def _latest_create_action(self, conversation_id: int) -> AssistantAction | None:
+        pending = (
+            self.db.query(AssistantAction)
+            .filter(
+                AssistantAction.conversation_id == conversation_id,
+                AssistantAction.action_type.in_(
+                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders")
+                ),
+                AssistantAction.status.in_( ("pending", "needs_clarification") ),
+            )
+            .order_by(AssistantAction.id.desc())
+            .first()
+        )
+        if pending is not None:
+            return pending
         return (
             self.db.query(AssistantAction)
             .filter(
                 AssistantAction.conversation_id == conversation_id,
-                AssistantAction.action_type == "create_task",
+                AssistantAction.action_type.in_(
+                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders")
+                ),
             )
             .order_by(AssistantAction.id.desc())
             .first()
@@ -2038,6 +2126,10 @@ class AssistantService:
         return None, f"Encontrei mais de um {entity_name}: {options}. Qual deles devo usar?"
 
     def _success_reply(self, action: AssistantAction) -> AssistantReply:
+        if action.action_type in {
+            "register_service_event", "correct_service_event", "create_service_reminders",
+        }:
+            return self.service_records.success(action)
         if action.task_id is None:
             raise ValueError("A acao foi executada sem vinculo com a tarefa.")
         return AssistantReply(

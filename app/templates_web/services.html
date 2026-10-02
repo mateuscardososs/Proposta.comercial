@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% set execution_labels = {'not_started': 'Nao iniciada', 'in_progress': 'Em andamento', 'completed': 'Concluida'} %}
+{% set administration_labels = {'open': 'Aberta', 'closed': 'Encerrada'} %}
+{% set step_labels = {'report': 'Relatorio', 'proposal': 'Proposta', 'proposal_sent': 'Proposta enviada', 'invoice': 'Nota fiscal', 'receipt': 'Recibo'} %}
+{% set status_labels = {'unknown': 'Desconhecida', 'not_applicable': 'Dispensada', 'pending': 'Pendente', 'waiting_customer': 'Aguardando cliente', 'completed': 'Concluida'} %}
+
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">Servicos</h1>
+  <p class="page-subtitle">Acompanhe a execucao tecnica e as etapas administrativas de cada chamado.</p>
+  <div class="meta-line"><span class="badge primary">Consulta dos registros confirmados</span></div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Chamados</h2>
+      <p class="card-subtitle">Os mais recentes aparecem primeiro.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Chamado</th><th>Cliente</th><th>Execucao tecnica</th><th>Situacao administrativa</th><th>Proxima pendencia</th></tr>
+      </thead>
+      <tbody>
+        {% for call in calls %}
+        <tr>
+          <td><a href="/web/services/{{ call.id }}"><strong>#{{ call.id }} · {{ call.summary }}</strong></a><br><span class="muted">{{ format_date_br(call.opened_on) }}</span></td>
+          <td>{{ call.client.razao_social }}</td>
+          <td><span class="badge {{ 'success' if call.execution_status == 'completed' else 'primary' if call.execution_status == 'in_progress' else '' }}">{{ execution_labels[call.execution_status] }}</span></td>
+          <td><span class="badge {{ 'success' if call.administrative_status == 'closed' else 'warning' }}">{{ administration_labels[call.administrative_status] }}</span></td>
+          <td>
+            {% if call.execution_status != 'completed' %}Execucao tecnica{% else %}
+              {% set pending = call.workflow_steps | selectattr('status', 'in', ['unknown', 'pending', 'waiting_customer']) | list %}
+              {% if pending %}{{ step_labels[pending[0].step_type] }} · {{ status_labels[pending[0].status] }}{% else %}Nenhuma{% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">Nenhum chamado registrado.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% set execution_labels = {'not_started': 'Nao iniciada', 'in_progress': 'Em andamento', 'completed': 'Concluida'} %}
+{% set administration_labels = {'open': 'Aberta', 'closed': 'Encerrada'} %}
+{% set step_labels = {'report': 'Relatorio', 'proposal': 'Proposta', 'proposal_sent': 'Proposta enviada', 'invoice': 'Nota fiscal', 'receipt': 'Recibo'} %}
+{% set status_labels = {'unknown': 'Desconhecida', 'not_applicable': 'Dispensada', 'pending': 'Pendente', 'waiting_customer': 'Aguardando cliente', 'completed': 'Concluida'} %}
+{% set event_labels = {'call_received': 'Chamado recebido', 'visit_started': 'Visita iniciada', 'inspection': 'Inspecao', 'execution_started': 'Execucao iniciada', 'execution_completed': 'Execucao concluida', 'note': 'Observacao', 'correction': 'Correcao'} %}
+
+{% block content %}
+<section class="page-header">
+  <h1 class="page-title">Chamado #{{ call.id }} · {{ call.summary }}</h1>
+  <p class="page-subtitle">{{ call.client.razao_social }} · Aberto em {{ format_date_br(call.opened_on) }}</p>
+  <div class="meta-line">
+    <span class="badge {{ 'success' if call.execution_status == 'completed' else 'primary' if call.execution_status == 'in_progress' else '' }}">Execucao tecnica: {{ execution_labels[call.execution_status] }}</span>
+    <span class="badge {{ 'success' if call.administrative_status == 'closed' else 'warning' }}">Situacao administrativa: {{ administration_labels[call.administrative_status] }}</span>
+  </div>
+  <div class="actions mt-12"><a href="/web/services" class="btn btn-ghost">Voltar aos chamados</a></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2 class="card-title">Etapas administrativas</h2><p class="card-subtitle">Estado atual de cada etapa.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Etapa</th><th>Estado atual</th></tr></thead>
+    <tbody>
+      {% for kind in ['report', 'proposal', 'proposal_sent', 'invoice', 'receipt'] %}
+      <tr><td>{{ step_labels[kind] }}</td><td><span class="badge {{ 'success' if steps[kind].status == 'completed' else 'warning' if steps[kind].status in ['pending', 'waiting_customer'] else '' }}">{{ status_labels[steps[kind].status] }}</span></td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2 class="card-title">Historico de eventos</h2><p class="card-subtitle">Fatos originais e correcoes permanecem visiveis.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Evento</th><th>Descricao e correcao</th><th>Autorizacao</th></tr></thead>
+    <tbody>
+      {% for event in events %}
+      <tr>
+        <td>{{ format_date_br(event.occurred_on) }}</td>
+        <td>#{{ event.id }} · {{ event_labels[event.event_type] }}</td>
+        <td>
+          {{ event.description }}
+          {% if event.event_type == 'correction' %}
+          <br><span class="muted">Substitui evento #{{ event.supersedes_event_id }}.</span>
+          {% if event.corrected_event_type %}<br>Tipo corrigido: {{ event_labels[event.corrected_event_type] }}{% endif %}
+          {% if event.corrected_occurred_on %}<br>Data corrigida: {{ format_date_br(event.corrected_occurred_on) }}{% endif %}
+          {% if event.corrected_description %}<br>Descricao corrigida: {{ event.corrected_description }}{% endif %}
+          {% if event.id not in superseded_ids %}<br><span class="badge success">Correcao vigente</span>{% endif %}
+          {% elif effective_by_source[event.id].leaf_event_id != event.id %}
+          <br><span class="badge warning">Fato corrigido</span>
+          <br><span class="muted">Informacao vigente: {{ event_labels[effective_by_source[event.id].event_type] }} · {{ format_date_br(effective_by_source[event.id].occurred_on) }} · {{ effective_by_source[event.id].description }}</span>
+          {% endif %}
+        </td>
+        <td>Acao confirmada #{{ event.assistant_action_id }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">Nenhum evento registrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2 class="card-title">Historico das etapas</h2><p class="card-subtitle">Cada mudanca mostra o estado anterior e a acao confirmada.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Etapa</th><th>Estado anterior</th><th>Estado novo</th><th>Observacao</th><th>Autorizacao</th></tr></thead>
+    <tbody>
+      {% for transition in transitions %}
+      <tr>
+        <td>{{ format_date_br(transition.created_at.date()) }}</td>
+        <td>{{ step_labels[transition.step_type] }}</td>
+        <td>{{ status_labels[transition.previous_status] }}</td>
+        <td>{{ status_labels[transition.new_status] }}</td>
+        <td>{{ transition.observation or '—' }}</td>
+        <td>Acao confirmada #{{ transition.assistant_action_id }} · Evento #{{ transition.service_event_id }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">Nenhuma mudanca de etapa registrada.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2 class="card-title">Lembretes vinculados</h2></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Lembrete</th><th>Etapa</th><th>Prazo</th></tr></thead>
+    <tbody>
+      {% for link in call.task_links if link.task %}
+      <tr><td><a href="/web/board/{{ link.task.id }}/edit">{{ link.task.titulo }}</a></td><td>{{ step_labels[link.step_type] if link.step_type else '—' }}</td><td>{{ format_date_br(link.task.prazo) if link.task.prazo else '—' }}</td></tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">Nenhum lembrete vinculado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endblock %}

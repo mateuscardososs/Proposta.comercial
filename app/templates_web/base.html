@@ -904,6 +904,7 @@
       <nav class="nav" id="siteNav">
         <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Inicio</a>
         <a href="/web/board" class="{% if request.url.path.startswith('/web/board') %}active{% endif %}">Quadro</a>
+        <a href="/web/services" class="{% if request.url.path.startswith('/web/services') %}active{% endif %}">Servicos</a>
         <a href="/web/assistente" class="{% if request.url.path.startswith('/web/assistente') %}active{% endif %}">Assistente</a>
         <a href="/web/contas-a-receber" class="{% if request.url.path.startswith('/web/contas-a-receber') %}active{% endif %}">Contas a Receber</a>
         <a href="/web/contas-a-pagar" class="{% if request.url.path.startswith('/web/contas-a-pagar') %}active{% endif %}">Contas a Pagar</a>

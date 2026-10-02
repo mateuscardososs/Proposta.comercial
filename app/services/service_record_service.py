@@ -7,7 +7,7 @@ from datetime import date, datetime, time
 from typing import Sequence
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.models import (
     AssistantAction, Client, ServiceCall, ServiceEvent, ServiceTaskLink,
@@ -22,6 +22,22 @@ from app.services import board_service
 
 STEP_TYPES = ("report", "proposal", "proposal_sent", "invoice", "receipt")
 TERMINAL_STEP_STATUSES = frozenset(("completed", "not_applicable"))
+
+
+def _ensure_database_transaction(db: Session) -> None:
+    """Ensure SQLite has a real outer transaction before opening a SAVEPOINT.
+
+    sqlite3's legacy transaction mode does not BEGIN for SELECT statements.
+    Releasing the first SAVEPOINT can therefore commit it as the outermost
+    transaction. Starting BEGIN only when the DBAPI connection is not already
+    in a transaction preserves transactions owned by the caller.
+    """
+    connection = db.connection()
+    if connection.dialect.name != "sqlite":
+        return
+    driver_connection = connection.connection.driver_connection
+    if not driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN")
 
 
 @dataclass(frozen=True)
@@ -41,7 +57,10 @@ class EffectiveServiceEvent:
 
 
 def list_service_calls(db: Session, query: ServiceCallQuery) -> list[ServiceCall]:
-    statement = select(ServiceCall)
+    statement = select(ServiceCall).options(
+        joinedload(ServiceCall.client),
+        selectinload(ServiceCall.workflow_steps),
+    )
     if query.client_id is not None:
         statement = statement.where(ServiceCall.client_id == query.client_id)
     if query.execution_status is not None:
@@ -54,7 +73,17 @@ def list_service_calls(db: Session, query: ServiceCallQuery) -> list[ServiceCall
 
 
 def get_service_call(db: Session, service_call_id: int) -> ServiceCall | None:
-    return db.get(ServiceCall, service_call_id)
+    return db.scalar(
+        select(ServiceCall)
+        .options(
+            joinedload(ServiceCall.client),
+            selectinload(ServiceCall.workflow_steps),
+            selectinload(ServiceCall.events),
+            selectinload(ServiceCall.workflow_transitions),
+            selectinload(ServiceCall.task_links).selectinload(ServiceTaskLink.task),
+        )
+        .where(ServiceCall.id == service_call_id)
+    )
 
 
 def find_open_calls_for_client(db: Session, client_id: int) -> list[ServiceCall]:
@@ -167,6 +196,7 @@ def register_event(
     step_types = [change.step_type for change in payload.step_changes]
     if len(step_types) != len(set(step_types)):
         raise ValueError("Cada etapa pode mudar apenas uma vez por acao.")
+    _ensure_database_transaction(db)
     with db.begin_nested():
         if payload.service_call_id is None:
             call = ServiceCall(
@@ -223,6 +253,7 @@ def correct_event(
     if existing is not None:
         return _mutation_result(db, existing)
     _validate_action(db, assistant_action_id, conversation_id)
+    _ensure_database_transaction(db)
     with db.begin_nested():
         call = db.get(ServiceCall, payload.service_call_id)
         if call is None:
@@ -263,6 +294,7 @@ def create_reminders(
     _validate_action(db, assistant_action_id)
     if not reminders or len(reminders) > 5:
         raise ValueError("Informe de um a cinco lembretes.")
+    _ensure_database_transaction(db)
     with db.begin_nested():
         call = db.get(ServiceCall, service_call_id)
         if call is None:

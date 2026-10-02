@@ -364,3 +364,65 @@ def test_reminder_failure_rolls_back_tasks_and_links(db, monkeypatch):
                                  reminders=[ServiceReminderCreate(title="A"), ServiceReminderCreate(title="B")])
     assert db.scalar(select(func.count()).select_from(Task)) == 0
     assert db.scalar(select(func.count()).select_from(ServiceTaskLink)) == 0
+
+
+def test_register_event_commit_false_is_rolled_back_by_outer_transaction(db):
+    from app.services.service_record_service import register_event
+
+    client, conversation = _context(db)
+    action = _action(db, conversation, 1)
+    payload = ServiceEventCreate(
+        client_id=client.id, summary="Balança", event_type="inspection",
+        occurred_on=date(2026, 10, 2), description="Visita",
+        step_changes=[ServiceStepChange(step_type="report", status="pending")],
+    )
+    result = register_event(db, payload, conversation_id=conversation.id,
+                            assistant_action_id=action.id, commit=False)
+    call_id = result.service_call.id
+    db.rollback()
+
+    with Session(db.get_bind()) as observer:
+        assert observer.get(ServiceCall, call_id) is None
+        assert observer.scalar(select(func.count()).select_from(ServiceEvent)) == 0
+        assert observer.scalar(select(func.count()).select_from(ServiceWorkflowTransition)) == 0
+
+
+def test_correct_event_commit_false_is_rolled_back_by_outer_transaction(db):
+    client, conversation = _context(db)
+    start = _register(db, client, conversation, _action(db, conversation, 1), "execution_started")
+    completed = _register(db, client, conversation, _action(db, conversation, 2),
+                          "execution_completed", call_id=start.service_call.id)
+    action = _action(db, conversation, 3)
+    from app.services.service_record_service import correct_event
+
+    result = correct_event(
+        db, ServiceEventCorrectionCreate(
+            service_call_id=start.service_call.id, supersedes_event_id=completed.event.id,
+            occurred_on=date(2026, 10, 4), reason="Na verdade foi inspeção",
+            corrected_event_type="inspection",
+        ), conversation_id=conversation.id, assistant_action_id=action.id, commit=False,
+    )
+    assert result.service_call.execution_status == "in_progress"
+    db.rollback()
+
+    with Session(db.get_bind()) as observer:
+        call = observer.get(ServiceCall, start.service_call.id)
+        assert call.execution_status == "completed"
+        assert observer.scalar(select(func.count()).select_from(ServiceEvent)) == 2
+
+
+def test_create_reminders_commit_false_is_rolled_back_by_outer_transaction(db):
+    from app.services.service_record_service import create_reminders
+
+    client, conversation = _context(db)
+    result = _register(db, client, conversation, _action(db, conversation, 1), "note")
+    action = _action(db, conversation, 2)
+    create_reminders(
+        db, service_call_id=result.service_call.id, assistant_action_id=action.id,
+        reminders=[ServiceReminderCreate(title="Relatório")], commit=False,
+    )
+    db.rollback()
+
+    with Session(db.get_bind()) as observer:
+        assert observer.scalar(select(func.count()).select_from(Task)) == 0
+        assert observer.scalar(select(func.count()).select_from(ServiceTaskLink)) == 0

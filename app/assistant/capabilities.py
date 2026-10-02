@@ -54,7 +54,10 @@ class CapabilityRegistry:
                 name="document_write", state="not_implemented", detail="Alteracao de documentos nao implementada."
             ),
             "service_write": Capability(
-                name="service_write", state="not_implemented", detail="Registro de servicos nao implementado."
+                name="service_write", state="available", detail="Registra eventos e lembretes de servico somente apos confirmacao."
+            ),
+            "service_read": Capability(
+                name="service_read", state="available", read_only=True, detail="Consulta chamados e etapas de servico locais."
             ),
             "tax_issue": Capability(
                 name="tax_issue", state="not_implemented", detail="Emissao fiscal nao implementada."
@@ -66,4 +69,3 @@ class CapabilityRegistry:
 
     def provider_context(self) -> list[dict[str, object]]:
         return [item.model_dump(mode="json") for item in self._capabilities.values()]
-

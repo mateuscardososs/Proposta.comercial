@@ -17,14 +17,16 @@ class ProviderMessage(BaseModel):
 
 
 class ProviderToolResult(BaseModel):
-    tool: Literal["consultar_tarefas", "consultar_emails"]
+    tool: Literal["consultar_tarefas", "consultar_emails", "consultar_servicos"]
     evidence_id: str | None = None
     state: Literal["success", "empty", "partial", "stale", "failed"] = "success"
     payload: dict[str, object]
 
 
 class ProviderPendingAction(BaseModel):
-    action_type: Literal["create_task"]
+    action_type: Literal[
+        "create_task", "register_service_event", "correct_service_event", "create_service_reminders"
+    ]
     status: Literal["pending", "needs_clarification"]
     arguments: dict[str, object]
 

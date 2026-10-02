@@ -4,7 +4,14 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from app.schemas import TaskStatus
+from app.schemas import (
+    ServiceAdministrativeStatus,
+    ServiceEventType,
+    ServiceExecutionStatus,
+    ServiceStepStatus,
+    ServiceStepType,
+    TaskStatus,
+)
 
 
 class TaskQueryCommand(BaseModel):
@@ -147,6 +154,71 @@ class TaskDraftCorrectionCommand(BaseModel):
         return self
 
 
+class ServiceQueryCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["consultar_servicos"] = "consultar_servicos"
+    client: str | None = Field(default=None, max_length=255)
+    execution_status: ServiceExecutionStatus | None = None
+    administrative_status: ServiceAdministrativeStatus | None = None
+    pending_only: bool = False
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class ServiceStepChangeCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_type: ServiceStepType
+    status: ServiceStepStatus
+    note: str = Field(default="", max_length=1000)
+
+
+class ServiceEventDraftCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["registrar_evento_servico"] = "registrar_evento_servico"
+    client: str | None = Field(default=None, max_length=255)
+    service_call_id: int | None = Field(default=None, ge=1)
+    force_new_call: bool = False
+    summary: str | None = Field(default=None, max_length=500)
+    event_type: ServiceEventType | None = None
+    occurred_on: str | None = Field(default=None, max_length=80)
+    description: str | None = Field(default=None, max_length=4000)
+    execution_completed_explicitly: bool = False
+    step_changes: list[ServiceStepChangeCommand] = Field(default_factory=list, max_length=5)
+
+
+class ServiceDraftCorrectionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["corrigir_registro_servico"] = "corrigir_registro_servico"
+    event_id: int | None = Field(default=None, ge=1)
+    occurred_on: str | None = Field(default=None, max_length=80)
+    description: str | None = Field(default=None, max_length=4000)
+    event_type: ServiceEventType | None = None
+    client: str | None = Field(default=None, max_length=255)
+    cancel_step_changes: bool = False
+
+
+class ServiceReminderItemCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=4000)
+    status: TaskStatus = "a_fazer"
+    due_date: str | None = Field(default=None, max_length=80)
+    responsible: str | None = Field(default=None, max_length=120)
+    step_type: ServiceStepType | None = None
+
+
+class ServiceReminderDraftCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["criar_lembretes_servico"] = "criar_lembretes_servico"
+    service_call_id: int | None = Field(default=None, ge=1)
+    reminders: list[ServiceReminderItemCommand] = Field(min_length=1, max_length=5)
+
+
 AssistantCommand = Annotated[
     TaskQueryCommand
     | EmailQueryCommand
@@ -155,7 +227,11 @@ AssistantCommand = Annotated[
     | ConversationCommand
     | ConfirmActionCommand
     | CancelActionCommand
-    | TaskDraftCorrectionCommand,
+    | TaskDraftCorrectionCommand
+    | ServiceQueryCommand
+    | ServiceEventDraftCommand
+    | ServiceDraftCorrectionCommand
+    | ServiceReminderDraftCommand,
     Field(discriminator="tool"),
 ]
 assistant_command_adapter = TypeAdapter(AssistantCommand)
@@ -169,6 +245,9 @@ class AssistantReply(BaseModel):
     confirmation_token: str | None = None
     task_id: int | None = None
     task_url: str | None = None
+    task_urls: list[str] = Field(default_factory=list)
+    service_call_id: int | None = None
+    service_url: str | None = None
     fields: dict[str, str] = Field(default_factory=dict)
     email_items: list[dict[str, object]] = Field(default_factory=list)
     consulted_interval: str | None = None
