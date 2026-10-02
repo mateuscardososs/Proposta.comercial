@@ -147,7 +147,7 @@ export function bootstrapAssistantChat(root = document) {
       const confirm = document.createElement("button");
       confirm.type = "button";
       confirm.className = "btn btn-primary";
-      confirm.textContent = "Confirmar criação";
+      confirm.textContent = "Confirmar";
       const cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "btn btn-ghost";
@@ -165,6 +165,25 @@ export function bootstrapAssistantChat(root = document) {
       link.href = details.task_url;
       link.textContent = "Abrir tarefa no quadro";
       controls.appendChild(link);
+      article.appendChild(controls);
+    }
+    if (details.service_url || (Array.isArray(details.task_urls) && details.task_urls.length)) {
+      const controls = document.createElement("div");
+      controls.className = "assistant-confirm-actions";
+      if (details.service_url) {
+        const link = document.createElement("a");
+        link.className = "btn btn-ghost";
+        link.href = details.service_url;
+        link.textContent = "Abrir chamado";
+        controls.appendChild(link);
+      }
+      for (const [index, url] of details.task_urls.entries()) {
+        const link = document.createElement("a");
+        link.className = "btn btn-ghost";
+        link.href = url;
+        link.textContent = details.task_urls.length > 1 ? `Abrir lembrete ${index + 1}` : "Abrir tarefa no quadro";
+        controls.appendChild(link);
+      }
       article.appendChild(controls);
     }
     if (Array.isArray(details.email_items) && details.email_items.length) {

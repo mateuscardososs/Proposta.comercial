@@ -14,15 +14,30 @@ os.environ["TEMPLATE_DOC_PATH"] = str(
     Path(gettempdir()) / "proposta_comercial_test_templates" / "proposta_template.docx"
 )
 
-from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.db import Base, SessionLocal, engine, ensure_service_history_guards_for_engine  # noqa: E402
+
+
+def _drop_test_schema() -> None:
+    """Reset only the explicitly isolated pytest database, including RESTRICT history FKs."""
+    if engine.dialect.name == "sqlite":
+        with engine.connect() as connection:
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            connection.commit()
+            Base.metadata.drop_all(bind=connection)
+            connection.commit()
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            connection.commit()
+        return
+    Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture(autouse=True)
 def reset_database():
-    Base.metadata.drop_all(bind=engine)
+    _drop_test_schema()
     Base.metadata.create_all(bind=engine)
+    ensure_service_history_guards_for_engine(engine)
     yield
-    Base.metadata.drop_all(bind=engine)
+    _drop_test_schema()
 
 
 @pytest.fixture

@@ -17,9 +17,9 @@ cd "$project_dir"
 unset EMAIL_PROVIDER EMAIL_IMAP_USERNAME EMAIL_IMAP_APP_PASSWORD
 export APP_ENV_FILE="$credential_file"
 
-export DATABASE_URL="sqlite:////tmp/ad-balancas-conversational.xFP65K/manual.sqlite3"
-export OUTPUT_DIR="/tmp/ad-balancas-conversational.xFP65K/output"
-export TEMPLATE_DOC_PATH="/tmp/ad-balancas-conversational.xFP65K/doc_templates/proposta_template.docx"
+export DATABASE_URL="sqlite:////tmp/ad-balancas-services-8011/app.sqlite3"
+export OUTPUT_DIR="/tmp/ad-balancas-services-8011/output"
+export TEMPLATE_DOC_PATH="/tmp/ad-balancas-services-8011/doc_templates/proposta_template.docx"
 export APP_HOST="127.0.0.1"
 export APP_PORT="8011"
 export APP_RELOAD="false"
