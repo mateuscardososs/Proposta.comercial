@@ -5,7 +5,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 EmailResultState = Literal[
     "not_implemented",
     "not_configured",
@@ -17,6 +16,11 @@ EmailResultState = Literal[
 ]
 EmailPriority = Literal["low", "normal", "high", "critical"]
 AwaitingReply = Literal["yes", "no", "unknown"]
+EmailCategory = Literal[
+    "customer_quote_request", "vendor_quotation", "purchase_order", "invoice_request",
+    "invoice_received", "accounts_payable", "accounts_receivable", "payment_proof",
+    "service_request", "pending_reply", "informational", "other_review",
+]
 
 
 class EmailQuery(BaseModel):
@@ -63,6 +67,11 @@ class EmailMessageResult(BaseModel):
     awaiting_reply: AwaitingReply = "unknown"
     evidence: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    category: EmailCategory = "other_review"
+    confidence_band: Literal["low", "medium", "high"] = "low"
+    destination: Literal["task", "service", "accounts_payable", "accounts_receivable", "review", "classification_only"] = "review"
+    classification_reason: str = ""
+    auto_task_eligible: bool = False
 
 
 class EmailQueryResult(BaseModel):

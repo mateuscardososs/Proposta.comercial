@@ -1,88 +1,60 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="page-header">
-  <h1 class="page-title">Visão geral da empresa</h1>
-  <p class="page-subtitle">Financeiro, tarefas e propostas em um único lugar.</p>
-  <div class="meta-line">
-    <span class="badge primary">Mês de referência: {{ summary.mes_inicio.strftime('%m/%Y') }}</span>
+<section class="page-header today-header">
+  <div>
+    <p class="eyebrow">AD Balanças · agenda priorizada</p>
+    <h1 class="page-title">Hoje, {{ agenda.today.strftime('%d/%m/%Y') }}</h1>
+    <p class="page-subtitle">Lista de pendências até {{ agenda.through.strftime('%d/%m/%Y') }}. Não é um calendário por horário.</p>
+  </div>
+  <div class="actions">
+    <a class="btn btn-primary" href="/web/assistente">Conversar com o assistente</a>
+    <a class="btn btn-ghost" href="/web/board">Abrir quadro</a>
   </div>
 </section>
 
-<section class="card">
-  <div class="card-head">
-    <div>
-      <h2 class="card-title">Financeiro</h2>
-      <p class="card-subtitle">Valores pendentes e vencidos em contas a receber e a pagar.</p>
-    </div>
-  </div>
-  <div class="kpi-grid">
-    <article class="kpi-card" data-kpi="receber-pendente">
-      <p class="kpi-label">A receber pendente</p>
-      <p class="kpi-value">{{ format_brl(summary.receber_pendente) }}</p>
-      <p class="kpi-note">Total ainda não recebido.</p>
-    </article>
-    <article class="kpi-card{% if summary.receber_vencido > 0 %} is-danger{% endif %}" data-kpi="receber-vencido">
-      <p class="kpi-label">A receber vencido</p>
-      <p class="kpi-value">{{ format_brl(summary.receber_vencido) }}</p>
-      <p class="kpi-note">Vencimento anterior a hoje.</p>
-    </article>
-    <article class="kpi-card" data-kpi="pagar-pendente">
-      <p class="kpi-label">A pagar pendente</p>
-      <p class="kpi-value">{{ format_brl(summary.pagar_pendente) }}</p>
-      <p class="kpi-note">Total ainda não pago.</p>
-    </article>
-    <article class="kpi-card{% if summary.pagar_vencido > 0 %} is-danger{% endif %}" data-kpi="pagar-vencido">
-      <p class="kpi-label">A pagar vencido</p>
-      <p class="kpi-value">{{ format_brl(summary.pagar_vencido) }}</p>
-      <p class="kpi-note">Vencimento anterior a hoje.</p>
-    </article>
-  </div>
+<section class="today-counts" aria-label="Resumo do dia">
+  <article class="kpi-card{% if agenda.summary.overdue %} is-danger{% endif %}"><p class="kpi-label">Atrasados</p><p class="kpi-value">{{ agenda.summary.overdue }}</p><p class="kpi-note">Itens abertos com data passada.</p></article>
+  <article class="kpi-card"><p class="kpi-label">Para hoje</p><p class="kpi-value">{{ agenda.summary.due_today }}</p><p class="kpi-note">Prazo registrado para hoje.</p></article>
+  <article class="kpi-card"><p class="kpi-label">Próximos dias</p><p class="kpi-value">{{ agenda.summary.upcoming }}</p><p class="kpi-note">Janela de {{ (agenda.through - agenda.today).days }} dias.</p></article>
+  <article class="kpi-card"><p class="kpi-label">Serviços em andamento</p><p class="kpi-value">{{ agenda.summary.ongoing_services }}</p><p class="kpi-note">Execução técnica ainda não concluída.</p></article>
+  <article class="kpi-card"><p class="kpi-label">Financeiro a conferir</p><p class="kpi-value">{{ agenda.summary.financial_attention }}</p><p class="kpi-note">Contas pendentes; nenhuma baixa é feita aqui.</p></article>
+  <article class="kpi-card"><p class="kpi-label">E-mails para revisar</p><p class="kpi-value">{{ agenda.summary.email_review }}</p><p class="kpi-note"><a href="/web/mensagens">Abrir e-mails e mensagens</a></p></article>
 </section>
 
-<section class="card">
-  <div class="card-head">
-    <div>
-      <h2 class="card-title">Tarefas</h2>
-      <p class="card-subtitle">Pendências do quadro que precisam de atenção.</p>
-    </div>
-  </div>
-  <div class="kpi-grid">
-    <article class="kpi-card{% if summary.tarefas_atrasadas > 0 %} is-danger{% endif %}" data-kpi="tarefas-atrasadas">
-      <p class="kpi-label">Tarefas atrasadas</p>
-      <p class="kpi-value">{{ summary.tarefas_atrasadas }}</p>
-      <p class="kpi-note">Não concluídas com prazo anterior a hoje.</p>
-    </article>
-    <article class="kpi-card" data-kpi="tarefas-a-fazer">
-      <p class="kpi-label">A fazer</p>
-      <p class="kpi-value">{{ summary.tarefas_a_fazer }}</p>
-      <p class="kpi-note">Tarefas aguardando início.</p>
-    </article>
-    <article class="kpi-card" data-kpi="tarefas-em-andamento">
-      <p class="kpi-label">Em andamento</p>
-      <p class="kpi-value">{{ summary.tarefas_em_andamento }}</p>
-      <p class="kpi-note">Tarefas atualmente em execução.</p>
-    </article>
-  </div>
+<section class="card today-list">
+  <div class="card-head"><div><h2 class="card-title">Ordem recomendada</h2><p class="card-subtitle">Atraso e risco acionável primeiro; datas são mostradas apenas quando registradas.</p></div></div>
+  {% if agenda.items %}
+    <ol class="today-items">
+    {% for item in agenda.items %}
+      <li class="today-item{% if item.rank == 0 %} today-item-overdue{% endif %}">
+        <div class="today-item-main">
+          <div class="today-item-meta">
+            <span class="badge{% if item.rank == 0 %} danger{% elif item.rank == 1 %} warning{% else %} primary{% endif %}">
+              {% if item.rank == 0 %}Atenção primeiro{% elif item.rank == 1 %}Hoje{% elif item.rank == 2 %}Em andamento{% else %}Próximo{% endif %}
+            </span>
+            <span class="badge">{{ "Tarefa de e-mail" if item.email_origin else item.source_type|replace("finance", "Financeiro")|replace("service", "Serviço")|replace("task", "Tarefa") }}</span>
+            {% if item.due_date %}<span class="badge">Prazo: {{ item.due_date.strftime('%d/%m/%Y') }}</span>{% endif %}
+          </div>
+          <h3><a href="{{ item.href }}">{{ item.title }}</a></h3>
+          <p>{{ item.reason }}</p>
+        </div>
+        <a class="btn btn-ghost" href="{{ item.href }}" aria-label="Abrir {{ item.title }}">Abrir</a>
+      </li>
+    {% endfor %}
+    </ol>
+  {% else %}
+    <div class="empty-state"><h3>Nenhum item encontrado nesta janela</h3><p>Isso não altera os dados. Tarefas sem prazo continuam disponíveis no quadro.</p><a class="btn btn-ghost" href="/web/board">Ver todas as tarefas</a></div>
+  {% endif %}
 </section>
 
-<section class="card">
-  <div class="card-head">
-    <div>
-      <h2 class="card-title">Propostas do mês</h2>
-      <p class="card-subtitle">Volume de propostas geradas no mês corrente.</p>
-    </div>
-  </div>
+<details class="card today-secondary">
+  <summary><strong>Indicadores financeiros e propostas do mês</strong><span>Dados do painel anterior, mantidos como consulta secundária.</span></summary>
   <div class="kpi-grid">
-    <article class="kpi-card" data-kpi="propostas-mes-quantidade">
-      <p class="kpi-label">Propostas geradas</p>
-      <p class="kpi-value">{{ summary.propostas_mes_quantidade }}</p>
-      <p class="kpi-note">Quantidade emitida no mês.</p>
-    </article>
-    <article class="kpi-card" data-kpi="propostas-mes-valor">
-      <p class="kpi-label">Valor total do mês</p>
-      <p class="kpi-value">{{ format_brl(summary.propostas_mes_valor) }}</p>
-      <p class="kpi-note">Soma das propostas geradas no mês.</p>
-    </article>
+    <article class="kpi-card"><p class="kpi-label">A receber pendente</p><p class="kpi-value">{{ format_brl(summary.receber_pendente) }}</p><p class="kpi-note">Total ainda não recebido.</p></article>
+    <article class="kpi-card{% if summary.receber_vencido > 0 %} is-danger{% endif %}"><p class="kpi-label">A receber vencido</p><p class="kpi-value">{{ format_brl(summary.receber_vencido) }}</p><p class="kpi-note">Conferir antes de qualquer baixa.</p></article>
+    <article class="kpi-card"><p class="kpi-label">A pagar pendente</p><p class="kpi-value">{{ format_brl(summary.pagar_pendente) }}</p><p class="kpi-note">Total ainda não pago.</p></article>
+    <article class="kpi-card{% if summary.pagar_vencido > 0 %} is-danger{% endif %}"><p class="kpi-label">A pagar vencido</p><p class="kpi-value">{{ format_brl(summary.pagar_vencido) }}</p><p class="kpi-note">Conferir vencimentos.</p></article>
+    <article class="kpi-card"><p class="kpi-label">Propostas geradas no mês</p><p class="kpi-value">{{ summary.propostas_mes_quantidade }}</p><p class="kpi-note">{{ format_brl(summary.propostas_mes_valor) }} no total.</p></article>
   </div>
-</section>
+</details>
 {% endblock %}

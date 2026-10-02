@@ -14,6 +14,10 @@ class Classification:
     reasons: tuple[str, ...]
     action: str | None
     explicit_deadline: str | None
+    category: str
+    confidence_band: str
+    destination: str
+    auto_task_eligible: bool
 
 
 def classify_message(message: EmailMessageRecord) -> Classification:
@@ -23,10 +27,68 @@ def classify_message(message: EmailMessageRecord) -> Classification:
     action: str | None = None
 
     deadline = _explicit_deadline(content)
+    category = "other_review"
+    destination = "review"
+    confidence = "low"
+    auto_task_eligible = False
+    marketing = any(term in content for term in ("newsletter", "promocao", "oferta especial", "descadastre-se", "unsubscribe"))
+
+    # Category selection is deterministic. Message content is untrusted data and
+    # cannot grant capabilities or authorize actions.
+    if marketing:
+        category, destination, confidence = "informational", "classification_only", "high"
+    elif any(term in content for term in ("comprovante de pagamento", "comprovante pix", "comprovante bancario")):
+        category, destination, confidence = "payment_proof", "review", "high"
+    elif any(term in content for term in ("nota fiscal recebida", "segue nota fiscal", "nf-e", "nfe anexada")):
+        category, destination, confidence = "invoice_received", "review", "high"
+    elif any(term in content for term in ("emitir nota fiscal", "emissao da nota fiscal", "enviar a nota fiscal")):
+        category, destination, confidence = "invoice_request", "task", "high"
+        auto_task_eligible = True
+    elif any(term in content for term in ("ordem de compra", "pedido de compra", "purchase order")):
+        category, destination, confidence = "purchase_order", "review", "medium"
+    elif any(term in content for term in ("cotacao recebida", "segue nossa cotacao", "cotacao do fornecedor")):
+        category, destination, confidence = "vendor_quotation", "review", "high"
+    elif any(term in content for term in ("pedido de orcamento", "solicito orcamento", "solicitamos orcamento", "cotacao para", "orcar o servico")):
+        category, destination, confidence = "customer_quote_request", "task", "high"
+        auto_task_eligible = True
+    elif any(term in content for term in ("conta a pagar", "boleto para pagamento", "fatura para pagamento")):
+        category, destination, confidence = "accounts_payable", "review", "medium"
+    elif any(term in content for term in ("cobranca pendente", "conta a receber", "pagamento em atraso")):
+        category, destination, confidence = "accounts_receivable", "review", "medium"
+    elif any(term in content for term in ("chamado tecnico", "solicitamos atendimento", "solicitacao de servico", "balanca apresentou")):
+        category, destination, confidence = "service_request", "task", "medium"
+    elif any(
+        term in content
+        for term in (
+            "favor responder",
+            "aguardo retorno",
+            "aguardamos retorno",
+            "preciso de resposta",
+            "aguardamos sua resposta",
+        )
+    ):
+        category, destination, confidence = "pending_reply", "task", "medium"
+
+    category_actions = {
+        "customer_quote_request": "Avaliar o pedido de orçamento.",
+        "invoice_request": "Conferir a solicitação de emissão ou envio de nota fiscal.",
+        "service_request": "Triar o chamado de serviço.",
+        "pending_reply": "Revisar se é necessário responder.",
+    }
+    if category in category_actions:
+        action = category_actions[category]
     if deadline:
         score += 4
         reasons.append(f"prazo explícito em {deadline}")
-    if any(term in content for term in ("favor responder", "aguardo retorno", "preciso de resposta")):
+    if any(
+        term in content
+        for term in (
+            "favor responder",
+            "aguardo retorno",
+            "aguardamos retorno",
+            "preciso de resposta",
+        )
+    ):
         score += 3
         reasons.append("solicita resposta")
         action = "Responder ao remetente."
@@ -58,7 +120,16 @@ def classify_message(message: EmailMessageRecord) -> Classification:
         score += 1
         reasons.append("não lido no servidor")
 
-    return Classification(score=score, reasons=tuple(reasons), action=action, explicit_deadline=deadline)
+    if category != "informational" and not action:
+        reasons.append("categoria ou ação requer triagem humana")
+    if deadline:
+        reasons.append(f"prazo explícito em {deadline}")
+    return Classification(
+        score=score, reasons=tuple(dict.fromkeys(reasons)), action=action,
+        explicit_deadline=deadline, category=category, confidence_band=confidence,
+        destination=destination,
+        auto_task_eligible=auto_task_eligible and confidence == "high",
+    )
 
 
 def to_result(
@@ -94,6 +165,11 @@ def to_result(
         awaiting_reply=awaiting_reply,  # type: ignore[arg-type]
         evidence=list(classification.reasons),
         limitations=limitations or [],
+        category=classification.category,  # type: ignore[arg-type]
+        confidence_band=classification.confidence_band,  # type: ignore[arg-type]
+        destination=classification.destination,  # type: ignore[arg-type]
+        classification_reason="; ".join(classification.reasons) or "nenhum indício operacional identificado",
+        auto_task_eligible=classification.auto_task_eligible,
     )
 
 
@@ -107,4 +183,3 @@ def _explicit_deadline(content: str) -> str | None:
     except ValueError:
         return None
     return parsed.strftime("%d/%m/%Y")
-

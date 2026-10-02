@@ -8,13 +8,27 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Client, Proposal, User
-from app.schemas import ProposalCreate, ProposalItemCreate, ScheduleItemCreate, TaskCreate, UserCreate
-from app.services import board_service, dashboard_service, proposal_service, suggestion_service
+from app.models import Client, EmailSyncState, InboxEmail, Proposal, User
+from app.schemas import (
+    ProposalCreate,
+    ProposalItemCreate,
+    ScheduleItemCreate,
+    TaskCreate,
+    UserCreate,
+)
+from app.services import (
+    board_service,
+    dashboard_service,
+    proposal_service,
+    suggestion_service,
+)
+from app.services.today_service import get_today_agenda
 from app.routers.users import hash_password
 from app.utils.currency import format_brl
 from app.utils.dates import format_date_br
 from app.utils.formatters import decimal_from_str
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 router = APIRouter(tags=["pages"])
 settings = get_settings()
@@ -172,12 +186,115 @@ def _required_positive_int(value: object, label: str) -> int:
 
 @router.get("/", name="web_index")
 def index(request: Request, db: Session = Depends(get_db)) -> object:
-    summary = dashboard_service.get_dashboard_summary(db)
+    today = datetime.now(ZoneInfo(settings.assistant_timezone)).date()
+    summary = dashboard_service.get_dashboard_summary(db, today)
+    agenda = get_today_agenda(
+        db,
+        today=today,
+        lookahead_days=settings.today_lookahead_days,
+        timezone=settings.assistant_timezone,
+    )
     return render_template(
         request,
         "index.html",
-        {"summary": summary, "full_width": True},
+        {"summary": summary, "agenda": agenda, "full_width": True, "title": "Hoje"},
     )
+
+
+@router.get("/web/mensagens", name="web_messages")
+def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
+    state = (
+        db.query(EmailSyncState)
+        .filter_by(
+            provider=settings.email_provider,
+            mailbox_key=settings.email_sync_mailbox_key,
+        )
+        .one_or_none()
+    )
+    messages = (
+        db.query(InboxEmail)
+        .filter_by(
+            provider=settings.email_provider,
+            mailbox_key=settings.email_sync_mailbox_key,
+        )
+        .order_by(InboxEmail.received_at.desc(), InboxEmail.id.desc())
+        .limit(100)
+        .all()
+    )
+    if settings.email_provider == "synthetic":
+        provider_configured = True
+    elif settings.email_provider == "imap_yahoo":
+        provider_configured = bool(settings.email_imap_username and settings.email_imap_app_password.get_secret_value())
+    else:
+        provider_configured = False
+    return render_template(
+        request,
+        "messages.html",
+        {
+            "title": "E-mails e mensagens",
+            "messages": messages,
+            "sync_state": state,
+        "sync_enabled": settings.email_sync_enabled,
+        "sync_interval_seconds": settings.email_sync_interval_seconds,
+            "provider_configured": provider_configured,
+            "full_width": True,
+        },
+    )
+
+
+@router.post("/web/mensagens/sync-state", name="web_messages_sync_state")
+async def messages_sync_state(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    form = await request.form()
+    action = str(form.get("action", ""))
+    if action not in {"pause", "resume"}:
+        raise HTTPException(status_code=400, detail="Ação de sincronização inválida.")
+    state = (
+        db.query(EmailSyncState)
+        .filter_by(
+            provider=settings.email_provider,
+            mailbox_key=settings.email_sync_mailbox_key,
+        )
+        .one_or_none()
+    )
+    if state is None:
+        state = EmailSyncState(
+            provider=settings.email_provider,
+            mailbox_key=settings.email_sync_mailbox_key,
+        )
+        db.add(state)
+    state.paused = action == "pause"
+    db.commit()
+    return RedirectResponse(url=request.url_for("web_messages"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/web/mensagens/{message_id}/review", name="web_message_review")
+async def message_review(message_id: int, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    form = await request.form()
+    category = str(form.get("category", ""))
+    allowed = {
+        "customer_quote_request",
+        "vendor_quotation",
+        "purchase_order",
+        "invoice_request",
+        "invoice_received",
+        "accounts_payable",
+        "accounts_receivable",
+        "payment_proof",
+        "service_request",
+        "pending_reply",
+        "informational",
+        "other_review",
+    }
+    message = db.get(InboxEmail, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Mensagem não encontrada.")
+    if category not in allowed:
+        raise HTTPException(status_code=400, detail="Categoria inválida.")
+    message.category = category
+    message.review_status = "reviewed"
+    message.classification_reason = (message.classification_reason + "; categoria revisada manualmente")[:2000]
+    db.commit()
+    return RedirectResponse(url=request.url_for("web_messages"), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/web/clients", name="web_clients")
@@ -219,14 +336,16 @@ def client_detail_page(client_id: int, request: Request, db: Session = Depends(g
     client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
-    proposals = (
-        db.query(Proposal)
-        .filter(Proposal.client_id == client_id)
-        .order_by(Proposal.data_geracao.desc(), Proposal.id.desc())
-        .limit(10)
-        .all()
+    proposals = db.query(Proposal).filter(Proposal.client_id == client_id).order_by(Proposal.data_geracao.desc(), Proposal.id.desc()).limit(10).all()
+    return render_template(
+        request,
+        "client_form.html",
+        {
+            "client": client,
+            "action_url": f"/web/clients/{client_id}/edit",
+            "proposals": proposals,
+        },
     )
-    return render_template(request, "client_form.html", {"client": client, "action_url": f"/web/clients/{client_id}/edit", "proposals": proposals})
 
 
 @router.post("/web/clients/{client_id}/edit")
@@ -294,12 +413,7 @@ async def user_new_submit(request: Request, db: Session = Depends(get_db)) -> ob
 
 @router.get("/web/proposals", name="web_proposals")
 def proposals_page(request: Request, db: Session = Depends(get_db)) -> object:
-    proposals = (
-        db.query(Proposal)
-        .options(joinedload(Proposal.client), joinedload(Proposal.user))
-        .order_by(Proposal.data_geracao.desc(), Proposal.id.desc())
-        .all()
-    )
+    proposals = db.query(Proposal).options(joinedload(Proposal.client), joinedload(Proposal.user)).order_by(Proposal.data_geracao.desc(), Proposal.id.desc()).all()
     return render_template(request, "proposals.html", {"proposals": proposals})
 
 

@@ -1,5 +1,7 @@
 # Evolucao do assistente conversacional
 
+> **Estado atualizado (02/10/2026):** este desenho explica a evolucao de conversa natural e seus limites naquela entrega. A leitura de e-mail Yahoo em modo somente leitura e o fluxo de registro/acompanhamento de servicos foram implementados em etapas posteriores. Para o escopo atual do produto e as fases futuras de triagem automatizada de e-mail, Hoje, WhatsApp e navegacao, consulte [especificacao-produto-evolucao.md](especificacao-produto-evolucao.md) e [plano-evolucao.md](plano-evolucao.md). Nenhuma dessas fases futuras foi implementada nesta revisao.
+
 ## Diagnostico
 
 A implementacao anterior tratava toda mensagem como um comando. O prompt exigia exatamente uma ferramenta, `responder_conversa` tinha um papel estreito e uma consulta terminava em uma lista montada pelo backend. O modelo nunca recebia o resultado da consulta para interpreta-lo. Isso limitava relatos livres, explicacoes, pedidos com mais de uma intencao e retomadas de contexto.

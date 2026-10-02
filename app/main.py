@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from pathlib import Path
 
@@ -10,7 +11,19 @@ from fastapi.templating import Jinja2Templates
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine, ensure_schema_compatibility
 from app.models import User
-from app.routers import assistant, board, clients, financeiro, imports, pages, proposal_files, proposals, services, users
+from app.routers import (
+    assistant,
+    board,
+    clients,
+    financeiro,
+    imports,
+    pages,
+    proposal_files,
+    proposals,
+    services,
+    users,
+)
+from app.assistant.email.worker import email_sync_loop
 from app.services.storage_service import ensure_directory
 
 settings = get_settings()
@@ -18,6 +31,7 @@ ensure_directory(settings.output_dir)
 ensure_directory(settings.template_doc_path.parent)
 
 app = FastAPI(title=settings.app_name)
+_email_sync_task: asyncio.Task[None] | None = None
 
 
 @app.get("/healthz", tags=["health"])
@@ -26,12 +40,27 @@ def healthz() -> dict[str, str]:
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
+    global _email_sync_task
     Base.metadata.create_all(bind=engine)
     ensure_schema_compatibility()
     ensure_directory(settings.output_dir)
     ensure_directory(settings.template_doc_path.parent)
     _ensure_default_user()
+    if settings.email_sync_enabled and _email_sync_task is None:
+        _email_sync_task = asyncio.create_task(email_sync_loop(settings, assistant.get_email_reader))
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    global _email_sync_task
+    if _email_sync_task is not None:
+        _email_sync_task.cancel()
+        try:
+            await _email_sync_task
+        except asyncio.CancelledError:
+            pass
+        _email_sync_task = None
 
 
 def _ensure_default_user() -> None:
