@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint,
+    Integer, Numeric, String, Text, UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -310,3 +313,207 @@ class Lancamento(Base, TimestampMixin):
 
     client: Mapped[Client | None] = relationship()
     proposal: Mapped[Proposal | None] = relationship()
+
+
+class ServiceCall(Base, TimestampMixin):
+    __tablename__ = "service_calls"
+    __table_args__ = (
+        CheckConstraint(
+            "execution_status IN ('not_started', 'in_progress', 'completed')",
+            name="ck_service_call_execution_status",
+        ),
+        CheckConstraint(
+            "administrative_status IN ('open', 'closed')",
+            name="ck_service_call_administrative_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    opened_on: Mapped[date] = mapped_column(Date, nullable=False)
+    execution_status: Mapped[str] = mapped_column(String(30), default="not_started", nullable=False)
+    administrative_status: Mapped[str] = mapped_column(String(30), default="open", nullable=False)
+    technically_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    administratively_closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+
+    client: Mapped[Client] = relationship()
+    conversation: Mapped[AssistantConversation | None] = relationship()
+    events: Mapped[list["ServiceEvent"]] = relationship(
+        back_populates="service_call", cascade="save-update, merge", passive_deletes=True,
+        foreign_keys="ServiceEvent.service_call_id", order_by="ServiceEvent.id",
+    )
+    workflow_steps: Mapped[list["ServiceWorkflowStep"]] = relationship(
+        back_populates="service_call", cascade="save-update, merge", passive_deletes=True,
+        order_by="ServiceWorkflowStep.id",
+    )
+    workflow_transitions: Mapped[list["ServiceWorkflowTransition"]] = relationship(
+        back_populates="service_call", cascade="save-update, merge", passive_deletes=True,
+        foreign_keys="ServiceWorkflowTransition.service_call_id",
+        order_by="ServiceWorkflowTransition.id",
+    )
+    task_links: Mapped[list["ServiceTaskLink"]] = relationship(
+        back_populates="service_call", cascade="save-update, merge", passive_deletes=True,
+        order_by="ServiceTaskLink.id",
+    )
+
+
+class ServiceEvent(Base):
+    __tablename__ = "service_events"
+    __table_args__ = (
+        UniqueConstraint("id", "service_call_id", "assistant_action_id", name="uq_service_event_call_action"),
+        CheckConstraint(
+            "event_type IN ('call_received', 'visit_started', 'inspection', 'execution_started', "
+            "'execution_completed', 'note', 'correction')",
+            name="ck_service_event_type",
+        ),
+        CheckConstraint(
+            "event_type = 'correction' OR (supersedes_event_id IS NULL AND correction_reason IS NULL "
+            "AND corrected_event_type IS NULL AND corrected_occurred_on IS NULL "
+            "AND corrected_description IS NULL)",
+            name="ck_service_event_correction_fields",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service_call_id: Mapped[int] = mapped_column(
+        ForeignKey("service_calls.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    assistant_action_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_actions.id", ondelete="RESTRICT"), unique=True, nullable=False, index=True
+    )
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    occurred_on: Mapped[date] = mapped_column(Date, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    supersedes_event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_events.id", ondelete="RESTRICT"), unique=True, nullable=True
+    )
+    correction_reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    corrected_event_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    corrected_occurred_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    corrected_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    service_call: Mapped[ServiceCall] = relationship(back_populates="events", foreign_keys=[service_call_id])
+    assistant_action: Mapped[AssistantAction] = relationship()
+    conversation: Mapped[AssistantConversation | None] = relationship()
+    supersedes_event: Mapped["ServiceEvent | None"] = relationship(remote_side=[id], foreign_keys=[supersedes_event_id])
+
+
+class ServiceWorkflowStep(Base, TimestampMixin):
+    __tablename__ = "service_workflow_steps"
+    __table_args__ = (
+        UniqueConstraint("service_call_id", "step_type", name="uq_service_workflow_step_call_type"),
+        CheckConstraint(
+            "step_type IN ('report', 'proposal', 'proposal_sent', 'invoice', 'receipt')",
+            name="ck_service_workflow_step_type",
+        ),
+        CheckConstraint(
+            "status IN ('unknown', 'not_applicable', 'pending', 'waiting_customer', 'completed')",
+            name="ck_service_workflow_step_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service_call_id: Mapped[int] = mapped_column(
+        ForeignKey("service_calls.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    step_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="unknown", nullable=False)
+
+    service_call: Mapped[ServiceCall] = relationship(back_populates="workflow_steps")
+
+
+class ServiceWorkflowTransition(Base):
+    __tablename__ = "service_workflow_transitions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["service_call_id", "step_type"],
+            ["service_workflow_steps.service_call_id", "service_workflow_steps.step_type"],
+            ondelete="RESTRICT", name="fk_service_transition_step",
+        ),
+        ForeignKeyConstraint(
+            ["service_event_id", "service_call_id", "assistant_action_id"],
+            ["service_events.id", "service_events.service_call_id", "service_events.assistant_action_id"],
+            ondelete="RESTRICT", name="fk_service_transition_event_call_action",
+        ),
+        UniqueConstraint("assistant_action_id", "step_type", name="uq_service_transition_action_step"),
+        CheckConstraint("previous_status <> new_status", name="ck_service_transition_changes_status"),
+        CheckConstraint(
+            "previous_status IN ('unknown', 'not_applicable', 'pending', 'waiting_customer', 'completed')",
+            name="ck_service_transition_previous_status",
+        ),
+        CheckConstraint(
+            "new_status IN ('unknown', 'not_applicable', 'pending', 'waiting_customer', 'completed')",
+            name="ck_service_transition_new_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service_call_id: Mapped[int] = mapped_column(
+        ForeignKey("service_calls.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    step_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    previous_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    new_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    observation: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    service_event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    assistant_action_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_actions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    service_call: Mapped[ServiceCall] = relationship(
+        back_populates="workflow_transitions", foreign_keys=[service_call_id], overlaps="service_event"
+    )
+    service_event: Mapped[ServiceEvent] = relationship(
+        foreign_keys=[service_event_id, service_call_id, assistant_action_id],
+        overlaps="service_call,workflow_transitions",
+    )
+    assistant_action: Mapped[AssistantAction] = relationship(
+        foreign_keys=[assistant_action_id], overlaps="service_event"
+    )
+    workflow_step: Mapped[ServiceWorkflowStep] = relationship(
+        foreign_keys=[service_call_id, step_type], overlaps="service_call,workflow_transitions,service_event"
+    )
+
+
+class ServiceTaskLink(Base, TimestampMixin):
+    __tablename__ = "service_task_links"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["service_call_id", "step_type"],
+            ["service_workflow_steps.service_call_id", "service_workflow_steps.step_type"],
+            ondelete="RESTRICT", name="fk_service_task_link_step",
+        ),
+        UniqueConstraint("task_id", name="uq_service_task_link_task"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service_call_id: Mapped[int] = mapped_column(
+        ForeignKey("service_calls.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    step_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    service_event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_events.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    assistant_action_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_actions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+
+    service_call: Mapped[ServiceCall] = relationship(back_populates="task_links", foreign_keys=[service_call_id])
+    workflow_step: Mapped[ServiceWorkflowStep | None] = relationship(
+        foreign_keys=[service_call_id, step_type], overlaps="service_call,task_links"
+    )
+    service_event: Mapped[ServiceEvent | None] = relationship()
+    task: Mapped[Task | None] = relationship()
+    assistant_action: Mapped[AssistantAction] = relationship()
