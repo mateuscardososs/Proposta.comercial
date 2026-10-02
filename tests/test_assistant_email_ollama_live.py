@@ -55,3 +55,38 @@ def test_real_ollama_summarizes_synthetic_email_only_after_tool_evidence(db):
     stored = db.query(AssistantMessage).filter_by(reply_to_request_id="email-live-ollama-1").one()
     assert stored.details_json["executed_tools"] == ["consultar_emails"]
     assert db.query(Task).count() == 0
+
+
+def test_real_ollama_routes_indirect_pending_reply_question_to_email_tool(db):
+    capabilities = CapabilityRegistry(email_provider="synthetic")
+    provider = OllamaProvider(
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        model=MODEL,
+        connect_timeout=3,
+        read_timeout=90,
+        capabilities=capabilities.provider_context(),
+    )
+    service = AssistantService(
+        db,
+        provider,
+        now=lambda: NOW,
+        email_reader=SyntheticEmailReader(messages=synthetic_messages(NOW)),
+        capabilities=capabilities,
+    )
+
+    reply = service.handle_message(
+        message="Ficou alguém esperando meu retorno?",
+        request_id="email-live-ollama-indirect-reply",
+    )
+
+    assert reply.kind == "text"
+    assert reply.consulted_interval == "28/09/2026 00:00 a 01/10/2026 10:00"
+    assert reply.email_items
+    assert all(item["awaiting_reply"] == "yes" for item in reply.email_items)
+    stored = (
+        db.query(AssistantMessage)
+        .filter_by(reply_to_request_id="email-live-ollama-indirect-reply")
+        .one()
+    )
+    assert stored.details_json["executed_tools"] == ["consultar_emails"]
+    assert db.query(Task).count() == 0

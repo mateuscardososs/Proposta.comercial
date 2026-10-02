@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.assistant.capabilities import CapabilityRegistry
 from app.assistant.contracts import (
     ConversationCommand,
@@ -11,6 +13,7 @@ from app.assistant.contracts import (
     TaskQueryCommand,
 )
 from app.assistant.email.synthetic import SyntheticEmailReader, synthetic_messages
+from app.assistant.email.contracts import EmailQueryResult
 from app.assistant.service import AssistantService
 from app.models import AssistantAction, AssistantEmailTaskLink, AssistantMessage, Task
 
@@ -32,10 +35,24 @@ class CountingReader(SyntheticEmailReader):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.query_count = 0
+        self.queries = []
 
     def query(self, query):
         self.query_count += 1
+        self.queries.append(query)
         return super().query(query)
+
+
+class FilteredEmptyReader:
+    def query(self, query):
+        return EmailQueryResult(
+            state="empty",
+            provider="test",
+            interval_start=query.start_at,
+            interval_end=query.end_at,
+            candidate_count=2,
+            applied_filters=["attention"],
+        )
 
 
 def service(db, provider, reader):
@@ -51,7 +68,6 @@ def service(db, provider, reader):
 def test_email_query_executes_reader_before_natural_reply_and_persists_visual_items(db):
     reader = CountingReader(messages=synthetic_messages(NOW))
     provider = QueueProvider(
-        EmailQueryCommand(period="today"),
         ConversationCommand(
             message=(
                 "O e-mail da Alfa Indústria merece atenção primeiro: há autorização, prazo em "
@@ -69,7 +85,7 @@ def test_email_query_executes_reader_before_natural_reply_and_persists_visual_it
     assert reader.query_count == 1
     assert reply.consulted_interval == "01/10/2026 00:00 a 01/10/2026 10:00"
     assert [item["reference"] for item in reply.email_items] == ["syn-in-001", "syn-in-003"]
-    assert provider.calls[1]["tool_results"][0].state == "success"
+    assert provider.calls[0]["tool_results"][0].state == "success"
     stored = db.query(AssistantMessage).filter_by(reply_to_request_id="email-today-1").one()
     assert stored.details_json["email_items"][0]["reference"] == "syn-in-001"
     assert "secret" not in stored.details_json
@@ -78,7 +94,6 @@ def test_email_query_executes_reader_before_natural_reply_and_persists_visual_it
 def test_email_query_retry_reuses_completed_response_without_reading_again(db):
     reader = CountingReader(messages=synthetic_messages(NOW))
     provider = QueueProvider(
-        EmailQueryCommand(period="today", unread_only=True),
         ConversationCommand(message="Há dois e-mails não lidos hoje."),
     )
     assistant = service(db, provider, reader)
@@ -87,6 +102,7 @@ def test_email_query_retry_reuses_completed_response_without_reading_again(db):
     second = assistant.handle_message(message="Quais ainda não li?", request_id="email-retry-1")
 
     assert second == first
+    assert first.kind == "text"
     assert reader.query_count == 1
 
 
@@ -94,7 +110,7 @@ def test_email_provider_failure_is_not_reported_as_empty_or_success(db):
     from app.assistant.email.provider import EmailTimeoutError
 
     reader = CountingReader(messages=synthetic_messages(NOW), failure=EmailTimeoutError("secret"))
-    provider = QueueProvider(EmailQueryCommand(period="today"))
+    provider = QueueProvider()
 
     reply = service(db, provider, reader).handle_message(
         message="Quais e-mails chegaram hoje?",
@@ -104,11 +120,48 @@ def test_email_provider_failure_is_not_reported_as_empty_or_success(db):
     assert reply.kind == "error"
     assert "tempo limite" in reply.message
     assert "não significa" in reply.message
-    assert len(provider.calls) == 1
+    assert len(provider.calls) == 0
     stored = db.query(AssistantMessage).filter_by(reply_to_request_id="email-timeout-1").one()
     assert stored.details_json["executed_tools"] == ["consultar_emails"]
     assert stored.details_json["tool_results"][0]["state"] == "failed"
     assert stored.details_json["tool_results"][0]["evidence_id"].startswith("email:")
+
+
+def test_filtered_empty_result_does_not_claim_the_mailbox_has_no_messages(db):
+    provider = QueueProvider(
+        ConversationCommand(
+            message="Há mensagens no período, mas nenhuma correspondeu ao filtro de atenção."
+        )
+    )
+    assistant = service(db, provider, FilteredEmptyReader())
+
+    reply = assistant.handle_message(
+        message="Tem algo no meu e-mail que eu precise resolver?",
+        request_id="email-filtered-empty-1",
+    )
+
+    assert reply.kind == "text"
+    result = provider.calls[0]["tool_results"][0]
+    assert result.payload["count"] == 0
+    assert result.payload["candidate_count"] == 2
+    assert result.payload["returned_count"] == 0
+    assert result.payload["applied_filters"] == ["attention"]
+    assert "sem mensagens" not in reply.message.casefold()
+
+
+def test_filtered_empty_result_rejects_false_claim_that_period_has_no_messages(db):
+    provider = QueueProvider(
+        ConversationCommand(message="Não encontrei nenhuma mensagem no período consultado.")
+    )
+    assistant = service(db, provider, FilteredEmptyReader())
+
+    reply = assistant.handle_message(
+        message="Tem algo urgente na caixa de entrada?",
+        request_id="email-filtered-false-empty-1",
+    )
+
+    assert reply.kind == "error"
+    assert "nenhuma mensagem" not in reply.message.casefold()
 
 
 def test_false_email_claim_from_conversation_command_is_rejected_in_service(db):
@@ -160,7 +213,6 @@ def test_task_from_second_email_uses_confirmation_and_persists_reference_once(db
 def test_ambiguous_email_reference_asks_instead_of_inventing_link(db):
     reader = CountingReader(messages=synthetic_messages(NOW))
     provider = QueueProvider(
-        EmailQueryCommand(period="today"),
         ConversationCommand(message="Há duas mensagens hoje."),
         TaskCreateCommand(title="Responder"),
     )
@@ -260,7 +312,6 @@ def test_email_results_sent_to_model_are_bounded(db):
         )
     reader = CountingReader(messages=many)
     provider = QueueProvider(
-        EmailQueryCommand(period="today", limit=20),
         ConversationCommand(message="Foram apresentadas três mensagens prioritárias."),
     )
 
@@ -269,13 +320,12 @@ def test_email_results_sent_to_model_are_bounded(db):
     )
 
     assert reply.kind == "text"
-    assert len(provider.calls[1]["tool_results"][0].payload["messages"]) == 3
+    assert len(provider.calls[0]["tool_results"][0].payload["messages"]) == 3
 
 
 def test_historical_email_reply_requires_an_explicit_previous_result_label(db):
     reader = CountingReader(messages=synthetic_messages(NOW))
     provider = QueueProvider(
-        EmailQueryCommand(period="today"),
         ConversationCommand(message="No resultado atual, há duas mensagens."),
         ConversationCommand(message="Foi Marina - Alfa Indústria."),
     )
@@ -297,7 +347,6 @@ def test_historical_email_reply_requires_an_explicit_previous_result_label(db):
 def test_email_history_allows_an_unrelated_change_of_subject(db):
     reader = CountingReader(messages=synthetic_messages(NOW))
     provider = QueueProvider(
-        EmailQueryCommand(period="today"),
         ConversationCommand(message="No resultado atual, há duas mensagens."),
         ConversationCommand(message="Por nada! Posso ajudar em outro assunto."),
     )
@@ -314,3 +363,102 @@ def test_email_history_allows_an_unrelated_change_of_subject(db):
 
     assert reply.kind == "text"
     assert reply.message.startswith("Por nada")
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "Tem algo no meu e-mail que eu precise resolver?",
+            {"period": "week", "attention_only": True},
+        ),
+        (
+            "Ficou alguém esperando meu retorno?",
+            {"period": "week", "awaiting_reply": True},
+        ),
+        ("O que chegou hoje?", {"period": "today"}),
+        ("Quais mensagens chegaram hoje?", {"period": "today"}),
+        ("O que eu ainda não vi?", {"period": "week", "unread_only": True}),
+        ("Tem mensagens não lidas?", {"period": "week", "unread_only": True}),
+        (
+            "Tem algo urgente na caixa de entrada?",
+            {"period": "week", "attention_only": True},
+        ),
+    ],
+)
+def test_natural_email_paraphrases_execute_email_tool_before_reply(db, message, expected):
+    reader = CountingReader(messages=synthetic_messages(NOW))
+    provider = QueueProvider(ConversationCommand(message="Resultado da consulta disponível."))
+    assistant = service(db, provider, reader)
+
+    request_id = f"email-natural-{abs(hash(message))}"
+    reply = assistant.handle_message(
+        message=message,
+        request_id=request_id,
+    )
+
+    assert reply.kind == "text"
+    assert reader.query_count == 1
+    query = reader.queries[0]
+    for field, value in expected.items():
+        if field == "period":
+            expected_date = (
+                NOW.date()
+                if value == "today"
+                else NOW.date() - timedelta(days=NOW.weekday())
+            )
+            assert query.start_at.date() == expected_date
+        else:
+            assert getattr(query, field) == value
+    assert len(provider.calls) == 1
+    assert provider.calls[0]["allowed_tools"] == {"responder_conversa"}
+    assert provider.calls[0]["tool_results"][0].tool == "consultar_emails"
+    stored = db.query(AssistantMessage).filter_by(reply_to_request_id=request_id).one()
+    assert stored.details_json["executed_tools"] == ["consultar_emails"]
+
+
+@pytest.mark.parametrize(
+    ("message", "clarification"),
+    [
+        ("O que chegou?", "Você está perguntando sobre e-mails ou sobre uma entrega?"),
+        ("Tem algo urgente?", "Você quer consultar tarefas ou e-mails?"),
+        ("O que eu ainda não vi no quadro?", "Qual parte do quadro você quer consultar?"),
+        ("Eu ainda não vi o relatório.", "Quer ajuda para organizar a revisão do relatório?"),
+    ],
+)
+def test_ambiguous_or_non_email_paraphrases_do_not_read_mailbox(db, message, clarification):
+    reader = CountingReader(messages=synthetic_messages(NOW))
+    provider = QueueProvider(ConversationCommand(message=clarification))
+
+    reply = service(db, provider, reader).handle_message(
+        message=message,
+        request_id=f"email-ambiguous-{abs(hash(message))}",
+    )
+
+    assert reply.kind == "text"
+    assert reply.message == clarification
+    assert reader.query_count == 0
+    assert provider.calls[0]["tool_results"] == ()
+
+
+def test_indirect_email_intent_reports_unavailable_without_calling_provider_or_reader(db):
+    reader = CountingReader(messages=synthetic_messages(NOW))
+    provider = QueueProvider()
+    assistant = AssistantService(
+        db,
+        provider,
+        now=lambda: NOW,
+        email_reader=reader,
+        capabilities=CapabilityRegistry(email_provider="disabled"),
+    )
+
+    reply = assistant.handle_message(
+        message="Ficou alguém esperando meu retorno?",
+        request_id="email-natural-disabled",
+    )
+
+    assert reply.kind == "error"
+    assert "não está configurada" in reply.message
+    assert "Nenhuma caixa foi consultada" in reply.message
+    assert reader.query_count == 0
+    assert provider.calls == []

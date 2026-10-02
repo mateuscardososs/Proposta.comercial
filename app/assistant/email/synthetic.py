@@ -94,6 +94,18 @@ class SyntheticEmailReader:
             interval_start=query.start_at,
             interval_end=query.end_at,
             messages=results,
+            candidate_count=len(inbox),
+            applied_filters=[
+                name
+                for enabled, name in (
+                    (query.unread_only, "unread"),
+                    (bool(query.sender), "sender"),
+                    (query.attention_only, "attention"),
+                    (query.awaiting_reply, "awaiting_reply"),
+                    (bool(query.reference), "reference"),
+                )
+                if enabled
+            ],
             sent_available=self.sent_available,
             partial=self.partial,
             stale=self.stale,

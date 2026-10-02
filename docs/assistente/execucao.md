@@ -264,6 +264,23 @@ EMAIL_CACHE_RETENTION_DAYS=14
 EMAIL_BODY_PREVIEW_CHARS=4000
 ```
 
+### Arquivo local da instância Yahoo na porta 8011
+
+A instância isolada usa `.env.yahoo.local`, ignorado pelo Git e com permissão somente para o usuário
+local. Preencha nesse arquivo apenas `EMAIL_IMAP_USERNAME` e `EMAIL_IMAP_APP_PASSWORD`. O provedor
+já está definido como `imap_yahoo`. Não copie esses valores para `.env`, comandos, tickets ou logs.
+
+Depois do preenchimento, inicie exclusivamente essa instância com:
+
+```bash
+./scripts/run_assistant_8011_yahoo.sh
+```
+
+O inicializador usa `APP_ENV_FILE` para o Pydantic ler o arquivo dentro do processo Python, sem
+interpolar credenciais na linha de comando. Ele mantém banco e documentos isolados em
+`/tmp/ad-balancas-conversational.xFP65K`, escuta somente em `127.0.0.1:8011` e recusa iniciar se os
+dois campos estiverem vazios.
+
 Para conectar o Yahoo posteriormente, use variáveis locais fora do Git:
 
 ```bash

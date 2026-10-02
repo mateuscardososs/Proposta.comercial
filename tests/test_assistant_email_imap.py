@@ -43,6 +43,8 @@ class FakeImap:
         self.calls.append(("uid", command, *args))
         if command == "search":
             return "OK", [b"12"] if self.selected == "Inbox" else [b""]
+        if command == "fetch" and args[-1] == "(UID INTERNALDATE)":
+            return "OK", []
         if command == "fetch" and "BODYSTRUCTURE" in str(args):
             return "OK", [(b'12 (BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 90 2))', b"")]
         if command == "fetch" and "HEADER.FIELDS" in str(args):
@@ -62,6 +64,63 @@ class FakeImap:
 
     def logout(self):
         self.calls.append(("logout",))
+
+
+class MultipleMessageImap(FakeImap):
+    def uid(self, command, *args):
+        self.calls.append(("uid", command, *args))
+        if command == "search":
+            return "OK", [b"10 11"]
+        if command == "fetch" and args[-1] == "(UID INTERNALDATE)":
+            return "OK", []
+        uid = str(args[0])
+        if command == "fetch" and "BODYSTRUCTURE" in str(args):
+            return "OK", [
+                (f'{uid} (BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 90 2))'.encode(), b"")
+            ]
+        if command == "fetch" and "HEADER.FIELDS" in str(args):
+            subject = "Pedido com prazo" if uid == "10" else "Informativo"
+            raw = (
+                f"Message-ID: <m{uid}@example>\r\n"
+                "From: Remetente <remetente@example.invalid>\r\n"
+                "To: ad@example.invalid\r\n"
+                f"Subject: {subject}\r\n"
+                "Date: Fri, 02 Oct 2026 08:00:00 -0300\r\n\r\n"
+            ).encode()
+            return "OK", [(f'{uid} (INTERNALDATE "02-Oct-2026 11:00:00 +0000" BODY[HEADER.FIELDS ...]'.encode(), raw)]
+        if command == "fetch" and "BODY.PEEK[TEXT]" in str(args):
+            body = b"Favor responder. Prazo explicito: 02/10/2026." if uid == "10" else b"Newsletter informativa."
+            return "OK", [(f"{uid} (BODY[TEXT] {{{len(body)}}}".encode(), body)]
+        if command == "fetch" and "FLAGS" in str(args):
+            return "OK", [f"{uid} (FLAGS ())".encode()]
+        raise AssertionError((command, args))
+
+
+class InternalDateImap(FakeImap):
+    def uid(self, command, *args):
+        self.calls.append(("uid", command, *args))
+        if command == "search":
+            return "OK", [b"12"]
+        if command == "fetch" and args[-1] == "(UID INTERNALDATE)":
+            return "OK", [b'1 (UID 12 INTERNALDATE "02-Oct-2026 04:00:00 +0000")']
+        if command == "fetch" and "BODYSTRUCTURE" in str(args):
+            return "OK", [(b'12 (BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 20 1))', b"")]
+        if command == "fetch" and "HEADER.FIELDS" in str(args):
+            raw = (
+                b"Message-ID: <internal-date@example>\r\n"
+                b"From: Remetente <remetente@example.invalid>\r\n"
+                b"To: ad@example.invalid\r\n"
+                b"Subject: Data recebida\r\n"
+                b"Date: Thu, 01 Oct 2026 10:00:00 -0300\r\n\r\n"
+            )
+            return "OK", [
+                (b'12 (INTERNALDATE "02-Oct-2026 04:00:00 +0000" BODY[HEADER.FIELDS ...]', raw)
+            ]
+        if command == "fetch" and "BODY.PEEK[TEXT]" in str(args):
+            return "OK", [(b"12 (BODY[TEXT] {5}", b"Teste")]
+        if command == "fetch" and "FLAGS" in str(args):
+            return "OK", [b"12 (FLAGS ())"]
+        raise AssertionError((command, args))
 
 
 def test_yahoo_imap_uses_readonly_select_peek_and_special_use_folders():
@@ -89,6 +148,79 @@ def test_yahoo_imap_uses_readonly_select_peek_and_special_use_folders():
     assert "BODY.PEEK" in serialized_calls
     assert "store" not in serialized_calls.casefold()
     assert "secret-app-password" not in result.model_dump_json()
+
+
+def test_imap_uses_internaldate_as_received_date_instead_of_sender_header_date():
+    client = InternalDateImap()
+    reader = YahooImapEmailReader(
+        username="empresa@yahoo.com",
+        app_password="secret-app-password",
+        client_factory=lambda **_kwargs: client,
+    )
+    start = datetime(2026, 10, 2, 0, 0, tzinfo=ZoneInfo("America/Recife"))
+    end = datetime(2026, 10, 2, 23, 59, 59, tzinfo=ZoneInfo("America/Recife"))
+
+    result = reader.query(EmailQuery(start_at=start, end_at=end))
+
+    assert result.state == "success"
+    assert len(result.messages) == 1
+    assert result.messages[0].received_at.astimezone(ZoneInfo("America/Recife")) == datetime(
+        2026, 10, 2, 1, 0, tzinfo=ZoneInfo("America/Recife")
+    )
+
+
+def test_imap_search_converts_local_end_boundary_to_utc_calendar_day():
+    client = InternalDateImap()
+    reader = YahooImapEmailReader(
+        username="empresa@yahoo.com",
+        app_password="secret-app-password",
+        client_factory=lambda **_kwargs: client,
+    )
+    start = datetime(2026, 10, 2, 0, 0, tzinfo=ZoneInfo("America/Recife"))
+    end = datetime(2026, 10, 2, 23, 59, 59, tzinfo=ZoneInfo("America/Recife"))
+
+    reader.query(EmailQuery(start_at=start, end_at=end))
+
+    search = next(call for call in client.calls if call[:2] == ("uid", "search"))
+    assert search[3:] == ("SINCE", "02-Oct-2026", "BEFORE", "04-Oct-2026")
+
+
+def test_attention_filter_scans_candidates_before_applying_output_limit():
+    client = MultipleMessageImap()
+    reader = YahooImapEmailReader(
+        username="empresa@yahoo.com",
+        app_password="secret-app-password",
+        max_messages=10,
+        client_factory=lambda **_kwargs: client,
+    )
+    start = datetime(2026, 10, 2, 0, 0, tzinfo=ZoneInfo("America/Recife"))
+    end = datetime(2026, 10, 2, 23, 59, 59, tzinfo=ZoneInfo("America/Recife"))
+
+    result = reader.query(
+        EmailQuery(start_at=start, end_at=end, attention_only=True, limit=1)
+    )
+
+    assert result.state == "success"
+    assert len(result.messages) == 1
+    assert result.messages[0].priority in {"high", "critical"}
+
+
+def test_candidate_count_is_not_reduced_by_visual_output_limit():
+    client = MultipleMessageImap()
+    reader = YahooImapEmailReader(
+        username="empresa@yahoo.com",
+        app_password="secret-app-password",
+        max_messages=10,
+        client_factory=lambda **_kwargs: client,
+    )
+    start = datetime(2026, 10, 2, 0, 0, tzinfo=ZoneInfo("America/Recife"))
+    end = datetime(2026, 10, 2, 23, 59, 59, tzinfo=ZoneInfo("America/Recife"))
+
+    result = reader.query(EmailQuery(start_at=start, end_at=end, limit=1))
+
+    assert result.state == "success"
+    assert len(result.messages) == 1
+    assert result.candidate_count == 2
 
 
 def test_yahoo_imap_reports_missing_sent_folder_for_pending_reply_query():
