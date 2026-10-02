@@ -67,6 +67,35 @@ def validate_execution_claims(
         ]
         if isinstance(count, int) and any(value != count for value in claimed_counts):
             raise ValueError("A resposta inventou a quantidade de e-mails consultados.")
+    if email_result is not None:
+        candidate_count = email_result.payload.get("candidate_count")
+        claims_empty_period = bool(
+            re.search(
+                r"\b(?:nao (?:encontrei|ha|tem)|nenhuma|zero)\b.{0,45}"
+                r"\b(?:e[- ]?mails?|mensage(?:m|ns))\b",
+                normalized,
+            )
+        )
+        explains_filter = any(
+            term in normalized
+            for term in (
+                "filtro",
+                "correspondeu",
+                "prioritaria",
+                "prioritario",
+                "urgente",
+                "aguardando resposta",
+            )
+        )
+        if (
+            isinstance(candidate_count, int)
+            and candidate_count > 0
+            and claims_empty_period
+            and not explains_filter
+        ):
+            raise ValueError(
+                "A resposta descreveu o periodo como vazio, mas a consulta encontrou mensagens antes dos filtros."
+            )
 
     unsupported_action_patterns = (
         r"\b(?:marquei|registrei|lancei)\b.{0,50}\b(?:conta|pagamento|financeiro)\b",

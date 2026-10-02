@@ -73,6 +73,8 @@ class EmailQueryResult(BaseModel):
     interval_start: datetime
     interval_end: datetime
     messages: list[EmailMessageResult] = Field(default_factory=list)
+    candidate_count: int = Field(default=0, ge=0)
+    applied_filters: list[str] = Field(default_factory=list)
     sent_available: bool = False
     partial: bool = False
     stale: bool = False

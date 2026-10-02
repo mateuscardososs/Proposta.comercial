@@ -10,7 +10,7 @@ import socket
 import ssl
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta, tzinfo
+from datetime import datetime, timedelta, timezone, tzinfo
 from email.header import decode_header, make_header
 from email.parser import BytesHeaderParser
 from email.policy import default
@@ -20,6 +20,14 @@ from html.parser import HTMLParser
 from app.assistant.email.classification import to_result
 from app.assistant.email.contracts import EmailMessageRecord, EmailQuery, EmailQueryResult
 from app.assistant.email.provider import EmailUnavailableError
+
+
+@dataclass(frozen=True)
+class _FolderRead:
+    records: list[EmailMessageRecord]
+    candidate_count: int
+    partial: bool = False
+    limitation: str = ""
 
 
 class YahooImapEmailReader:
@@ -61,9 +69,14 @@ class YahooImapEmailReader:
             folders = self._discover_folders(client)
             inbox = folders.get("inbox", "INBOX")
             sent = folders.get("sent")
-            records = self._read_folder(client, inbox, "inbox", query)
+            inbox_read = self._read_folder(client, inbox, "inbox", query)
+            if isinstance(inbox_read, list):  # compatibility with focused test doubles
+                inbox_read = _FolderRead(records=inbox_read, candidate_count=len(inbox_read))
+            records = inbox_read.records
+            candidate_count = inbox_read.candidate_count
             sent_records: list[EmailMessageRecord] = []
             sent_failed = False
+            sent_partial = False
             if query.awaiting_reply and sent is not None:
                 sent_query = query.model_copy(
                     update={
@@ -76,7 +89,11 @@ class YahooImapEmailReader:
                     }
                 )
                 try:
-                    sent_records = self._read_folder(client, sent, "sent", sent_query)
+                    sent_read = self._read_folder(client, sent, "sent", sent_query)
+                    if isinstance(sent_read, list):  # compatibility with focused test doubles
+                        sent_read = _FolderRead(records=sent_read, candidate_count=len(sent_read))
+                    sent_records = sent_read.records
+                    sent_partial = sent_read.partial
                 except EmailUnavailableError:
                     sent_failed = True
                     sent = None
@@ -111,6 +128,9 @@ class YahooImapEmailReader:
             results = results[: min(query.limit, self.max_messages)]
             limitations = []
             state = "success" if results else "empty"
+            if inbox_read.partial:
+                state = "partial"
+                limitations.append(inbox_read.limitation)
             if query.awaiting_reply and sent is None:
                 state = "partial"
                 limitations.append(
@@ -121,12 +141,19 @@ class YahooImapEmailReader:
                         else "A pasta Enviados não foi localizada; não é possível avaliar respostas pendentes com confiança."
                     )
                 )
+            elif query.awaiting_reply and sent_partial:
+                state = "partial"
+                limitations.append(
+                    "A cobertura da pasta Enviados foi limitada; respostas pendentes podem estar incompletas."
+                )
             return EmailQueryResult(
                 state=state,
                 provider="imap_yahoo",
                 interval_start=query.start_at,
                 interval_end=query.end_at,
                 messages=results,
+                candidate_count=candidate_count,
+                applied_filters=self._applied_filters(query),
                 sent_available=sent is not None,
                 partial=state == "partial",
                 limitations=limitations,
@@ -156,6 +183,21 @@ class YahooImapEmailReader:
             interval_end=query.end_at,
             user_message=message,
         )
+
+    @staticmethod
+    def _applied_filters(query: EmailQuery) -> list[str]:
+        filters: list[str] = []
+        if query.unread_only:
+            filters.append("unread")
+        if query.sender:
+            filters.append("sender")
+        if query.attention_only:
+            filters.append("attention")
+        if query.awaiting_reply:
+            filters.append("awaiting_reply")
+        if query.reference:
+            filters.append("reference")
+        return filters
 
     @staticmethod
     def _discover_folders(client: object) -> dict[str, str]:
@@ -193,15 +235,16 @@ class YahooImapEmailReader:
         mailbox: str,
         role: str,
         query: EmailQuery,
-    ) -> list[EmailMessageRecord]:
+    ) -> _FolderRead:
         status, _ = client.select(mailbox, readonly=True)
         if status != "OK":
             raise EmailUnavailableError("Falha ao selecionar pasta IMAP.")
         uidvalidity = self._uidvalidity(client)
-        before = query.end_at.date() + timedelta(days=1)
+        search_start = query.start_at.astimezone(timezone.utc).date()
+        before = query.end_at.astimezone(timezone.utc).date() + timedelta(days=1)
         criteria: list[str] = [
             "SINCE",
-            query.start_at.strftime("%d-%b-%Y"),
+            search_start.strftime("%d-%b-%Y"),
             "BEFORE",
             before.strftime("%d-%b-%Y"),
         ]
@@ -211,10 +254,13 @@ class YahooImapEmailReader:
         if status != "OK":
             raise EmailUnavailableError("Falha ao pesquisar pasta IMAP.")
         if not data:
-            return []
-        raw_uids = data[0].split()[-self.max_messages :]
+            return _FolderRead(records=[], candidate_count=0)
+        all_raw_uids = data[0].split()
+        partial = len(all_raw_uids) > self.max_messages
+        raw_uids = all_raw_uids[-self.max_messages :]
+        exact_uids = self._uids_inside_interval(client, raw_uids, query)
         records: list[EmailMessageRecord] = []
-        for raw_uid in reversed(raw_uids):
+        for raw_uid in reversed(exact_uids):
             uid = raw_uid.decode("ascii") if isinstance(raw_uid, bytes) else str(raw_uid)
             record = self._fetch_message(
                 client,
@@ -233,9 +279,47 @@ class YahooImapEmailReader:
             if query.reference and query.reference != record.reference:
                 continue
             records.append(record)
-            if len(records) >= min(query.limit, self.max_messages):
+            if (
+                not query.attention_only
+                and not query.awaiting_reply
+                and len(records) >= min(query.limit, self.max_messages)
+            ):
                 break
-        return records
+        limitation = (
+            f"A consulta foi limitada às {self.max_messages} mensagens mais recentes encontradas pelo servidor."
+            if partial
+            else ""
+        )
+        return _FolderRead(
+            records=records,
+            candidate_count=len(exact_uids),
+            partial=partial,
+            limitation=limitation,
+        )
+
+    def _uids_inside_interval(
+        self,
+        client: object,
+        raw_uids: list[bytes],
+        query: EmailQuery,
+    ) -> list[bytes]:
+        if not raw_uids:
+            return []
+        uid_set = ",".join(
+            value.decode("ascii") if isinstance(value, bytes) else str(value)
+            for value in raw_uids
+        )
+        status, data = client.uid("fetch", uid_set, "(UID INTERNALDATE)")
+        if status != "OK":
+            raise EmailUnavailableError("Falha ao verificar datas internas da pasta IMAP.")
+        internaldates = _uid_internaldates(data)
+        exact: list[bytes] = []
+        for raw_uid in raw_uids:
+            uid = raw_uid.decode("ascii") if isinstance(raw_uid, bytes) else str(raw_uid)
+            received_at = internaldates.get(uid)
+            if received_at is None or query.start_at <= received_at <= query.end_at:
+                exact.append(raw_uid)
+        return exact
 
     def _fetch_message(
         self,
@@ -247,7 +331,8 @@ class YahooImapEmailReader:
         default_timezone: tzinfo | None,
     ) -> EmailMessageRecord | None:
         header_query = (
-            "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES IN-REPLY-TO FROM TO SUBJECT DATE)])"
+            "(INTERNALDATE BODY.PEEK[HEADER.FIELDS "
+            "(MESSAGE-ID REFERENCES IN-REPLY-TO FROM TO SUBJECT DATE)])"
         )
         status, header_data = client.uid("fetch", uid, header_query)
         if status != "OK":
@@ -256,11 +341,19 @@ class YahooImapEmailReader:
         if not header_bytes:
             return None
         message = BytesHeaderParser(policy=default).parsebytes(header_bytes)
-        received_at = parsedate_to_datetime(message.get("Date"))
+        received_at = _internaldate_from_response(header_data)
+        if received_at is None:
+            raw_date = message.get("Date")
+            try:
+                received_at = parsedate_to_datetime(raw_date) if raw_date else None
+            except (TypeError, ValueError):
+                received_at = None
         if received_at is None:
             return None
         if received_at.tzinfo is None:
             received_at = received_at.replace(tzinfo=default_timezone)
+        elif default_timezone is not None:
+            received_at = received_at.astimezone(default_timezone)
 
         _status, flags_data = client.uid("fetch", uid, "(FLAGS)")
         seen = "\\Seen" in repr(flags_data)
@@ -325,6 +418,51 @@ def _response_bytes(data: object) -> bytes:
         if isinstance(item, bytes) and b"\r\n" in item:
             return item
     return b""
+
+
+def _internaldate_from_response(data: object) -> datetime | None:
+    if not isinstance(data, (list, tuple)):
+        return None
+    for item in data:
+        metadata = item[0] if isinstance(item, tuple) and item else item
+        if not isinstance(metadata, bytes):
+            continue
+        match = re.search(rb'INTERNALDATE\s+"([^"]+)"', metadata, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        try:
+            return datetime.strptime(
+                match.group(1).decode("ascii"),
+                "%d-%b-%Y %H:%M:%S %z",
+            )
+        except (UnicodeDecodeError, ValueError):
+            continue
+    return None
+
+
+def _uid_internaldates(data: object) -> dict[str, datetime]:
+    result: dict[str, datetime] = {}
+    if not isinstance(data, (list, tuple)):
+        return result
+    for item in data:
+        metadata = item[0] if isinstance(item, tuple) and item else item
+        if not isinstance(metadata, bytes):
+            continue
+        uid_match = re.search(rb"\bUID\s+(\d+)\b", metadata, flags=re.IGNORECASE)
+        date_match = re.search(
+            rb'INTERNALDATE\s+"([^"]+)"', metadata, flags=re.IGNORECASE
+        )
+        if uid_match is None or date_match is None:
+            continue
+        try:
+            received_at = datetime.strptime(
+                date_match.group(1).decode("ascii"),
+                "%d-%b-%Y %H:%M:%S %z",
+            )
+        except (UnicodeDecodeError, ValueError):
+            continue
+        result[uid_match.group(1).decode("ascii")] = received_at
+    return result
 
 
 @dataclass(frozen=True)

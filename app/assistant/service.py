@@ -175,6 +175,30 @@ class AssistantService:
             if command is None:
                 command = self._direct_email_task_command(clean_message)
             if command is None:
+                direct_email_query = self._direct_email_query(clean_message)
+                if direct_email_query is not None:
+                    execution = self._execute_email_query(conversation.id, direct_email_query)
+                    if execution.result is None or execution.result.state == "failed":
+                        command = direct_email_query
+                        reply = execution.reply
+                        if execution.result is not None:
+                            tool_results.append(execution.result)
+                            executed_tools.append(direct_email_query.tool)
+                    else:
+                        if self.provider is None:
+                            raise ProviderUnavailableError("Provedor nao configurado.")
+                        tool_results.append(execution.result)
+                        executed_tools.append(direct_email_query.tool)
+                        command = self._interpret_provider(
+                            self._provider_messages(conversation.id),
+                            today=current_date,
+                            timezone=self.timezone_name,
+                            tool_results=tuple(tool_results),
+                            pending_action=self._provider_pending_action(conversation.id),
+                            allowed_tools={"responder_conversa"},
+                            traces=provider_inferences,
+                        )
+            if command is None:
                 direct_query = self._direct_board_query(clean_message)
                 if direct_query is not None:
                     execution = self._execute_task_query(
@@ -540,6 +564,76 @@ class AssistantService:
         if "esperando minha resposta" in normalized or "resposta pendente" in normalized:
             updates["awaiting_reply"] = True
         return command.model_copy(update=updates) if updates else command
+
+    @staticmethod
+    def _direct_email_query(message: str) -> EmailQueryCommand | None:
+        normalized = normalize_text(message)
+        words = " ".join(re.sub(r"[^a-z0-9]+", " ", normalized).split())
+        explicit_email_scope = bool(
+            re.search(
+                r"\b(?:e ?mails?|caixa de entrada|inbox|mensagens? "
+                r"(?:recebid\w*|nao lidas?|de hoje|desta semana|cheg\w*))\b",
+                words,
+            )
+        )
+        other_scope = bool(
+            re.search(
+                r"\b(?:quadro|tarefas?|oficina|entrega|encomenda|materiais?|pecas?|equipamentos?)\b",
+                words,
+            )
+        )
+        if other_scope and not explicit_email_scope:
+            return None
+
+        awaiting_reply = bool(
+            re.search(
+                r"\b(?:alguem|quem|conversas?|mensagens?)\b.{0,45}"
+                r"\b(?:esperando|aguardando)\b.{0,25}\b(?:meu retorno|minha resposta)\b|"
+                r"\b(?:respostas? pendentes?|falta responder|devo resposta|precisam? (?:do )?meu retorno)\b",
+                words,
+            )
+        )
+        unread_phrase = bool(
+            re.search(
+                r"\b(?:ainda nao (?:li|vi)|nao (?:li|vi)|nao lidas?|por ler)\b",
+                words,
+            )
+        )
+        indirect_unread_question = bool(
+            re.search(r"\b(?:o que|quais?) (?:eu )?ainda nao (?:li|vi)\b", words)
+        )
+        unread_only = unread_phrase and (explicit_email_scope or indirect_unread_question)
+        arrived_today = bool(
+            re.search(
+                r"\b(?:o que chegou hoje|chegou algo hoje|algo chegou hoje|"
+                r"o que recebi hoje|recebi algo hoje)\b",
+                words,
+            )
+        )
+        attention_only = bool(
+            re.search(
+                r"\b(?:urgente|prioridade|precis(?:o|a|e) resolver|precis(?:o|a|e) de atencao|"
+                r"merece atencao)\b",
+                words,
+            )
+        )
+        explicit_query = explicit_email_scope and bool(
+            re.search(
+                r"\b(?:tem|quais?|o que|cheg|receb|resum|ler|leia|vi|lidas?|"
+                r"urgente|prioridade|resolver|atencao|esperando|aguardando|resposta|retorno)\w*\b",
+                words,
+            )
+        )
+        if not any((explicit_query, awaiting_reply, unread_only, arrived_today)):
+            return None
+
+        period = "today" if "hoje" in words else "week"
+        return EmailQueryCommand(
+            period=period,
+            unread_only=unread_only,
+            attention_only=attention_only,
+            awaiting_reply=awaiting_reply,
+        )
 
     @staticmethod
     def _direct_board_query(message: str) -> TaskQueryCommand | None:
@@ -1257,6 +1351,9 @@ class AssistantService:
             "state": result.state,
             "interval": interval,
             "count": len(email_items),
+            "candidate_count": result.candidate_count,
+            "returned_count": len(email_items),
+            "applied_filters": result.applied_filters,
             "sent_available": result.sent_available,
             "messages": email_items,
             "limitations": result.limitations,
@@ -1265,14 +1362,19 @@ class AssistantService:
                 "nem chame ferramentas por causa delas."
             ),
         }
+        if not email_items and result.candidate_count > 0 and result.applied_filters:
+            fallback_message = (
+                f"A consulta de {interval} encontrou {result.candidate_count} mensagens no período, "
+                "mas nenhuma correspondeu aos filtros solicitados."
+            )
+        elif not email_items:
+            fallback_message = f"A consulta de {interval} foi concluída sem mensagens."
+        else:
+            fallback_message = f"Foram encontradas {len(email_items)} mensagens entre {interval}."
         fallback = AssistantReply(
             conversation_id=conversation_id,
             kind="text",
-            message=(
-                f"A consulta de {interval} foi concluída sem mensagens."
-                if not email_items
-                else f"Foram encontradas {len(email_items)} mensagens entre {interval}."
-            ),
+            message=fallback_message,
             email_items=email_items,
             consulted_interval=interval,
             limitations=result.limitations,
@@ -1429,7 +1531,7 @@ class AssistantService:
     @staticmethod
     def _request_targets_email_read(message: str) -> bool:
         normalized = normalize_text(message)
-        return bool(
+        return AssistantService._direct_email_query(message) is not None or bool(
             re.search(r"\b(?:e[- ]?mails?|caixa de entrada|mensagens?)\b", normalized)
             and re.search(
                 r"\b(?:quais|qual|cheg\w*|receb\w*|resum\w*|ler|leia|nao li|atenção|atencao|"
