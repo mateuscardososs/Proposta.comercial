@@ -318,7 +318,7 @@ class AssistantService:
                     if command.tool == "consultar_emails":
                         allowed_tools = {"responder_conversa"}
                     elif command.tool == "consultar_servicos":
-                        allowed_tools = {"responder_conversa", "consultar_servicos"}
+                        allowed_tools = {"responder_conversa"}
                     if len(tool_results) >= self.max_tool_rounds:
                         allowed_tools.discard("consultar_tarefas")
                         allowed_tools.discard("consultar_emails")
@@ -879,12 +879,16 @@ class AssistantService:
         )
         if cancelled.rowcount == 1:
             action.status = "cancelled"
+            if action.action_type in {"register_service_event", "correct_service_event"}:
+                cancellation_message = "Registro cancelado. Nenhum evento ou correção foi salvo."
+            elif action.action_type == "create_service_reminders":
+                cancellation_message = "Lembretes cancelados. Nenhuma tarefa foi adicionada ao quadro."
+            else:
+                cancellation_message = "Criacao cancelada. Nenhuma tarefa foi adicionada ao quadro."
             reply = AssistantReply(
                 conversation_id=action.conversation_id,
                 kind="text",
-                message=("Registro cancelado. Nenhum chamado ou evento foi criado."
-                         if action.action_type == "register_service_event"
-                         else "Criacao cancelada. Nenhuma tarefa foi adicionada ao quadro."),
+                message=cancellation_message,
                 action_id=action.id,
             )
             if record_message:
@@ -1766,6 +1770,17 @@ class AssistantService:
                 message="Nao ha uma acao pendente nesta conversa para cancelar.",
             )
         if action.status == "executed":
+            if action.action_type != "create_task":
+                return AssistantReply(
+                    conversation_id=conversation_id, kind="error",
+                    message="Esta ação já foi executada e não pode ser desfeita pelo assistente.",
+                    action_id=action.id,
+                    service_call_id=int(action.result_json.get("service_call_id") or 0) or None,
+                    service_url=(
+                        f"/web/services/{action.result_json.get('service_call_id')}"
+                        if action.result_json.get("service_call_id") else None
+                    ),
+                )
             return AssistantReply(
                 conversation_id=conversation_id,
                 kind="error",
