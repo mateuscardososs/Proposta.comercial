@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from app.assistant.email.classification import matches_category_or_review, to_result
+from app.assistant.email.classification import (
+    matches_category_or_review,
+    requests_reply,
+    result_order_key,
+    to_result,
+)
 from app.assistant.email.contracts import (
     EmailMessageRecord,
     EmailQuery,
@@ -68,9 +73,8 @@ class SyntheticEmailReader:
                     and sent_item.received_at > item.received_at
                     for sent_item in sent
                 )
-                preliminary = to_result(item, awaiting_reply="unknown")
-                requests_reply = "solicita resposta" in preliminary.evidence
-                awaiting = "no" if later_sent or not requests_reply else "yes"
+                response_requested = requests_reply(item)
+                awaiting = "no" if later_sent or not response_requested else "yes"
             else:
                 limitations.append(
                     "A pasta Enviados não está disponível; não é possível avaliar resposta pendente com confiança."
@@ -83,7 +87,7 @@ class SyntheticEmailReader:
             if query.attention_only and result.priority not in {"high", "critical"}:
                 continue
             results.append(result)
-        results.sort(key=lambda item: (item.priority in {"critical", "high"}, item.received_at), reverse=True)
+        results.sort(key=result_order_key)
         results = results[: query.limit]
         limitations = []
         state = "success" if results else "empty"

@@ -239,6 +239,68 @@ def test_financial_message_is_review_only_and_sync_failure_is_not_empty(db):
     assert db.query(InboxEmail).one().review_status == "pending"
 
 
+def test_promotional_email_is_classified_without_creating_a_task(db):
+    advertisement = _quote("synthetic-advertisement").model_copy(
+        update={
+            "subject": "Newsletter: promoção de outubro",
+            "text": "Oferta especial. Descadastre-se para deixar de receber novidades.",
+        }
+    )
+    service = EmailSyncService(
+        db,
+        FakeReader([advertisement]),
+        mailbox_key="synthetic-advertisement",
+        timezone="America/Recife",
+        auto_task_creation_enabled=True,
+    )
+
+    result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
+
+    stored = db.query(InboxEmail).one()
+    assert result.created_tasks == 0
+    assert db.query(Task).count() == 0
+    assert db.query(EmailTaskLink).count() == 0
+    assert stored.category == "informational"
+    assert stored.review_status == "classified"
+
+
+@pytest.mark.parametrize(
+    ("subject", "body", "expected_category"),
+    [
+        (
+            "Cotação recebida do fornecedor",
+            "Segue a cotação para conferência.",
+            "vendor_quotation",
+        ),
+        (
+            "Cotação",
+            "Segue a cotação para avaliação, sem pedido especificado.",
+            "other_review",
+        ),
+    ],
+)
+def test_vendor_or_ambiguous_quote_is_never_auto_tasked(
+    db, subject, body, expected_category
+):
+    message = _quote(f"synthetic-{expected_category}").model_copy(
+        update={"subject": subject, "text": body}
+    )
+    service = EmailSyncService(
+        db,
+        FakeReader([message]),
+        mailbox_key=f"synthetic-{expected_category}",
+        timezone="America/Recife",
+        auto_task_creation_enabled=True,
+    )
+
+    result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
+
+    assert result.created_tasks == 0
+    assert db.query(Task).count() == 0
+    assert db.query(EmailTaskLink).count() == 0
+    assert db.query(InboxEmail).one().category == expected_category
+
+
 def test_provider_failure_is_recorded_as_failure_not_empty(db):
     service = EmailSyncService(
         db, FailedReader(), mailbox_key="synthetic-failure", timezone="America/Recife"

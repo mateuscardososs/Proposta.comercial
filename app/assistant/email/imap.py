@@ -17,7 +17,12 @@ from email.policy import default
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 
-from app.assistant.email.classification import matches_category_or_review, to_result
+from app.assistant.email.classification import (
+    matches_category_or_review,
+    requests_reply,
+    result_order_key,
+    to_result,
+)
 from app.assistant.email.contracts import (
     EmailMessageRecord,
     EmailQuery,
@@ -113,9 +118,8 @@ class YahooImapEmailReader:
                         and item.received_at > record.received_at
                         for item in sent_records
                     )
-                    preliminary = to_result(record, awaiting_reply="unknown")
-                    requests_reply = "solicita resposta" in preliminary.evidence
-                    awaiting = "no" if later_sent or not requests_reply else "yes"
+                    response_requested = requests_reply(record)
+                    awaiting = "no" if later_sent or not response_requested else "yes"
                 elif query.awaiting_reply:
                     limitations.append(
                         "A pasta Enviados não foi localizada; a resposta pendente não pode ser avaliada com confiança."
@@ -126,10 +130,7 @@ class YahooImapEmailReader:
                 if query.awaiting_reply and sent is not None and awaiting != "yes":
                     continue
                 results.append(result)
-            results.sort(
-                key=lambda item: (item.priority in {"critical", "high"}, item.received_at),
-                reverse=True,
-            )
+            results.sort(key=result_order_key)
             results = results[: min(query.limit, self.max_messages)]
             limitations = []
             state = "success" if results else "empty"

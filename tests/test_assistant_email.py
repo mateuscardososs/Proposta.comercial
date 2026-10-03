@@ -11,7 +11,6 @@ from app.assistant.email.contracts import EmailQuery
 from app.assistant.email.provider import EmailAuthenticationError, EmailTimeoutError
 from app.assistant.email.synthetic import SyntheticEmailReader, synthetic_messages
 
-
 NOW = datetime(2026, 10, 1, 10, 0, tzinfo=ZoneInfo("America/Recife"))
 
 
@@ -37,6 +36,17 @@ def test_synthetic_reader_filters_today_and_preserves_seen_flags():
     assert result.interval_start == NOW.replace(hour=0)
     assert all(message.received_at.date() == NOW.date() for message in result.messages)
     assert {message.reference: message.seen for message in reader.messages} == flags_before
+
+
+def test_operational_messages_rank_before_newer_informational_messages():
+    reader = SyntheticEmailReader(messages=synthetic_messages(NOW))
+
+    result = reader.query(
+        EmailQuery(start_at=NOW - timedelta(days=7), end_at=NOW, limit=30)
+    )
+
+    references = [message.reference for message in result.messages]
+    assert references.index("syn-in-002") < references.index("syn-in-003")
 
 
 def test_synthetic_category_query_finds_quote_requests_before_applying_visual_limit():

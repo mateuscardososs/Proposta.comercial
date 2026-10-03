@@ -42,6 +42,85 @@ def test_messages_page_explains_sync_status_and_never_offers_email_mutations(db)
     assert "Excluir" not in response.text
 
 
+def test_messages_page_separates_operational_work_from_information_and_review(db):
+    settings = get_settings()
+    now = datetime(2026, 10, 2, 10, tzinfo=ZoneInfo("America/Recife"))
+    common = {
+        "provider": settings.email_provider,
+        "mailbox_key": settings.email_sync_mailbox_key,
+        "thread_reference": "synthetic-thread",
+        "sender": "fixture@example.test",
+        "seen": True,
+        "received_at": now,
+        "last_seen_at": now,
+    }
+    emails = [
+        InboxEmail(
+            **common,
+            reference="synthetic-operational",
+            subject="Pedido de orçamento",
+            summary="Solicito orçamento para serviço técnico.",
+            category="customer_quote_request",
+            confidence_band="high",
+            destination="task",
+            classification_reason="Pedido de orçamento explícito.",
+            priority="normal",
+            review_status="classified",
+        ),
+        InboxEmail(
+            **common,
+            reference="synthetic-information",
+            subject="Newsletter de promoção",
+            summary="Oferta especial.",
+            category="informational",
+            confidence_band="high",
+            destination="classification_only",
+            classification_reason="Conteúdo promocional.",
+            priority="low",
+            review_status="classified",
+        ),
+        InboxEmail(
+            **common,
+            reference="synthetic-review",
+            subject="Cotação",
+            summary="Segue a cotação para avaliação.",
+            category="other_review",
+            confidence_band="low",
+            destination="review",
+            classification_reason="Contexto insuficiente.",
+            priority="low",
+            review_status="pending",
+        ),
+    ]
+    db.add_all(emails)
+    db.commit()
+
+    with TestClient(app) as client:
+        response = client.get("/web/mensagens")
+
+    assert response.status_code == 200
+    assert 'data-message-tab="operational"' in response.text
+    assert 'aria-selected="true"' in response.text
+    assert 'data-message-panel="informational"' in response.text
+    assert 'data-message-panel="review"' in response.text
+    assert 'id="messages-informational"' in response.text
+    assert 'id="messages-review"' in response.text
+    assert 'aria-labelledby="tab-informational" hidden' in response.text
+    assert 'aria-labelledby="tab-review" hidden' in response.text
+    assert "Operacionais" in response.text
+    assert "Informativos/outros" in response.text
+    assert "Revisar" in response.text
+    assert 'data-message-row data-bucket="operational"' in response.text
+    assert 'data-message-row data-bucket="informational"' in response.text
+    assert 'data-message-row data-bucket="review"' in response.text
+    operational_panel = response.text.split('id="messages-operational"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert "Pedido de orçamento" in operational_panel
+    assert "Newsletter de promoção" not in operational_panel
+    assert "Cotação" not in operational_panel
+
+
 def test_messages_pause_and_category_review_only_change_local_projection(db):
     settings = get_settings()
     sync_state = EmailSyncState(
