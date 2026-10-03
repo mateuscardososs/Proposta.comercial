@@ -371,3 +371,28 @@ são persistidas no banco, histórico ou telemetria.
 7. Confirmar no Yahoo/Outlook que nenhuma mensagem mudou para lida.
 
 Esse roteiro ainda não foi executado com a conta da empresa.
+
+### Produção local da instância 8013 (estado em 03/10/2026)
+
+A 8013 foi transferida do container de voz desativada para o processo nativo no Mac, usando o
+ambiente virtual e os componentes locais já instalados. Consulte
+[validacao-instancia-8013-voz.md](validacao-instancia-8013-voz.md) para causa, evidências e o
+limite de validação manual.
+
+Inicialização:
+
+```bash
+cd /Users/mateuscardoso/dev/pai/Proposta.comercial
+PYTHONPATH=. .venv/bin/python scripts/run_assistant_8013_local.py
+```
+
+Tela: `http://127.0.0.1:8013/web/assistente`. Encerre com `Ctrl+C` no terminal do processo.
+O iniciador restringe a aplicação ao loopback e valida Ollama/modelo, dependências/modelos de voz,
+configurações Yahoo preservadas e banco `propostas_db`. A configuração de conexão fica fora do Git
+em `../local-data/adbalancas-8013/private/`, com permissão `0600`; não a copie para `.env` nem a
+imprima. A senha Yahoo continua exclusivamente no `.env.yahoo.local` ignorado pelo Git.
+
+O serviço Compose de PostgreSQL mantém o mesmo volume, mas publica a porta em
+`127.0.0.1:5433`; a 5432 do host estava ocupada por outro PostgreSQL local e não foi alterada.
+Não inicie o container antigo `adbalancas-app-8013` enquanto o processo nativo estiver usando a
+porta 8013.
