@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-header">
+  <div><span class="eyebrow">Comercial</span>
   <h1 class="page-title">Clientes</h1>
   <p class="page-subtitle">Mantenha os dados de cliente organizados para acelerar a criacao de propostas.</p>
   <div class="meta-line">
     <span class="badge primary">Cadastro mestre</span>
     <span class="badge">Base para autofill de proposta</span>
-  </div>
+  </div></div>
 </section>
 
 <section class="card">
@@ -29,6 +30,8 @@
           <th>CNPJ</th>
           <th>Cidade/UF</th>
           <th>Contato padrao</th>
+          <th>Propostas</th>
+          <th>Serviços</th>
           <th>Acoes</th>
         </tr>
       </thead>
@@ -39,12 +42,14 @@
           <td>{{ client.cnpj or "-" }}</td>
           <td>{{ client.cidade_uf or "-" }}</td>
           <td>{{ client.contato_padrao or "-" }}</td>
+          <td><span class="badge">{{ proposal_counts.get(client.id, 0) }}</span></td>
+          <td><span class="badge">{{ service_counts.get(client.id, 0) }}</span></td>
           <td>
             <a class="btn btn-ghost" href="/web/clients/{{ client.id }}">Visualizar / editar</a>
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="5" class="muted">Nenhum cliente cadastrado.</td></tr>
+        <tr><td colspan="7"><div class="empty-state compact">Nenhum cliente cadastrado.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -4,6 +4,8 @@ __pycache__
 *.pyc
 *.pyo
 .env
+.env.yahoo.local
 output/
 *.pdf
 *.docx
+.models/

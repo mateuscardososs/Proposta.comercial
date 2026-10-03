@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% set execution_labels = {'not_started': 'Nao iniciada', 'in_progress': 'Em andamento', 'completed': 'Concluida'} %}
+{% set administration_labels = {'open': 'Aberta', 'closed': 'Encerrada'} %}
+{% set step_labels = {'report': 'Relatorio', 'proposal': 'Proposta', 'proposal_sent': 'Proposta enviada', 'invoice': 'Nota fiscal', 'receipt': 'Recibo'} %}
+{% set status_labels = {'unknown': 'Desconhecida', 'not_applicable': 'Dispensada', 'pending': 'Pendente', 'waiting_customer': 'Aguardando cliente', 'completed': 'Concluida'} %}
+
+{% block content %}
+<section class="page-header">
+  <div><span class="eyebrow">Operação</span>
+  <h1 class="page-title">Serviços</h1>
+  <p class="page-subtitle">Acompanhe a execucao tecnica e as etapas administrativas de cada chamado.</p>
+  <span class="sr-only">Execucao tecnica. Situacao administrativa.</span>
+  <div class="meta-line"><span class="badge primary">{{ service_rows|length }} registros confirmados</span></div></div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Chamados</h2>
+      <p class="card-subtitle">Os mais recentes aparecem primeiro.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Chamado</th><th>Cliente</th><th>Execução</th><th>Administrativo</th><th>Próxima etapa</th><th>Último evento</th></tr>
+      </thead>
+      <tbody>
+        {% for row in service_rows %}
+        {% set call = row.call %}
+        <tr>
+          <td><a href="/web/services/{{ call.id }}"><strong>#{{ call.id }} · {{ call.summary }}</strong></a><br><span class="muted">{{ format_date_br(call.opened_on) }}</span></td>
+          <td>{{ call.client.razao_social }}</td>
+          <td><span class="badge {{ 'success' if call.execution_status == 'completed' else 'primary' if call.execution_status == 'in_progress' else '' }}">{{ execution_labels[call.execution_status] }}</span></td>
+          <td><span class="badge {{ 'success' if call.administrative_status == 'closed' else 'warning' }}">{{ administration_labels[call.administrative_status] }}</span></td>
+          <td>
+            {% if call.execution_status != 'completed' %}Execucao tecnica{% else %}
+              {% if row.next_step %}{{ step_labels[row.next_step.step_type] }} · {{ status_labels[row.next_step.status] }}{% else %}Nenhuma{% endif %}
+            {% endif %}
+          </td>
+          <td>{% if row.last_event %}{{ format_date_br(row.last_event.occurred_on) }}<br><span class="muted">{{ row.last_event.description }}</span>{% else %}<span class="muted">Sem eventos</span>{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6"><div class="empty-state compact">Nenhum chamado registrado.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

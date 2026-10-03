@@ -1,17 +1,41 @@
 from __future__ import annotations
 
+from datetime import datetime
 from urllib.parse import quote_plus
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import and_, func, not_, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.assistant.email.classification import OPERATIONAL_CATEGORIES
 from app.config import get_settings
 from app.db import get_db
-from app.models import Client, Proposal, User
-from app.schemas import ProposalCreate, ProposalItemCreate, ScheduleItemCreate, TaskCreate, UserCreate
-from app.services import board_service, dashboard_service, proposal_service, suggestion_service
+from app.models import (
+    Client,
+    EmailSyncState,
+    EmailTaskLink,
+    InboxEmail,
+    Proposal,
+    ServiceCall,
+    User,
+)
 from app.routers.users import hash_password
+from app.schemas import (
+    ProposalCreate,
+    ProposalItemCreate,
+    ScheduleItemCreate,
+    TaskCreate,
+    UserCreate,
+)
+from app.services import (
+    board_service,
+    dashboard_service,
+    proposal_service,
+    suggestion_service,
+)
+from app.services.today_service import get_today_agenda
 from app.utils.currency import format_brl
 from app.utils.dates import format_date_br
 from app.utils.formatters import decimal_from_str
@@ -172,18 +196,216 @@ def _required_positive_int(value: object, label: str) -> int:
 
 @router.get("/", name="web_index")
 def index(request: Request, db: Session = Depends(get_db)) -> object:
-    summary = dashboard_service.get_dashboard_summary(db)
+    today = datetime.now(ZoneInfo(settings.assistant_timezone)).date()
+    summary = dashboard_service.get_dashboard_summary(db, today)
+    agenda = get_today_agenda(
+        db,
+        today=today,
+        lookahead_days=settings.today_lookahead_days,
+        timezone=settings.assistant_timezone,
+    )
+    today_sections = {
+        "attention": [item for item in agenda.items if item.rank <= 1][:6],
+        "agenda": [item for item in agenda.items if item.source_type == "task"],
+        "services": [item for item in agenda.items if item.source_type == "service"],
+        "finance": [item for item in agenda.items if item.source_type == "finance"],
+    }
     return render_template(
         request,
         "index.html",
-        {"summary": summary, "full_width": True},
+        {
+            "summary": summary,
+            "agenda": agenda,
+            "today_sections": today_sections,
+            "full_width": True,
+            "title": "Hoje",
+        },
     )
+
+
+@router.get("/web/mensagens", name="web_messages")
+def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
+    state = (
+        db.query(EmailSyncState)
+        .filter_by(
+            provider=settings.email_provider,
+            mailbox_key=settings.email_sync_mailbox_key,
+        )
+        .one_or_none()
+    )
+    base_query = db.query(InboxEmail).filter_by(
+        provider=settings.email_provider,
+        mailbox_key=settings.email_sync_mailbox_key,
+    )
+    operational_filter = and_(
+        InboxEmail.category.in_(OPERATIONAL_CATEGORIES),
+        InboxEmail.confidence_band.in_(("medium", "high")),
+    )
+    informational_filter = InboxEmail.category == "informational"
+    review_filter = not_(or_(operational_filter, informational_filter))
+
+    def latest_messages(query):
+        return (
+            query.order_by(InboxEmail.received_at.desc(), InboxEmail.id.desc())
+            .limit(100)
+            .all()
+        )
+
+    operational_messages = latest_messages(base_query.filter(operational_filter))
+    informational_messages = latest_messages(base_query.filter(informational_filter))
+    review_messages = latest_messages(base_query.filter(review_filter))
+    messages = operational_messages + informational_messages + review_messages
+    message_references = list({message.reference for message in messages})
+    task_links = (
+        db.query(EmailTaskLink)
+        .filter(
+            EmailTaskLink.provider == settings.email_provider,
+            EmailTaskLink.mailbox_key == settings.email_sync_mailbox_key,
+            EmailTaskLink.reference.in_(message_references),
+            EmailTaskLink.task_id.is_not(None),
+        )
+        .all()
+        if message_references else []
+    )
+    task_ids_by_reference = {link.reference: link.task_id for link in task_links}
+    for message in messages:
+        message.task_id = task_ids_by_reference.get(message.reference)
+    message_summary = {
+        "new": base_query.filter(InboxEmail.seen.is_(False)).count(),
+        "priority": base_query.filter(InboxEmail.priority.in_(("high", "critical"))).count(),
+        "review": base_query.filter(review_filter).count(),
+        "operational": base_query.filter(operational_filter).count(),
+        "informational": base_query.filter(informational_filter).count(),
+    }
+    if settings.email_provider == "synthetic":
+        provider_configured = True
+    elif settings.email_provider == "imap_yahoo":
+        provider_configured = bool(settings.email_imap_username and settings.email_imap_app_password.get_secret_value())
+    else:
+        provider_configured = False
+    return render_template(
+        request,
+        "messages.html",
+        {
+            "title": "E-mails e mensagens",
+            "message_groups": [
+                {
+                    "key": "operational",
+                    "title": "Operacionais",
+                    "panel_id": "messages-operational",
+                    "messages": operational_messages,
+                    "count": message_summary["operational"],
+                    "empty_text": "Nenhuma mensagem operacional classificada no momento.",
+                },
+                {
+                    "key": "informational",
+                    "title": "Informativos/outros",
+                    "panel_id": "messages-informational",
+                    "messages": informational_messages,
+                    "count": message_summary["informational"],
+                    "empty_text": "Nenhum informativo ou outro item classificado.",
+                },
+                {
+                    "key": "review",
+                    "title": "Revisar",
+                    "panel_id": "messages-review",
+                    "messages": review_messages,
+                    "count": message_summary["review"],
+                    "empty_text": "Nenhum item aguardando revisão.",
+                },
+            ],
+            "message_count_total": sum(
+                message_summary[key] for key in ("operational", "informational", "review")
+            ),
+            "category_labels": {
+                "customer_quote_request": "Orçamento solicitado por cliente",
+                "vendor_quotation": "Cotação de fornecedor",
+                "purchase_order": "Pedido/ordem de compra",
+                "invoice_request": "Solicitação de nota fiscal",
+                "invoice_received": "Nota fiscal recebida",
+                "accounts_payable": "Conta a pagar",
+                "accounts_receivable": "Cobrança/conta a receber",
+                "payment_proof": "Comprovante de pagamento",
+                "service_request": "Chamado/serviço técnico",
+                "pending_reply": "Possível resposta pendente",
+                "informational": "Informativo/outros",
+                "other_review": "Revisar classificação",
+            },
+            "message_summary": message_summary,
+            "sync_state": state,
+            "sync_enabled": settings.email_sync_enabled,
+            "sync_interval_seconds": settings.email_sync_interval_seconds,
+            "provider_configured": provider_configured,
+            "full_width": True,
+        },
+    )
+
+
+@router.post("/web/mensagens/sync-state", name="web_messages_sync_state")
+async def messages_sync_state(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    form = await request.form()
+    action = str(form.get("action", ""))
+    if action not in {"pause", "resume"}:
+        raise HTTPException(status_code=400, detail="Ação de sincronização inválida.")
+    state = (
+        db.query(EmailSyncState)
+        .filter_by(
+            provider=settings.email_provider,
+            mailbox_key=settings.email_sync_mailbox_key,
+        )
+        .one_or_none()
+    )
+    if state is None:
+        state = EmailSyncState(
+            provider=settings.email_provider,
+            mailbox_key=settings.email_sync_mailbox_key,
+        )
+        db.add(state)
+    state.paused = action == "pause"
+    db.commit()
+    return RedirectResponse(url=request.url_for("web_messages"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/web/mensagens/{message_id}/review", name="web_message_review")
+async def message_review(message_id: int, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    form = await request.form()
+    category = str(form.get("category", ""))
+    allowed = {
+        "customer_quote_request",
+        "vendor_quotation",
+        "purchase_order",
+        "invoice_request",
+        "invoice_received",
+        "accounts_payable",
+        "accounts_receivable",
+        "payment_proof",
+        "service_request",
+        "pending_reply",
+        "informational",
+        "other_review",
+    }
+    message = db.get(InboxEmail, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Mensagem não encontrada.")
+    if category not in allowed:
+        raise HTTPException(status_code=400, detail="Categoria inválida.")
+    message.category = category
+    message.review_status = "reviewed"
+    message.classification_reason = (message.classification_reason + "; categoria revisada manualmente")[:2000]
+    db.commit()
+    return RedirectResponse(url=request.url_for("web_messages"), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/web/clients", name="web_clients")
 def clients_page(request: Request, db: Session = Depends(get_db)) -> object:
     clients = db.query(Client).order_by(Client.razao_social.asc()).all()
-    return render_template(request, "clients.html", {"clients": clients})
+    proposal_counts = dict(db.query(Proposal.client_id, func.count(Proposal.id)).group_by(Proposal.client_id).all())
+    service_counts = dict(db.query(ServiceCall.client_id, func.count(ServiceCall.id)).group_by(ServiceCall.client_id).all())
+    return render_template(
+        request,
+        "clients.html",
+        {"clients": clients, "proposal_counts": proposal_counts, "service_counts": service_counts},
+    )
 
 
 @router.get("/web/clients/new", name="web_client_new")
@@ -219,14 +441,18 @@ def client_detail_page(client_id: int, request: Request, db: Session = Depends(g
     client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
-    proposals = (
-        db.query(Proposal)
-        .filter(Proposal.client_id == client_id)
-        .order_by(Proposal.data_geracao.desc(), Proposal.id.desc())
-        .limit(10)
-        .all()
+    proposals = db.query(Proposal).filter(Proposal.client_id == client_id).order_by(Proposal.data_geracao.desc(), Proposal.id.desc()).limit(10).all()
+    services = db.query(ServiceCall).filter(ServiceCall.client_id == client_id).order_by(ServiceCall.opened_on.desc(), ServiceCall.id.desc()).limit(10).all()
+    return render_template(
+        request,
+        "client_form.html",
+        {
+            "client": client,
+            "action_url": f"/web/clients/{client_id}/edit",
+            "proposals": proposals,
+            "services": services,
+        },
     )
-    return render_template(request, "client_form.html", {"client": client, "action_url": f"/web/clients/{client_id}/edit", "proposals": proposals})
 
 
 @router.post("/web/clients/{client_id}/edit")
@@ -294,12 +520,7 @@ async def user_new_submit(request: Request, db: Session = Depends(get_db)) -> ob
 
 @router.get("/web/proposals", name="web_proposals")
 def proposals_page(request: Request, db: Session = Depends(get_db)) -> object:
-    proposals = (
-        db.query(Proposal)
-        .options(joinedload(Proposal.client), joinedload(Proposal.user))
-        .order_by(Proposal.data_geracao.desc(), Proposal.id.desc())
-        .all()
-    )
+    proposals = db.query(Proposal).options(joinedload(Proposal.client), joinedload(Proposal.user)).order_by(Proposal.data_geracao.desc(), Proposal.id.desc()).all()
     return render_template(request, "proposals.html", {"proposals": proposals})
 
 

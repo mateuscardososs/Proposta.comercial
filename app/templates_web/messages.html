@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Inbox operacional</p>
+  <h1 class="page-title">E-mails e mensagens</h1>
+  <p class="page-subtitle">Classificação local com evidências. Ler mensagens não altera flags, não envia respostas e não processa anexos.</p>
+  <div class="meta-line">
+    <span class="badge primary">{% if sync_enabled %}Sincronização periódica habilitada{% else %}Sincronização automática desligada{% endif %}</span>
+    <span class="badge">Provedor: {{ "configurado" if provider_configured else "não configurado" }}</span>
+    {% if sync_state and sync_state.paused %}<span class="badge warning">Pausada</span>{% endif %}
+  </div>
+</section>
+
+<section class="kpi-grid" aria-label="Resumo da caixa de entrada">
+  <article class="kpi-card"><span>Novas</span><strong>{{ message_summary.new }}</strong><small>Não lidas no servidor</small></article>
+  <article class="kpi-card"><span>Prioridade</span><strong>{{ message_summary.priority }}</strong><small>Alta ou urgente</small></article>
+  <article class="kpi-card"><span>Revisar</span><strong>{{ message_summary.review }}</strong><small>Classificação local pendente</small></article>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div><h2 class="card-title">Estado da sincronização</h2><p class="card-subtitle">Uma falha é diferente de uma caixa vazia.</p></div>
+    <div class="actions">
+      <form method="post" action="/web/mensagens/sync-state">
+        {% if sync_state and sync_state.paused %}<input type="hidden" name="action" value="resume"><button class="btn btn-ghost" type="submit">Retomar</button>
+        {% else %}<input type="hidden" name="action" value="pause"><button class="btn btn-ghost" type="submit">Pausar</button>{% endif %}
+      </form>
+    </div>
+  </div>
+  <dl class="sync-status">
+    <div><dt>Última tentativa</dt><dd>{{ sync_state.last_attempt_at.strftime('%d/%m/%Y %H:%M') if sync_state and sync_state.last_attempt_at else "Ainda não executada" }}</dd></div>
+    <div><dt>Último ciclo concluído</dt><dd>{{ sync_state.last_success_at.strftime('%d/%m/%Y %H:%M') if sync_state and sync_state.last_success_at else "Nenhum" }}</dd></div>
+    <div><dt>Mensagens no último ciclo</dt><dd>{{ sync_state.last_count if sync_state else 0 }}</dd></div>
+    <div><dt>Estado</dt><dd>{% if sync_state and sync_state.last_error %}Parcial ou falha ({{ sync_state.last_error }}){% elif sync_state and sync_state.last_success_at %}Concluído{% else %}Sem consulta registrada{% endif %}</dd></div>
+    <div><dt>Intervalo</dt><dd>{{ (sync_interval_seconds // 60) }} min; o próximo ciclo começa após esse intervalo.</dd></div>
+  </dl>
+  <p class="muted">Pausar impede novas consultas no próximo ciclo; uma leitura já iniciada termina sem alterar mensagens ou flags.</p>
+</section>
+
+<section class="card" data-message-queue>
+  <div class="card-head"><div><h2 class="card-title">Caixa de trabalho</h2><p class="card-subtitle">A fila inicial mostra mensagens operacionais. Informativos e itens incertos ficam separados.</p></div></div>
+  <div class="actions message-queue-tabs" role="tablist" aria-label="Fila de mensagens">
+    <button class="btn btn-primary" type="button" role="tab" id="tab-operational" data-message-tab="operational" aria-controls="messages-operational" aria-selected="true" tabindex="0">Operacionais ({{ message_summary.operational }})</button>
+    <button class="btn btn-ghost" type="button" role="tab" id="tab-informational" data-message-tab="informational" aria-controls="messages-informational" aria-selected="false" tabindex="-1">Informativos/outros ({{ message_summary.informational }})</button>
+    <button class="btn btn-ghost" type="button" role="tab" id="tab-review" data-message-tab="review" aria-controls="messages-review" aria-selected="false" tabindex="-1">Revisar ({{ message_summary.review }})</button>
+  </div>
+  <div class="message-filters form-grid-4" data-message-filters>
+    <div class="field"><label for="message-search">Buscar</label><input id="message-search" type="search" data-message-search placeholder="Assunto ou remetente"></div>
+    <div class="field"><label for="message-category">Categoria</label><select id="message-category" data-message-category><option value="">Todas</option>{% for category, label in category_labels.items() %}<option value="{{ category }}">{{ label }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="message-priority">Prioridade</label><select id="message-priority" data-message-priority><option value="">Todas</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="normal">Normal</option><option value="low">Baixa</option></select></div>
+    <div class="field"><label for="message-review">Revisão</label><select id="message-review" data-message-review><option value="">Todas</option><option value="pending">Pendente</option><option value="reviewed">Revisada</option><option value="classified">Classificada</option><option value="task_created">Tarefa vinculada</option></select></div>
+  </div>
+  {% if message_count_total %}
+    {% for group in message_groups %}
+    <section id="{{ group.panel_id }}" data-message-panel="{{ group.key }}" role="tabpanel" aria-labelledby="tab-{{ group.key }}"{% if group.key != "operational" %} hidden{% endif %}>
+      <h3 class="card-title">{{ group.title }}</h3>
+      {% if group.messages %}<div class="message-list">
+      {% for message in group.messages %}
+      <article class="message-item" data-message-row data-bucket="{{ group.key }}" data-category="{{ message.category }}" data-priority="{{ message.priority }}" data-review="{{ message.review_status }}" data-search="{{ message.subject }} {{ message.sender }} {{ message.summary }}">
+      <div class="message-heading"><div><span class="badge{% if message.seen %}{% else %} warning{% endif %}">{{ "Lida no servidor" if message.seen else "Não lida no servidor" }}</span> <span class="badge">{{ category_labels.get(message.category, message.category|replace("_", " ")) }}</span> <span class="badge">Confiança {{ message.confidence_band }}</span>{% if message.category == "pending_reply" %}<span class="badge{% if message.awaiting_reply == 'yes' %} warning{% endif %}">{% if message.awaiting_reply == "yes" and message.sent_coverage %}Possível retorno pendente (Enviados consultados){% elif message.awaiting_reply == "no" and message.sent_coverage %}Resposta posterior encontrada em Enviados{% else %}Não verificável: cobertura de Enviados insuficiente{% endif %}</span>{% endif %}</div><time datetime="{{ message.received_at.isoformat() }}">{{ message.received_at.strftime('%d/%m/%Y %H:%M') }}</time></div>
+      <h3>{{ message.subject }}</h3><p class="message-sender">{{ message.sender }}</p><p>{{ message.summary }}</p>
+      <p class="message-reason">{{ message.classification_reason }}</p>
+      <details class="message-evidence"><summary>Ver prioridade</summary><p class="message-reason"><strong>Prioridade {{ message.priority }}.</strong> Prioridade alta depende de prazo, urgência ou impacto operacional explícito.</p></details>
+      {% if message.task_id %}<p class="message-reason"><a href="/web/board/{{ message.task_id }}/edit">Tarefa #{{ message.task_id }} criada a partir desta mensagem</a>{% if message.review_status == "pending" %}; revisar categoria ou vínculo do cliente{% endif %}</p>{% endif %}
+      {% if message.review_status == "pending" %}
+      <details class="message-evidence"><summary>Revisar classificação local</summary><form method="post" action="/web/mensagens/{{ message.id }}/review" class="review-form">
+        <label>Revisar categoria
+          <select name="category">
+            {% for category in ["customer_quote_request", "vendor_quotation", "purchase_order", "invoice_request", "invoice_received", "accounts_payable", "accounts_receivable", "payment_proof", "service_request", "pending_reply", "informational", "other_review"] %}
+              <option value="{{ category }}"{% if category == message.category %} selected{% endif %}>{{ category_labels.get(category, category|replace("_", " ")) }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="btn btn-ghost" type="submit">Salvar revisão</button>
+      </form></details>
+      {% else %}<span class="badge success">{{ "Tarefa vinculada" if message.review_status == "task_created" else "Classificada" if message.review_status == "classified" else "Revisada" }}</span>{% endif %}
+      </article>
+      {% endfor %}
+      </div>{% else %}<div class="empty-state"><p>{{ group.empty_text }}</p></div>{% endif %}
+    </section>
+    {% endfor %}
+  {% else %}<div class="empty-state"><h3>Nenhuma mensagem sincronizada</h3><p>{% if sync_state and sync_state.last_error %}A consulta falhou ou ficou parcial; isso não confirma que a caixa esteja vazia.{% elif not sync_enabled %}Ative e configure o sincronizador em ambiente de teste sintético para iniciar a triagem.{% else %}A sincronização ainda não concluiu uma consulta.{% endif %}</p></div>{% endif %}
+</section>
+<script>
+  (() => {
+    const filters = document.querySelector('[data-message-filters]');
+    const tabs = [...document.querySelectorAll('[data-message-tab]')];
+    const panels = [...document.querySelectorAll('[data-message-panel]')];
+    if (!filters || !tabs.length) return;
+    const selectTab = (selected) => {
+      tabs.forEach((tab) => {
+        const active = tab === selected;
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        tab.classList.toggle('btn-primary', active);
+        tab.classList.toggle('btn-ghost', !active);
+      });
+      panels.forEach((panel) => {
+        panel.hidden = panel.dataset.messagePanel !== selected.dataset.messageTab;
+      });
+    };
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => selectTab(tab));
+      tab.addEventListener('keydown', (event) => {
+        const target = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+          : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
+          : event.key === 'Home' ? 0
+          : event.key === 'End' ? tabs.length - 1
+          : null;
+        if (target === null) return;
+        event.preventDefault();
+        tabs[target].focus();
+        selectTab(tabs[target]);
+      });
+    });
+    const rows = [...document.querySelectorAll('[data-message-row]')];
+    const normalize = (value) => String(value || '').toLocaleLowerCase('pt-BR');
+    const apply = () => {
+      const search = normalize(filters.querySelector('[data-message-search]').value);
+      const category = filters.querySelector('[data-message-category]').value;
+      const priority = filters.querySelector('[data-message-priority]').value;
+      const review = filters.querySelector('[data-message-review]').value;
+      rows.forEach((row) => {
+        row.hidden = Boolean((search && !normalize(row.dataset.search).includes(search)) || (category && row.dataset.category !== category) || (priority && row.dataset.priority !== priority) || (review && row.dataset.review !== review));
+      });
+    };
+    filters.addEventListener('input', apply);
+    filters.addEventListener('change', apply);
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,158 @@
+<style>
+  .v2-wrap { max-width: 1320px; margin: 0 auto; }
+  .v2-note { display:flex; justify-content:space-between; gap:24px; align-items:end; margin-bottom:18px; }
+  .v2-note h2 { margin-bottom:7px; }
+  .traits { display:flex; flex-wrap:wrap; gap:7px; justify-content:flex-end; }
+  .trait { padding:6px 9px; border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--muted); font-size:12px; }
+  .product-frame { border:1px solid #dfe3e7; border-radius:18px; overflow:hidden; background:#f4f5f6; box-shadow:0 16px 50px rgba(29,39,49,.11); font-family:"Barlow","Segoe UI",Arial,sans-serif; color:#18202a; }
+  .product-grid { min-height:720px; display:grid; grid-template-columns:238px minmax(0,1fr); }
+  .product-sidebar { background:#fff; border-right:1px solid #e4e7ea; padding:19px 14px 16px; display:flex; flex-direction:column; }
+  .product-brand { display:flex; align-items:center; gap:10px; padding:0 8px 20px; border-bottom:1px solid #eff1f3; }
+  .brand-mark { width:36px; height:36px; border-radius:9px; background:#102f4a; color:#fff; display:grid; place-items:center; font-size:13px; font-weight:850; letter-spacing:-.03em; }
+  .brand-copy b { display:block; font-size:13px; line-height:1.15; }
+  .brand-copy span { font-size:9px; color:#7a838c; text-transform:uppercase; letter-spacing:.08em; }
+  .nav-group { margin-top:18px; }
+  .nav-group-title { padding:0 10px 7px; color:#9299a0; font-size:9px; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
+  .nav-link { display:flex; align-items:center; gap:10px; height:34px; padding:0 10px; margin:2px 0; border-radius:8px; color:#4f5963; font-size:12px; font-weight:550; }
+  .nav-link.active { background:#edf1f4; color:#14202b; font-weight:700; box-shadow:inset 3px 0 #1d5d8d; }
+  .nav-icon { width:17px; height:17px; display:grid; place-items:center; color:#68727c; }
+  .nav-icon svg { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .nav-link.active .nav-icon { color:#1d5d8d; }
+  .sidebar-foot { margin-top:auto; padding:12px; border:1px solid #e5e8eb; border-radius:10px; background:#f8f9fa; }
+  .sidebar-foot b { display:block; font-size:11px; margin-bottom:4px; }
+  .sidebar-foot span { display:block; color:#78818a; font-size:9px; line-height:1.4; }
+  .workspace { min-width:0; padding:14px; background:#f3f4f5; }
+  .workspace-shell { min-height:692px; background:#f7f7f8; border:1px solid #e1e4e7; border-radius:14px; overflow:hidden; }
+  .workspace-top { height:58px; display:flex; align-items:center; justify-content:space-between; padding:0 22px; background:#fff; border-bottom:1px solid #e5e7e9; }
+  .crumbs { font-size:11px; color:#7b838b; }
+  .crumbs b { color:#303942; font-weight:650; }
+  .top-tools { display:flex; align-items:center; gap:8px; font-size:10px; color:#6e7780; }
+  .sync-pill { display:flex; align-items:center; gap:6px; padding:6px 9px; background:#f4f6f7; border-radius:7px; }
+  .sync-dot { width:6px; height:6px; border-radius:50%; background:#2e8b69; }
+  .content { padding:22px; }
+  .page-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:18px; }
+  .eyebrow { margin-bottom:4px; color:#78818a; font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+  .page-heading h1 { margin:0; font-size:25px; letter-spacing:-.025em; line-height:1.15; }
+  .page-heading p { margin:6px 0 0; color:#69737d; font-size:11px; }
+  .primary-action { flex:0 0 auto; border:0; border-radius:8px; background:#183f62; color:#fff; padding:9px 13px; font-size:11px; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,.1); }
+  .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:11px; margin-bottom:15px; }
+  .summary-card { background:#fff; border:1px solid #e2e5e8; border-radius:10px; padding:13px 14px; min-height:88px; }
+  .summary-label { display:flex; justify-content:space-between; color:#727b84; font-size:10px; }
+  .summary-number { margin-top:9px; font-size:22px; font-weight:750; letter-spacing:-.03em; }
+  .summary-detail { margin-top:3px; color:#818991; font-size:9px; }
+  .summary-card.danger { border-color:#edc5c5; }
+  .summary-card.danger .summary-number { color:#b83c3c; }
+  .summary-card.warning .summary-number { color:#9a6916; }
+  .summary-card.success .summary-number { color:#277355; }
+  .dashboard-grid { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(250px,.8fr); gap:13px; }
+  .panel { background:#fff; border:1px solid #e2e5e8; border-radius:10px; overflow:hidden; }
+  .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:13px 15px; border-bottom:1px solid #eceef0; }
+  .panel-title { display:flex; align-items:center; gap:8px; }
+  .scale-signature { display:flex; gap:2px; align-items:end; width:17px; height:16px; }
+  .scale-signature i { display:block; width:2px; border-radius:1px; background:#c68519; }
+  .scale-signature i:nth-child(1), .scale-signature i:nth-child(5) { height:5px; }
+  .scale-signature i:nth-child(2), .scale-signature i:nth-child(4) { height:9px; }
+  .scale-signature i:nth-child(3) { height:14px; }
+  .panel-head h2 { margin:0; font-size:13px; }
+  .panel-head span { color:#838b93; font-size:9px; }
+  .text-link { color:#245b86 !important; font-weight:650; }
+  .attention-row { display:grid; grid-template-columns:34px minmax(0,1fr) 92px 74px; align-items:center; gap:10px; padding:11px 15px; border-bottom:1px solid #eff1f2; }
+  .attention-row:last-child { border-bottom:0; }
+  .item-glyph { width:30px; height:30px; border-radius:7px; display:grid; place-items:center; background:#f2f4f5; color:#59646e; font-size:9px; font-weight:800; }
+  .item-main b { display:block; font-size:11px; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .item-main span { color:#7b838b; font-size:9px; }
+  .due { color:#5e6872; font-size:9px; }
+  .status { justify-self:end; padding:4px 7px; border-radius:6px; font-size:9px; font-weight:700; }
+  .status.red { background:#fdeaea; color:#b83c3c; }
+  .status.amber { background:#fff2d9; color:#93620d; }
+  .status.blue { background:#e9f1f8; color:#245b86; }
+  .agenda-item { padding:12px 15px; border-bottom:1px solid #eff1f2; }
+  .agenda-item:last-child { border-bottom:0; }
+  .agenda-time { color:#245b86; font-size:9px; font-weight:750; margin-bottom:4px; }
+  .agenda-item b { display:block; font-size:11px; margin-bottom:3px; }
+  .agenda-item span { color:#7a838b; font-size:9px; line-height:1.35; }
+  .lower-grid { display:grid; grid-template-columns:1fr 1fr; gap:13px; margin-top:13px; }
+  .compact-row { display:flex; justify-content:space-between; gap:10px; padding:10px 15px; border-bottom:1px solid #eff1f2; font-size:10px; }
+  .compact-row:last-child { border-bottom:0; }
+  .compact-row span { color:#7a838b; }
+  .approval { margin-top:18px; display:flex; justify-content:center; }
+  .approval-option { width:min(640px,100%); padding:14px 16px; border:2px solid var(--border); border-radius:12px; background:var(--surface); cursor:pointer; text-align:center; }
+  .approval-option.selected { border-color:#1d5d8d; box-shadow:0 0 0 3px rgba(29,93,141,.12); }
+  .approval-option b { display:block; margin-bottom:4px; }
+  .approval-option span { color:var(--muted); font-size:13px; }
+  @media (max-width:900px) { .product-grid { grid-template-columns:180px minmax(0,1fr); } .summary-grid { grid-template-columns:repeat(2,1fr); } .dashboard-grid { grid-template-columns:1fr; } .product-frame { overflow:auto; } }
+</style>
+
+<div class="v2-wrap">
+  <div class="v2-note">
+    <div><h2>Direção A refinada — mais próxima das referências</h2><p class="subtitle">Clara, espaçosa e quase monocromática. A identidade AD aparece na informação e nos detalhes, não em uma camada visual pesada.</p></div>
+    <div class="traits"><span class="trait">Sidebar clara</span><span class="trait">Grande superfície de trabalho</span><span class="trait">Cartões discretos</span><span class="trait">Cor semântica</span></div>
+  </div>
+
+  <div class="product-frame">
+    <div class="product-grid">
+      <aside class="product-sidebar">
+        <div class="product-brand"><div class="brand-mark">AD</div><div class="brand-copy"><b>AD Balanças</b><span>Engenharia</span></div></div>
+        <nav>
+          <div class="nav-group"><div class="nav-group-title">Operação</div>
+            <div class="nav-link active"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V20H4Z"/><path d="M9 20v-6h6v6"/></svg></span>Hoje</div>
+            <div class="nav-link"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>Tarefas</div>
+            <div class="nav-link"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5 5L3 18v3h3l6.7-6.7a4 4 0 0 0 5-5l-3 3-3-3Z"/></svg></span>Serviços</div>
+          </div>
+          <div class="nav-group"><div class="nav-group-title">Comunicação</div>
+            <div class="nav-link"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 4h16v14H5l-3 3V6a2 2 0 0 1 2-2Z"/><path d="m5 7 7 5 7-5"/></svg></span>E-mails e mensagens</div>
+            <div class="nav-link"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3 14 9l6 2-6 2-2 6-2-6-6-2 6-2Z"/></svg></span>Assistente</div>
+          </div>
+          <div class="nav-group"><div class="nav-group-title">Comercial</div>
+            <div class="nav-link"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M6 2h9l4 4v16H6Z"/><path d="M14 2v5h5M9 12h7M9 16h7"/></svg></span>Propostas</div>
+            <div class="nav-link"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7M16 7h6M19 4v6"/></svg></span>Clientes</div>
+          </div>
+          <div class="nav-group"><div class="nav-group-title">Financeiro</div>
+            <div class="nav-link"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3v18M17 7.5C17 5.6 14.8 4 12 4S7 5.3 7 7s2 2.6 5 3 5 1.3 5 3-2.2 3-5 3-5-1.6-5-3.5"/></svg></span>Contas a receber</div>
+            <div class="nav-link"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3v18M17 7.5C17 5.6 14.8 4 12 4S7 5.3 7 7s2 2.6 5 3 5 1.3 5 3-2.2 3-5 3-5-1.6-5-3.5"/></svg></span>Contas a pagar</div>
+          </div>
+        </nav>
+        <div class="sidebar-foot"><b>Ambiente interno</b><span>Acesso local em 127.0.0.1<br>Dados operacionais protegidos</span></div>
+      </aside>
+
+      <main class="workspace">
+        <div class="workspace-shell">
+          <header class="workspace-top"><div class="crumbs">Visão geral&nbsp; / &nbsp;<b>Hoje</b></div><div class="top-tools"><div class="sync-pill"><i class="sync-dot"></i>Dados atualizados</div><span>Sex, 2 de outubro</span></div></header>
+          <div class="content">
+            <div class="page-heading"><div><div class="eyebrow">Visão operacional</div><h1>Bom dia, equipe</h1><p>Há 4 itens que precisam de atenção antes das demais atividades.</p></div><button class="primary-action">＋ Nova tarefa</button></div>
+
+            <section class="summary-grid">
+              <article class="summary-card danger"><div class="summary-label"><span>Tarefas atrasadas</span><span>↗</span></div><div class="summary-number">4</div><div class="summary-detail">2 vencidas há mais de 3 dias</div></article>
+              <article class="summary-card warning"><div class="summary-label"><span>Tarefas de hoje</span><span>○</span></div><div class="summary-number">7</div><div class="summary-detail">Ordenadas por prazo e impacto</div></article>
+              <article class="summary-card"><div class="summary-label"><span>Serviços com pendência</span><span>⌁</span></div><div class="summary-number">3</div><div class="summary-detail">Execução ou etapa administrativa</div></article>
+              <article class="summary-card"><div class="summary-label"><span>E-mails para revisar</span><span>□</span></div><div class="summary-number">5</div><div class="summary-detail">2 classificados como prioritários</div></article>
+            </section>
+
+            <div class="dashboard-grid">
+              <section class="panel">
+                <div class="panel-head"><div class="panel-title"><span class="scale-signature"><i></i><i></i><i></i><i></i><i></i></span><h2>Precisa de atenção</h2></div><span class="text-link">Ver todas as tarefas</span></div>
+                <div class="attention-row"><div class="item-glyph">SV</div><div class="item-main"><b>Emitir relatório de calibração</b><span>Metalúrgica Aurora · Serviço #218</span></div><div class="due">Venceu ontem</div><div class="status red">Atrasado</div></div>
+                <div class="attention-row"><div class="item-glyph">TA</div><div class="item-main"><b>Confirmar visita técnica</b><span>Cliente a identificar · Responsável: Carlos</span></div><div class="due">Hoje</div><div class="status amber">Urgente</div></div>
+                <div class="attention-row"><div class="item-glyph">EM</div><div class="item-main"><b>Revisar solicitação recebida por e-mail</b><span>Classificação incerta · ação sugerida disponível</span></div><div class="due">Recebido 09:42</div><div class="status blue">Revisar</div></div>
+                <div class="attention-row"><div class="item-glyph">R$</div><div class="item-main"><b>Conferir conta próxima do vencimento</b><span>Fornecedor cadastrado · nenhuma baixa automática</span></div><div class="due">Vence amanhã</div><div class="status amber">Atenção</div></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><div class="panel-title"><h2>Agenda do dia</h2></div><span class="text-link">Abrir quadro</span></div>
+                <div class="agenda-item"><div class="agenda-time">09:30</div><b>Visita técnica</b><span>Inspeção de balança rodoviária<br>Metalúrgica Aurora</span></div>
+                <div class="agenda-item"><div class="agenda-time">Sem horário</div><b>Enviar proposta revisada</b><span>Proposta 184/02 · aguardando envio</span></div>
+                <div class="agenda-item"><div class="agenda-time">Sem horário</div><b>Validar nota fiscal</b><span>Etapa administrativa do Serviço #216</span></div>
+              </section>
+            </div>
+
+            <div class="lower-grid">
+              <section class="panel"><div class="panel-head"><div class="panel-title"><h2>Serviços em andamento</h2></div><span class="text-link">Ver serviços</span></div><div class="compact-row"><b>#218 · Calibração rodoviária</b><span>Próxima etapa: relatório</span></div><div class="compact-row"><b>#221 · Inspeção preventiva</b><span>Execução em andamento</span></div></section>
+              <section class="panel"><div class="panel-head"><div class="panel-title"><h2>Financeiro próximo</h2></div><span class="text-link">Ver financeiro</span></div><div class="compact-row"><b>Receber · Proposta 180/00</b><span>R$ 8.450 · amanhã</span></div><div class="compact-row"><b>Pagar · Fornecedor cadastrado</b><span>R$ 1.280 · 05/10</span></div></section>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div class="approval"><div class="approval-option" data-choice="aprovar-direcao-a-v2" onclick="toggleSelect(this)"><b>Aprovar esta direção visual</b><span>Usar esta estrutura, densidade, paleta e hierarquia como base do redesign.</span></div></div>
+</div>

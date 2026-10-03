@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .assistant-shell {
+    width: min(100%, 980px);
+    margin: 0 auto;
+    display: grid;
+    gap: 14px;
+  }
+
+  .assistant-local-strip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid rgba(29, 143, 110, 0.3);
+    border-radius: var(--radius-sm);
+    background: #e7f7f1;
+    color: #0f5c46;
+    padding: 9px 12px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .assistant-local-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(29, 143, 110, 0.14);
+    flex: 0 0 auto;
+  }
+
+  .assistant-stage {
+    min-height: 430px;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    padding: 0;
+    overflow: clip;
+  }
+
+  .assistant-history {
+    min-height: 320px;
+    max-height: 58vh;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--surface-muted);
+  }
+
+  .assistant-empty {
+    margin: auto;
+    max-width: 600px;
+    text-align: center;
+    color: var(--text-soft);
+  }
+
+  .assistant-empty strong {
+    display: block;
+    color: var(--text);
+    font-size: 18px;
+    margin-bottom: 6px;
+  }
+
+  .assistant-message {
+    width: fit-content;
+    max-width: min(78%, 720px);
+    border: 1px solid var(--line);
+    border-radius: 14px 14px 14px 4px;
+    background: #fff;
+    padding: 11px 13px;
+    box-shadow: var(--shadow-sm);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .assistant-message.user {
+    align-self: flex-end;
+    border-color: rgba(13, 90, 157, 0.28);
+    border-radius: 14px 14px 4px 14px;
+    background: #e8f2fc;
+  }
+
+  .assistant-message.error {
+    border-color: rgba(178, 51, 62, 0.3);
+    background: #fdecee;
+    color: #8b202b;
+  }
+
+  .assistant-message.success {
+    border-color: rgba(29, 143, 110, 0.3);
+    background: #e7f7f1;
+  }
+
+  .assistant-message-label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.55px;
+    text-transform: uppercase;
+  }
+
+  .assistant-confirm-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+
+  .assistant-email-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .assistant-email-card {
+    display: grid;
+    gap: 4px;
+    border-left: 3px solid var(--brand);
+    background: var(--surface-muted);
+    padding: 9px 10px;
+  }
+
+  .assistant-email-card > span,
+  .assistant-email-card > p,
+  .assistant-email-list > small {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 12px;
+  }
+
+  .assistant-email-limitation { color: #8b5a12 !important; }
+
+  .assistant-composer {
+    position: sticky;
+    bottom: 0;
+    border-top: 1px solid var(--line);
+    background: #fff;
+    padding: 14px;
+  }
+
+  .assistant-voice {
+    border-top: 1px solid var(--line);
+    background: var(--surface-muted);
+    padding: 12px 14px;
+  }
+
+  .assistant-voice-head,
+  .assistant-voice-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .assistant-voice-head {
+    justify-content: space-between;
+    margin-bottom: 9px;
+  }
+
+  .assistant-voice-title {
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .assistant-voice-state {
+    color: var(--text-soft);
+    font-size: 12px;
+  }
+
+  .assistant-voice-state[data-state="listening"] { color: var(--brand); }
+  .assistant-voice-state[data-state="error"] { color: #8b202b; }
+
+  .assistant-voice-level {
+    width: 120px;
+    height: 8px;
+    accent-color: var(--brand);
+  }
+
+  .assistant-composer-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: end;
+  }
+
+  .assistant-composer textarea {
+    min-height: 48px;
+    max-height: 150px;
+  }
+
+  .assistant-status {
+    min-height: 20px;
+    margin: 7px 0 0;
+    color: var(--text-soft);
+    font-size: 12px;
+  }
+
+  .assistant-status.is-busy::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 7px;
+    border-radius: 50%;
+    background: var(--brand);
+    animation: assistant-pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes assistant-pulse {
+    50% { opacity: 0.35; transform: scale(0.78); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .assistant-status.is-busy::before { animation: none; }
+  }
+
+  @media (max-width: 640px) {
+    .assistant-history { padding: 12px; max-height: 62vh; }
+    .assistant-message { max-width: 92%; }
+    .assistant-composer-row { grid-template-columns: 1fr; }
+    .assistant-composer-row .btn { width: 100%; }
+  }
+</style>
+
+<div class="assistant-shell">
+  <section class="page-header">
+    <div><span class="eyebrow">Comunicação</span>
+    <h1 class="page-title">Assistente</h1>
+    <p class="page-subtitle">Consulte tarefas, prazos e e-mails em linguagem natural. Toda criacao pede confirmacao antes de entrar no quadro.</p>
+    <div class="meta-line">
+      <span class="badge primary">Texto e voz local</span>
+      <span class="badge">Fuso America/Recife</span>
+    </div></div>
+  </section>
+
+  <div class="assistant-local-strip" role="note">
+    <span class="assistant-local-dot" aria-hidden="true"></span>
+    Somente neste computador. O assistente nao possui autenticacao para publicacao externa.
+  </div>
+
+  <section class="card assistant-stage" aria-label="Conversa com o assistente" data-assistant-conversation>
+    <div class="assistant-history" id="assistant-history" aria-live="polite">
+      <div class="assistant-empty" id="assistant-empty">
+        <strong>O que precisa de atencao agora?</strong>
+        Tente “Quais e-mails chegaram hoje?”, “Quais tarefas vencem esta semana?” ou “Crie para amanha a tarefa de preparar o relatorio”.
+      </div>
+    </div>
+
+    <div class="assistant-voice" id="assistant-voice" aria-label="Conversa por voz">
+      <div class="assistant-voice-head">
+        <span class="assistant-voice-title">Conversa por voz</span>
+        <span class="assistant-voice-state" id="voice-state" data-state="idle" role="status">Verificando componentes locais...</span>
+      </div>
+      <div class="assistant-voice-actions">
+        <button class="btn btn-primary" id="voice-start" type="button" disabled>Iniciar conversa</button>
+        <button class="btn btn-ghost" id="voice-stop" type="button" disabled>Interromper resposta</button>
+        <button class="btn btn-ghost" id="voice-repeat" type="button" disabled>Repetir resposta</button>
+        <button class="btn btn-ghost" id="voice-end" type="button" disabled>Encerrar conversa</button>
+        <meter class="assistant-voice-level" id="voice-level" min="0" max="1" value="0"
+               aria-label="Nivel do microfone"></meter>
+      </div>
+    </div>
+
+    <form class="assistant-composer" id="assistant-form">
+      <div class="assistant-composer-row">
+        <div class="field">
+          <label for="assistant-message">Mensagem</label>
+          <textarea id="assistant-message" name="message" rows="2" maxlength="4000"
+                    placeholder="Escreva uma consulta ou peca uma nova tarefa..." required></textarea>
+        </div>
+        <button class="btn btn-primary" id="assistant-send" type="submit">Enviar</button>
+      </div>
+      <p class="assistant-status" id="assistant-status" role="status"></p>
+      <button class="btn btn-ghost" id="assistant-retry" type="button" hidden>Tentar novamente</button>
+    </form>
+  </section>
+</div>
+
+<script type="module" src="/assets/assistant_chat.js?v=voice-agenda-transcript-20261003-1"></script>
+<script type="module" src="/assets/assistant_voice_bootstrap.js?v=voice-agenda-transcript-20261003-1"></script>
+{% endblock %}

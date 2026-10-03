@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-header">
+  <div><span class="eyebrow">Comercial · cliente</span>
   <h1 class="page-title">{% if client %}Editar cliente{% else %}Novo cliente{% endif %}</h1>
   <p class="page-subtitle">Preencha dados comerciais de forma padronizada para facilitar preenchimento automatico de propostas.</p>
   <div class="meta-line">
     <span class="badge primary">{{ "Edicao" if client else "Cadastro" }}</span>
     <span class="badge">Campo com selo vermelho = obrigatorio</span>
-  </div>
+  </div></div>
 </section>
 
 <section class="card">
@@ -121,6 +122,16 @@
       </tbody>
     </table>
   </div>
+</section>
+{% endif %}
+
+{% if client %}
+<section class="card" data-client-services>
+  <div class="card-head"><div><h2 class="card-title">Serviços confirmados deste cliente</h2><p class="card-subtitle">Somente vínculos registrados pelo identificador do cliente.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Chamado</th><th>Abertura</th><th>Execução</th><th>Administrativo</th><th>Ação</th></tr></thead>
+    <tbody>{% for call in services %}<tr><td><strong>#{{ call.id }} · {{ call.summary }}</strong></td><td>{{ format_date_br(call.opened_on) }}</td><td>{{ call.execution_status|replace('_', ' ') }}</td><td>{{ call.administrative_status|replace('_', ' ') }}</td><td><a class="btn btn-ghost" href="/web/services/{{ call.id }}">Abrir</a></td></tr>{% else %}<tr><td colspan="5"><div class="empty-state compact">Nenhum serviço confirmado para este cliente.</div></td></tr>{% endfor %}</tbody>
+  </table></div>
 </section>
 {% endif %}
 {% endblock %}

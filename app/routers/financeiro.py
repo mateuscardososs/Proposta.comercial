@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request, status
@@ -143,17 +143,41 @@ def _form_context(
     }
 
 
-def _board(request: Request, tipo: str, db: Session) -> object:
+FINANCIAL_GROUPS = {"abertas", "atrasadas", "pagas", "arquivadas"}
+
+
+def _board(request: Request, tipo: str, db: Session, grupo: str = "abertas") -> object:
+    lancamento_service.archive_expired_lancamentos(db)
     entries = lancamento_service.list_lancamentos(db, tipo)
+    grupo = grupo if grupo in FINANCIAL_GROUPS else "abertas"
+    groups = {
+        "abertas": [
+            entry for entry in entries
+            if entry.arquivado_em is None and entry.status != "pago"
+            and not lancamento_service.is_atrasado(entry, date.today())
+        ],
+        "atrasadas": [entry for entry in entries if lancamento_service.is_atrasado(entry, date.today())],
+        "pagas": [entry for entry in entries if entry.status == "pago" and entry.arquivado_em is None],
+        "arquivadas": [entry for entry in entries if entry.arquivado_em is not None],
+    }
+    visible_entries = groups[grupo]
+    pendentes = [entry for entry in entries if entry.status != "pago" and entry.arquivado_em is None]
+    pagos = [entry for entry in entries if entry.status == "pago" and entry.arquivado_em is None]
     return _render_template(
         request,
         "lancamentos_board.html",
         {
             "config": BOARD_CONFIG[tipo],
             "tipo": tipo,
-            "pendentes": [entry for entry in entries if entry.status == "pendente"],
-            "pagos": [entry for entry in entries if entry.status == "pago"],
+            "entries": visible_entries,
+            "groups": groups,
+            "active_group": grupo,
+            "pendentes": pendentes,
+            "pagos": pagos,
+            "pending_total": sum((Decimal(entry.valor) for entry in pendentes), Decimal("0")),
+            "paid_total": sum((Decimal(entry.valor) for entry in pagos), Decimal("0")),
             "today": date.today(),
+            "near_due_limit": date.today() + timedelta(days=7),
             "is_atrasado": lancamento_service.is_atrasado,
         },
     )
@@ -217,8 +241,8 @@ async def _submit(
 
 
 @router.get("/web/contas-a-receber", name="web_contas_receber")
-def web_contas_receber(request: Request, db: Session = Depends(get_db)) -> object:
-    return _board(request, "receber", db)
+def web_contas_receber(request: Request, grupo: str = "abertas", db: Session = Depends(get_db)) -> object:
+    return _board(request, "receber", db, grupo)
 
 
 @router.get("/web/contas-a-receber/new", name="web_contas_receber_new")
@@ -250,8 +274,8 @@ async def web_contas_receber_update(
 
 
 @router.get("/web/contas-a-pagar", name="web_contas_pagar")
-def web_contas_pagar(request: Request, db: Session = Depends(get_db)) -> object:
-    return _board(request, "pagar", db)
+def web_contas_pagar(request: Request, grupo: str = "abertas", db: Session = Depends(get_db)) -> object:
+    return _board(request, "pagar", db, grupo)
 
 
 @router.get("/web/contas-a-pagar/new", name="web_contas_pagar_new")

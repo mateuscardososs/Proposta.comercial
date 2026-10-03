@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-header">
+  <span class="eyebrow">Documentos · importação</span>
   <h1 class="page-title">Upload externo de proposta</h1>
   <p class="page-subtitle">Registre uma proposta criada fora do sistema a partir de um arquivo Word ou PDF.</p>
   <div class="meta-line">
@@ -9,7 +10,7 @@
   </div>
 </section>
 
-<section class="card">
+<section class="card" data-upload-state="idle">
   <div class="card-head">
     <div>
       <h2 class="card-title">Documento e dados da proposta</h2>
@@ -48,7 +49,7 @@
       </div>
     </div>
     <div id="externalWarnings" class="warning" hidden></div>
-    <p id="externalStatus" class="muted">Selecione um arquivo e analise antes de registrar.</p>
+    <p id="externalStatus" class="muted" role="status" aria-live="polite">Selecione um arquivo e analise antes de registrar.</p>
     <div class="actions">
       <button id="analyzeExternalButton" class="btn btn-secondary" type="button">Analisar arquivo</button>
       <button id="confirmExternalButton" class="btn btn-primary" type="submit" disabled>Confirmar e registrar proposta</button>
