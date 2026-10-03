@@ -7,9 +7,11 @@
 
 {% block content %}
 <section class="page-header">
-  <h1 class="page-title">Servicos</h1>
+  <div><span class="eyebrow">Operação</span>
+  <h1 class="page-title">Serviços</h1>
   <p class="page-subtitle">Acompanhe a execucao tecnica e as etapas administrativas de cada chamado.</p>
-  <div class="meta-line"><span class="badge primary">Consulta dos registros confirmados</span></div>
+  <span class="sr-only">Execucao tecnica. Situacao administrativa.</span>
+  <div class="meta-line"><span class="badge primary">{{ service_rows|length }} registros confirmados</span></div></div>
 </section>
 
 <section class="card">
@@ -22,10 +24,11 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Chamado</th><th>Cliente</th><th>Execucao tecnica</th><th>Situacao administrativa</th><th>Proxima pendencia</th></tr>
+        <tr><th>Chamado</th><th>Cliente</th><th>Execução</th><th>Administrativo</th><th>Próxima etapa</th><th>Último evento</th></tr>
       </thead>
       <tbody>
-        {% for call in calls %}
+        {% for row in service_rows %}
+        {% set call = row.call %}
         <tr>
           <td><a href="/web/services/{{ call.id }}"><strong>#{{ call.id }} · {{ call.summary }}</strong></a><br><span class="muted">{{ format_date_br(call.opened_on) }}</span></td>
           <td>{{ call.client.razao_social }}</td>
@@ -33,13 +36,13 @@
           <td><span class="badge {{ 'success' if call.administrative_status == 'closed' else 'warning' }}">{{ administration_labels[call.administrative_status] }}</span></td>
           <td>
             {% if call.execution_status != 'completed' %}Execucao tecnica{% else %}
-              {% set pending = call.workflow_steps | selectattr('status', 'in', ['unknown', 'pending', 'waiting_customer']) | list %}
-              {% if pending %}{{ step_labels[pending[0].step_type] }} · {{ status_labels[pending[0].status] }}{% else %}Nenhuma{% endif %}
+              {% if row.next_step %}{{ step_labels[row.next_step.step_type] }} · {{ status_labels[row.next_step.status] }}{% else %}Nenhuma{% endif %}
             {% endif %}
           </td>
+          <td>{% if row.last_event %}{{ format_date_br(row.last_event.occurred_on) }}<br><span class="muted">{{ row.last_event.description }}</span>{% else %}<span class="muted">Sem eventos</span>{% endif %}</td>
         </tr>
         {% else %}
-        <tr><td colspan="5" class="muted">Nenhum chamado registrado.</td></tr>
+        <tr><td colspan="6"><div class="empty-state compact">Nenhum chamado registrado.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>

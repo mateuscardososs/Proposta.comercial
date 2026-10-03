@@ -2,68 +2,56 @@
 
 {% block content %}
 <div class="page-header">
-  <div class="page-header-inner">
-    <h1 class="page-title">{{ config.page_title }}</h1>
-    <p class="page-subtitle">{{ config.page_subtitle }}</p>
-  </div>
-  <div class="actions" style="margin-top: 14px;">
-    <a href="{{ config.new_url }}" class="btn btn-primary">{{ config.new_label }}</a>
-  </div>
+  <div class="page-header-inner"><span class="eyebrow">Financeiro</span><h1 class="page-title">{{ config.page_title }}</h1><p class="page-subtitle">{{ config.page_subtitle }}</p></div>
+  <div class="actions"><a href="{{ config.new_url }}" class="btn btn-primary">{{ config.new_label }}</a></div>
 </div>
 
-<p class="kanban-error" data-kanban-error role="alert"></p>
+<section class="kpi-grid" aria-label="Resumo financeiro">
+  <article class="kpi-card"><span>{{ config.pending_label }}</span><strong>{{ format_brl(pending_total) }}</strong><small>{{ pendentes|length }} lançamento(s)</small></article>
+  <article class="kpi-card"><span>Pago</span><strong>{{ format_brl(paid_total) }}</strong><small>{{ pagos|length }} lançamento(s)</small></article>
+  <article class="kpi-card"><span>Total registrado</span><strong>{{ format_brl(pending_total + paid_total) }}</strong><small>Sem alterar baixas</small></article>
+</section>
 
-<div class="kanban-board" data-kanban-board data-ordered="false"
-     data-endpoint-template="/api/lancamentos/{id}/move" style="--kanban-columns: 2;">
-  {% set columns = [
-    ('pendente', config.pending_label, pendentes, ''),
-    ('pago', 'Pago', pagos, 'success')
-  ] %}
-
-  {% for status_key, label, entries, badge_class in columns %}
-  <section class="kanban-column" data-status="{{ status_key }}">
-    <h2 class="kanban-column-title">
-      {{ label }}
-      <span class="badge {{ badge_class }}">{{ entries | length }}</span>
-    </h2>
-    <div class="kanban-dropzone" data-dropzone>
+<p class="kanban-error" data-finance-error role="alert"></p>
+<section class="card" data-finance-table>
+  <div class="card-head"><div><h2 class="card-title">Lançamentos</h2><p class="card-subtitle">Atualize a situação somente pelo controle explícito de cada linha.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Descrição</th><th>Cliente/fornecedor</th><th>Valor</th><th>Vencimento</th><th>Situação</th><th>Ação</th></tr></thead>
+    <tbody>
       {% for entry in entries %}
-      <article class="kanban-card{% if is_atrasado(entry, today) %} is-overdue{% endif %}"
-               draggable="true" data-id="{{ entry.id }}">
-        <div class="kanban-card-header">
-          <h3 class="kanban-card-title">
-            <a href="{{ config.edit_prefix }}/{{ entry.id }}/edit">{{ entry.descricao }}</a>
-          </h3>
-          <span class="badge{% if is_atrasado(entry, today) %} danger{% endif %}">
-            {{ format_date_br(entry.data_vencimento) }}
-          </span>
-        </div>
-        <div class="kanban-card-meta">
-          {% if tipo == 'receber' and entry.client %}
-          <div><strong>Cliente:</strong> {{ entry.client.razao_social }}</div>
-          {% endif %}
-          {% if tipo == 'pagar' and entry.fornecedor %}
-          <div><strong>Fornecedor:</strong> {{ entry.fornecedor }}</div>
-          {% endif %}
-          <div><strong>Valor:</strong> {{ format_brl(entry.valor) }}</div>
-          {% if tipo == 'receber' and entry.proposal %}
-          <div>
-            <strong>Proposta:</strong>
-            <a href="/web/proposals/{{ entry.proposal.id }}" class="badge primary">
-              #{{ entry.proposal.numero }}/{{ entry.proposal.revisao }}
-            </a>
-          </div>
-          {% endif %}
-          {% if entry.data_pagamento %}
-          <div><strong>Pago em:</strong> {{ format_date_br(entry.data_pagamento) }}</div>
-          {% endif %}
-        </div>
-      </article>
-      {% endfor %}
-    </div>
-  </section>
-  {% endfor %}
-</div>
+      {% set overdue = is_atrasado(entry, today) %}
+      <tr{% if overdue %} class="kanban-card is-overdue"{% endif %} data-finance-row data-id="{{ entry.id }}">
+        <td><strong><a href="{{ config.edit_prefix }}/{{ entry.id }}/edit">{{ entry.descricao }}</a></strong>{% if entry.proposal %}<br><a class="muted" href="/web/proposals/{{ entry.proposal.id }}">Proposta #{{ entry.proposal.numero }}/{{ entry.proposal.revisao }}</a>{% endif %}</td>
+        <td>{{ entry.client.razao_social if entry.client else (entry.fornecedor or 'Não informado') }}</td>
+        <td><strong>{{ format_brl(entry.valor) }}</strong></td>
+        <td>{{ format_date_br(entry.data_vencimento) }}<br>{% if overdue %}<span class="badge danger">Atrasado</span>{% elif entry.status == 'pendente' and entry.data_vencimento <= near_due_limit %}<span class="badge warning">Vence em breve</span>{% elif entry.status == 'pago' %}<span class="muted">Pago{% if entry.data_pagamento %} em {{ format_date_br(entry.data_pagamento) }}{% endif %}</span>{% endif %}</td>
+        <td><label class="sr-only" for="finance-status-{{ entry.id }}">Situação de {{ entry.descricao }}</label><select id="finance-status-{{ entry.id }}" data-finance-status aria-label="Situação de {{ entry.descricao }}"><option value="pendente"{% if entry.status == 'pendente' %} selected{% endif %}>{{ config.pending_label }}</option><option value="pago"{% if entry.status == 'pago' %} selected{% endif %}>Pago</option></select></td>
+        <td><a class="btn btn-ghost" href="{{ config.edit_prefix }}/{{ entry.id }}/edit">Editar</a></td>
+      </tr>
+      {% else %}<tr><td colspan="6"><div class="empty-state compact">Nenhum lançamento registrado.</div></td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
 
+<script type="module">
+  import { postMove } from "/assets/kanban_ui.js";
+  const errorRegion = document.querySelector('[data-finance-error]');
+  document.querySelectorAll('[data-finance-status]').forEach((control) => {
+    control.addEventListener('focus', () => { control.dataset.previous = control.value; });
+    control.addEventListener('change', async () => {
+      const row = control.closest('[data-finance-row]');
+      const previous = control.dataset.previous || (control.value === 'pago' ? 'pendente' : 'pago');
+      control.disabled = true;
+      try {
+        await postMove({id: row.dataset.id, payload: {status: control.value}, endpointTemplate: '/api/lancamentos/{id}/move'});
+        window.location.reload();
+      } catch (error) {
+        control.value = previous;
+        errorRegion.textContent = error.message;
+        errorRegion.classList.add('visible');
+      } finally { control.disabled = false; }
+    });
+  });
+</script>
 {% include "_kanban_drag.html" %}
 {% endblock %}

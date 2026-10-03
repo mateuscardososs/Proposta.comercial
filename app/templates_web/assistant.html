@@ -36,7 +36,7 @@
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
     padding: 0;
-    overflow: hidden;
+    overflow: clip;
   }
 
   .assistant-history {
@@ -47,10 +47,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    background:
-      linear-gradient(rgba(214, 222, 233, 0.32) 1px, transparent 1px),
-      var(--surface-muted);
-    background-size: 100% 44px;
+    background: var(--surface-muted);
   }
 
   .assistant-empty {
@@ -139,6 +136,8 @@
   .assistant-email-limitation { color: #8b5a12 !important; }
 
   .assistant-composer {
+    position: sticky;
+    bottom: 0;
     border-top: 1px solid var(--line);
     background: #fff;
     padding: 14px;
@@ -231,12 +230,13 @@
 
 <div class="assistant-shell">
   <section class="page-header">
-    <h1 class="page-title">Assistente operacional</h1>
+    <div><span class="eyebrow">Comunicação</span>
+    <h1 class="page-title">Assistente</h1>
     <p class="page-subtitle">Consulte tarefas, prazos e e-mails em linguagem natural. Toda criacao pede confirmacao antes de entrar no quadro.</p>
     <div class="meta-line">
       <span class="badge primary">Texto e voz local</span>
       <span class="badge">Fuso America/Recife</span>
-    </div>
+    </div></div>
   </section>
 
   <div class="assistant-local-strip" role="note">
@@ -244,7 +244,7 @@
     Somente neste computador. O assistente nao possui autenticacao para publicacao externa.
   </div>
 
-  <section class="card assistant-stage" aria-label="Conversa com o assistente">
+  <section class="card assistant-stage" aria-label="Conversa com o assistente" data-assistant-conversation>
     <div class="assistant-history" id="assistant-history" aria-live="polite">
       <div class="assistant-empty" id="assistant-empty">
         <strong>O que precisa de atencao agora?</strong>

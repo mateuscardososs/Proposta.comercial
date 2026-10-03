@@ -4,11 +4,12 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Client, EmailSyncState, InboxEmail, Proposal, User
+from app.models import Client, EmailSyncState, EmailTaskLink, InboxEmail, Proposal, ServiceCall, User
 from app.schemas import (
     ProposalCreate,
     ProposalItemCreate,
@@ -194,10 +195,22 @@ def index(request: Request, db: Session = Depends(get_db)) -> object:
         lookahead_days=settings.today_lookahead_days,
         timezone=settings.assistant_timezone,
     )
+    today_sections = {
+        "attention": [item for item in agenda.items if item.rank <= 1][:6],
+        "agenda": [item for item in agenda.items if item.source_type == "task"],
+        "services": [item for item in agenda.items if item.source_type == "service"],
+        "finance": [item for item in agenda.items if item.source_type == "finance"],
+    }
     return render_template(
         request,
         "index.html",
-        {"summary": summary, "agenda": agenda, "full_width": True, "title": "Hoje"},
+        {
+            "summary": summary,
+            "agenda": agenda,
+            "today_sections": today_sections,
+            "full_width": True,
+            "title": "Hoje",
+        },
     )
 
 
@@ -221,6 +234,26 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
         .limit(100)
         .all()
     )
+    message_references = [message.reference for message in messages]
+    task_links = (
+        db.query(EmailTaskLink)
+        .filter(
+            EmailTaskLink.provider == settings.email_provider,
+            EmailTaskLink.mailbox_key == settings.email_sync_mailbox_key,
+            EmailTaskLink.reference.in_(message_references),
+            EmailTaskLink.task_id.is_not(None),
+        )
+        .all()
+        if message_references else []
+    )
+    task_ids_by_reference = {link.reference: link.task_id for link in task_links}
+    for message in messages:
+        message.task_id = task_ids_by_reference.get(message.reference)
+    message_summary = {
+        "new": sum(not message.seen for message in messages),
+        "priority": sum(message.priority in {"high", "urgent"} for message in messages),
+        "review": sum(message.review_status == "pending" for message in messages),
+    }
     if settings.email_provider == "synthetic":
         provider_configured = True
     elif settings.email_provider == "imap_yahoo":
@@ -233,9 +266,10 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
         {
             "title": "E-mails e mensagens",
             "messages": messages,
+            "message_summary": message_summary,
             "sync_state": state,
-        "sync_enabled": settings.email_sync_enabled,
-        "sync_interval_seconds": settings.email_sync_interval_seconds,
+            "sync_enabled": settings.email_sync_enabled,
+            "sync_interval_seconds": settings.email_sync_interval_seconds,
             "provider_configured": provider_configured,
             "full_width": True,
         },
@@ -300,7 +334,13 @@ async def message_review(message_id: int, request: Request, db: Session = Depend
 @router.get("/web/clients", name="web_clients")
 def clients_page(request: Request, db: Session = Depends(get_db)) -> object:
     clients = db.query(Client).order_by(Client.razao_social.asc()).all()
-    return render_template(request, "clients.html", {"clients": clients})
+    proposal_counts = dict(db.query(Proposal.client_id, func.count(Proposal.id)).group_by(Proposal.client_id).all())
+    service_counts = dict(db.query(ServiceCall.client_id, func.count(ServiceCall.id)).group_by(ServiceCall.client_id).all())
+    return render_template(
+        request,
+        "clients.html",
+        {"clients": clients, "proposal_counts": proposal_counts, "service_counts": service_counts},
+    )
 
 
 @router.get("/web/clients/new", name="web_client_new")
@@ -337,6 +377,7 @@ def client_detail_page(client_id: int, request: Request, db: Session = Depends(g
     if not client:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
     proposals = db.query(Proposal).filter(Proposal.client_id == client_id).order_by(Proposal.data_geracao.desc(), Proposal.id.desc()).limit(10).all()
+    services = db.query(ServiceCall).filter(ServiceCall.client_id == client_id).order_by(ServiceCall.opened_on.desc(), ServiceCall.id.desc()).limit(10).all()
     return render_template(
         request,
         "client_form.html",
@@ -344,6 +385,7 @@ def client_detail_page(client_id: int, request: Request, db: Session = Depends(g
             "client": client,
             "action_url": f"/web/clients/{client_id}/edit",
             "proposals": proposals,
+            "services": services,
         },
     )
 

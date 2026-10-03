@@ -13,7 +13,6 @@ from app.db import (
 )
 from app.models import Client, Lancamento, Proposal, Task, User
 
-
 ASSISTANT_TABLES = {
     "assistant_conversations",
     "assistant_messages",
@@ -143,3 +142,59 @@ def test_email_projection_adds_reply_coverage_columns_without_losing_rows(tmp_pa
         row = connection.execute(text("SELECT awaiting_reply, sent_coverage FROM inbox_emails WHERE id = 1")).one()
     assert row.awaiting_reply == "unknown"
     assert row.sent_coverage == 0
+
+
+def test_task_client_text_fields_are_added_without_losing_existing_tasks(tmp_path):
+    engine = create_engine(f"sqlite:///{(tmp_path / 'old_tasks.sqlite3').as_posix()}")
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY, titulo VARCHAR(255) NOT NULL,
+                descricao TEXT NOT NULL DEFAULT '', status VARCHAR(50) NOT NULL,
+                client_id INTEGER, proposal_id INTEGER, user_id INTEGER,
+                prazo DATE, ordem INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
+            )
+        """))
+        connection.execute(text("""
+            INSERT INTO tasks (id, titulo, descricao, status, ordem, created_at, updated_at)
+            VALUES (7, 'Tarefa preservada', '', 'a_fazer', 0,
+                    '2026-10-02 10:00:00', '2026-10-02 10:00:00')
+        """))
+
+    ensure_schema_compatibility_for_engine(engine)
+
+    columns = {column["name"] for column in inspect(engine).get_columns("tasks")}
+    assert {"client_name", "client_link_status"}.issubset(columns)
+    with engine.connect() as connection:
+        task = connection.execute(text(
+            "SELECT titulo, client_name, client_link_status FROM tasks WHERE id=7"
+        )).one()
+    assert task.titulo == "Tarefa preservada"
+    assert task.client_name is None
+    assert task.client_link_status == "unlinked"
+
+
+def test_email_sync_activation_boundary_is_added_to_existing_state_table(tmp_path):
+    engine = create_engine(f"sqlite:///{(tmp_path / 'old_sync_state.sqlite3').as_posix()}")
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE email_sync_states (
+                id INTEGER PRIMARY KEY, provider VARCHAR(30) NOT NULL,
+                mailbox_key VARCHAR(160) NOT NULL, paused BOOLEAN NOT NULL DEFAULT 0,
+                last_attempt_at DATETIME, last_success_at DATETIME,
+                last_error VARCHAR(200), last_count INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
+            )
+        """))
+        connection.execute(text("""
+            INSERT INTO email_sync_states (id, provider, mailbox_key, created_at, updated_at)
+            VALUES (1, 'imap_yahoo', 'pilot', '2026-10-02 10:00:00', '2026-10-02 10:00:00')
+        """))
+
+    ensure_schema_compatibility_for_engine(engine)
+
+    columns = {column["name"] for column in inspect(engine).get_columns("email_sync_states")}
+    assert "activation_at" in columns
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT COUNT(*) FROM email_sync_states")) == 1

@@ -196,12 +196,19 @@ class AssistantService:
                     )
                 )
             if command is None:
+                command = self._direct_pending_client_correction(
+                    conversation.id,
+                    clean_message,
+                )
+            if command is None:
                 command = self._direct_pending_date_correction(
                     conversation.id,
                     clean_message,
                 )
             if command is None:
                 command = self._direct_email_task_command(clean_message)
+            if command is None:
+                command = self._direct_task_create(conversation.id, clean_message)
             if command is None:
                 direct_email_query = self._direct_email_query(clean_message)
                 if direct_email_query is not None:
@@ -845,7 +852,68 @@ class AssistantService:
             due_date = match.group(0) if match else None
         if due_date is None:
             return None
-        return TaskDraftCorrectionCommand(due_date=due_date)
+        updates: dict[str, object] = {"due_date": due_date}
+        client_match = re.search(
+            r"\b(?:use|usar|vincule|vincular)\s+(?:a\s+)?(?:empresa|cliente)?\s*"
+            r"(.+?)(?=\s+(?:e|mas|na verdade|prazo)\b|[,;.!?]|$)",
+            message.strip(), re.IGNORECASE,
+        )
+        if client_match:
+            client_name = client_match.group(1).strip()[:255]
+            if client_name:
+                updates["client"] = client_name
+        return TaskDraftCorrectionCommand(**updates)
+
+    def _direct_pending_client_correction(
+        self, conversation_id: int, message: str
+    ) -> TaskDraftCorrectionCommand | None:
+        action = self._latest_create_action(conversation_id)
+        if action is None or action.status not in {"pending", "needs_clarification"}:
+            return None
+        normalized = normalize_text(message).strip(" .,!?:;")
+        explicit_register = re.search(
+            r"\b(?:cadastre|cadastra|cadastrar|registre|registra)\s+"
+            r"(?:a\s+)?(?:empresa|cliente)\s+(.+?)\s*[.!?]*$",
+            message.strip(), re.IGNORECASE,
+        )
+        explicit_use = re.search(
+            r"\b(?:use|usar|vincule|vincular)\s+(?:a\s+)?(?:empresa|cliente)\s+(.+?)\s*[.!?]*$",
+            message.strip(), re.IGNORECASE,
+        )
+        match = explicit_register or explicit_use
+        if match:
+            company = match.group(1).strip(" \t.,!?\"'")[:255]
+            if company:
+                return TaskDraftCorrectionCommand(client=company)
+        if action.status == "pending" and action.arguments_json.get("client_link_status") in {
+            "pending_review", "needs_confirmation",
+        } and len(normalized.split()) == 1 and normalized not in {
+            "sim", "nao", "confirmo", "cancela", "cancelar", "cria", "criar",
+        }:
+            return TaskDraftCorrectionCommand(client=message.strip()[:255])
+        if action.status != "needs_clarification":
+            return None
+        raw_draft = action.arguments_json
+        if "client" not in raw_draft or len(normalized.split()) > 5:
+            return None
+        last_question = (
+            self.db.query(AssistantMessage)
+            .filter(
+                AssistantMessage.conversation_id == conversation_id,
+                AssistantMessage.role == "assistant",
+                AssistantMessage.kind == "clarification",
+            )
+            .order_by(AssistantMessage.id.desc())
+            .first()
+        )
+        if last_question is None or "cliente" not in normalize_text(last_question.content):
+            return None
+        if normalized in {"o que voce recomenda", "qual voce recomenda", "nao sei"}:
+            original_client = raw_draft.get("client")
+            if original_client:
+                return TaskDraftCorrectionCommand(client=str(original_client)[:255])
+            return None
+        return TaskDraftCorrectionCommand(client=message.strip()[:255])
 
     @staticmethod
     def _direct_email_task_command(message: str) -> TaskCreateCommand | None:
@@ -860,6 +928,68 @@ class AssistantService:
         if explicit_creation and email_reference:
             return TaskCreateCommand(title="Responder")
         return None
+
+    def _direct_task_create(
+        self, conversation_id: int, message: str
+    ) -> TaskCreateCommand | None:
+        """Route explicit task-creation syntax deterministically before model interpretation."""
+        normalized_message = normalize_text(message)
+        if re.search(r"\b(?:chamado|servico)\s*(?:#|n[ºo.]?\s*)\d+", normalized_message):
+            return None
+        pending = self._latest_create_action(conversation_id)
+        if pending is not None and pending.status in {"pending", "needs_clarification"}:
+            return None
+        match = re.search(
+            r"\b(?:crie|cria|criar|adicione|adicionar|coloque|colocar|prepare|prepara)\s+"
+            r"(?:uma?\s+)?(?:tarefa|lembrete)\s+(?:(?:para|de)\s+)?(.+)$",
+            message.strip(), re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        remainder = match.group(1).strip()
+        due_date = None
+        due_match = re.search(
+            r"\bsem\s+prazo\b|\b(?:prazo\s+(?:para|em)\s+|(?:para|ate|até|na|no)\s+)?"
+            r"(depois\s+de\s+amanha|amanha|hoje|segunda(?:-feira)?|terca(?:-feira)?|"
+            r"quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sabado|domingo|"
+            r"\d{1,2}/\d{1,2}(?:/\d{2,4})?|\d{4}-\d{2}-\d{2})\s*[.!?]*$",
+            remainder, re.IGNORECASE,
+        )
+        if due_match:
+            whole = due_match.group(0).strip(" ,.!?")
+            if normalize_text(whole) != "sem prazo":
+                due_date = due_match.group(1).strip()
+            remainder = remainder[:due_match.start()]
+
+        client_name = None
+        client_clause = re.search(
+            r"(?P<clause>(?:\s+(?:da|do|de|para)\s+)?(?:empresa|cliente)\s+"
+            r"(?P<name>[A-ZÀ-ÿ0-9][A-ZÀ-ÿa-z0-9.&'-]*(?:\s+[A-ZÀ-ÿ0-9][A-ZÀ-ÿa-z0-9.&'-]*){0,3}))"
+            r"(?=\s+(?:sem prazo|para|ate|até|na|no|prazo)\b|[,;.!?]|$)",
+            remainder, re.IGNORECASE,
+        )
+        if client_clause is None:
+            client_clause = re.search(
+                r"(?P<clause>\s+(?:da|do|de|para)\s+(?:a\s+)?"
+                r"(?P<name>[A-ZÀ-Ý][A-ZÀ-Ýa-z0-9.&'-]*(?:\s+[A-ZÀ-Ý][A-ZÀ-Ýa-z0-9.&'-]*){0,2}))\s*$",
+                remainder,
+            )
+        if client_clause:
+            candidate_name = client_clause.group("name").strip()
+            if normalize_text(candidate_name) not in {
+                "hoje", "amanha", "depois de amanha", "segunda", "terca", "quarta",
+                "quinta", "sexta", "sabado", "domingo",
+            }:
+                client_name = candidate_name[:255]
+                remainder = remainder[:client_clause.start()] + remainder[client_clause.end():]
+
+        title = remainder.strip(" ,;.!?:\t")
+        title = re.sub(r"^(?:para|de)\s+", "", title, flags=re.IGNORECASE).strip()
+        if not title:
+            return None
+        if normalize_text(title) in {"tarefa", "lembrete", "urgente", "algo", "alguma coisa"}:
+            return None
+        return TaskCreateCommand(title=title[:255], client=client_name, due_date=due_date)
 
     def confirm_action(self, action_id: int, confirmation_token: str) -> AssistantReply:
         action = self.db.get(AssistantAction, action_id)
@@ -912,6 +1042,8 @@ class AssistantService:
                 status=str(arguments.get("status") or "a_fazer"),
                 prazo=date.fromisoformat(str(arguments["prazo"])) if arguments.get("prazo") else None,
                 client_id=int(arguments["client_id"]) if arguments.get("client_id") else None,
+                client_name=(str(arguments["client_name"]) if arguments.get("client_name") else None),
+                client_link_status=str(arguments.get("client_link_status") or "unlinked"),
                 proposal_id=int(arguments["proposal_id"]) if arguments.get("proposal_id") else None,
                 user_id=int(arguments["user_id"]) if arguments.get("user_id") else None,
             )
@@ -2063,13 +2195,12 @@ class AssistantService:
                 updates["responsible"] = None
             elif command.responsible is not None:
                 updates["responsible"] = command.responsible
-            action.status = "cancelled"
-            self.db.flush()
             return self._prepare_task(
                 conversation_id,
-                request_id,
+                action.request_id or request_id,
                 draft.model_copy(update=updates),
                 today,
+                existing_action=action,
             )
 
         arguments = dict(action.arguments_json)
@@ -2104,23 +2235,27 @@ class AssistantService:
                     message="A tarefa esta vinculada a uma proposta; o cliente nao pode ser removido aqui.",
                 )
             arguments["client_id"] = None
+            arguments["client_name"] = None
+            arguments["client_link_status"] = "unlinked"
         elif command.client is not None:
-            client, question = self._resolve_client(command.client)
-            if question:
+            client, client_name, link_status = self._resolve_task_client(command.client)
+            if arguments.get("proposal_id") and client is None:
                 return AssistantReply(
                     conversation_id=conversation_id,
                     kind="clarification",
-                    message=question,
+                    message="A tarefa está vinculada a uma proposta. Confirme o cliente cadastrado antes de alterar esse vínculo.",
                 )
             if arguments.get("proposal_id"):
                 proposal = self.db.get(Proposal, int(arguments["proposal_id"]))
-                if proposal is None or proposal.client_id != client.id:
+                if proposal is None or client is None or proposal.client_id != client.id:
                     return AssistantReply(
                         conversation_id=conversation_id,
                         kind="clarification",
                         message="A proposta informada pertence a outro cliente. Qual vinculo devo usar?",
                     )
-            arguments["client_id"] = client.id
+            arguments["client_id"] = client.id if client else None
+            arguments["client_name"] = client_name
+            arguments["client_link_status"] = link_status
 
         if command.clear_responsible:
             arguments["user_id"] = None
@@ -2146,6 +2281,8 @@ class AssistantService:
         request_id: str,
         command: TaskCreateCommand,
         today: date,
+        *,
+        existing_action: AssistantAction | None = None,
     ) -> AssistantReply:
         title = (command.title or "").strip()
         if not title:
@@ -2159,13 +2296,15 @@ class AssistantService:
         except ValueError as exc:
             return AssistantReply(conversation_id=conversation_id, kind="clarification", message=str(exc))
 
-        client, client_question = self._resolve_client(command.client)
-        if client_question:
-            self._record_clarification_action(conversation_id, request_id, command)
-            return AssistantReply(conversation_id=conversation_id, kind="clarification", message=client_question)
+        client, client_name, client_link_status = self._resolve_task_client(command.client)
         user, user_question = self._resolve_user(command.responsible)
         if user_question:
-            self._record_clarification_action(conversation_id, request_id, command)
+            if existing_action is not None:
+                existing_action.arguments_json = command.model_dump(mode="json")
+                existing_action.status = "needs_clarification"
+                self.db.flush()
+            else:
+                self._record_clarification_action(conversation_id, request_id, command)
             return AssistantReply(conversation_id=conversation_id, kind="clarification", message=user_question)
 
         proposal: Proposal | None = None
@@ -2194,7 +2333,16 @@ class AssistantService:
                 )
             proposal = proposals[0]
             if client is None:
+                if command.client:
+                    self._record_clarification_action(conversation_id, request_id, command)
+                    return AssistantReply(
+                        conversation_id=conversation_id,
+                        kind="clarification",
+                        message="A proposta tem um cliente cadastrado. Confirme se devo usar esse cliente ou deixe a tarefa sem vínculo com a proposta.",
+                    )
                 client = self.db.get(Client, proposal.client_id)
+                client_name = client.razao_social if client else None
+                client_link_status = "linked" if client else "unlinked"
             elif proposal.client_id != client.id:
                 return AssistantReply(
                     conversation_id=conversation_id,
@@ -2208,12 +2356,14 @@ class AssistantService:
             "status": command.status,
             "prazo": due_date.isoformat() if due_date else None,
             "client_id": client.id if client else None,
+            "client_name": client_name,
+            "client_link_status": client_link_status,
             "proposal_id": proposal.id if proposal else None,
             "user_id": user.id if user else None,
             "source_email_reference": command.source_email_reference,
         }
         confirmation_token = secrets.token_urlsafe(32)
-        action = AssistantAction(
+        action = existing_action or AssistantAction(
             conversation_id=conversation_id,
             request_id=request_id,
             confirmation_token_hash=self._token_hash(confirmation_token),
@@ -2222,7 +2372,11 @@ class AssistantService:
             arguments_json=arguments,
             result_json={},
         )
-        self.db.add(action)
+        action.arguments_json = arguments
+        action.confirmation_token_hash = self._token_hash(confirmation_token)
+        action.status = "pending"
+        if existing_action is None:
+            self.db.add(action)
         try:
             self.db.flush()
         except IntegrityError:
@@ -2252,7 +2406,14 @@ class AssistantService:
             "titulo": str(arguments["titulo"]),
             "status": STATUS_LABELS[status_value],
             "prazo": due_date.strftime("%d/%m/%Y") if due_date else "Sem prazo",
-            "cliente": client.razao_social if client else "Sem cliente",
+            "cliente": (
+                client.razao_social if client else
+                f"{arguments['client_name']} (cliente a confirmar)"
+                if arguments.get("client_link_status") == "needs_confirmation" else
+                f"{arguments['client_name']} (vínculo pendente de revisão)"
+                if arguments.get("client_link_status") == "pending_review" else
+                "Sem cliente"
+            ),
             "responsavel": user.nome if user else "Sem responsavel",
         }
         message = (
@@ -2260,6 +2421,8 @@ class AssistantService:
             f"{fields['titulo']}; status {fields['status']}; prazo {fields['prazo']}; "
             f"cliente {fields['cliente']}; responsavel {fields['responsavel']}."
         )
+        if arguments.get("client_link_status") in {"pending_review", "needs_confirmation"}:
+            message += " Não criei nem alterei cadastro de cliente."
         return AssistantReply(
             conversation_id=action.conversation_id,
             kind="confirmation",
@@ -2302,6 +2465,29 @@ class AssistantService:
             lambda client: client.razao_social,
             "cliente",
         )
+
+    def _resolve_task_client(
+        self, name: str | None
+    ) -> tuple[Client | None, str | None, str]:
+        """Resolve a unique client, but keep unresolved text instead of blocking a task."""
+        if name is None or not name.strip():
+            return None, None, "unlinked"
+        original = name.strip()[:255]
+        needle = normalize_text(original)
+        absent_values = {
+            "none", "null", "nenhum", "nenhuma", "sem cliente",
+            "nao informado", "nao informada", "cliente a identificar",
+        }
+        if needle in absent_values or needle.startswith(("nao especificad", "nao definid")):
+            return None, None, "unlinked"
+        candidates = self.db.query(Client).order_by(Client.razao_social).all()
+        exact = [candidate for candidate in candidates if normalize_text(candidate.razao_social) == needle]
+        matches = exact or [candidate for candidate in candidates if needle in normalize_text(candidate.razao_social)]
+        if len(matches) == 1:
+            return matches[0], original, "linked"
+        if len(matches) > 1:
+            return None, original, "needs_confirmation"
+        return None, original, "pending_review"
 
     def _resolve_user(self, name: str | None) -> tuple[User | None, str | None]:
         return self._resolve_named(

@@ -331,6 +331,8 @@ class TaskBase(BaseModel):
     descricao: str = ""
     status: TaskStatus = "a_fazer"
     client_id: int | None = None
+    client_name: str | None = Field(default=None, max_length=255)
+    client_link_status: Literal["unlinked", "linked", "pending_review", "needs_confirmation"] = "unlinked"
     proposal_id: int | None = None
     user_id: int | None = None
     prazo: date | None = None
@@ -345,6 +347,8 @@ class TaskUpdate(BaseModel):
     descricao: str | None = None
     status: TaskStatus | None = None
     client_id: int | None = None
+    client_name: str | None = Field(default=None, max_length=255)
+    client_link_status: Literal["unlinked", "linked", "pending_review", "needs_confirmation"] | None = None
     proposal_id: int | None = None
     user_id: int | None = None
     prazo: date | None = None

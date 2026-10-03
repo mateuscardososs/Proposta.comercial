@@ -503,7 +503,7 @@ def test_pending_task_is_provided_as_structured_conversation_state(db):
     service = AssistantService(db, provider, now=_now)
 
     preview = service.handle_message(
-        message="Crie uma tarefa para preparar a proposta.",
+        message="Preciso de uma tarefa para preparar a proposta.",
         request_id="pending-state-1",
     )
     service.handle_message(
@@ -685,37 +685,212 @@ def test_create_resolves_relative_date_and_only_saves_after_confirmation(db):
     assert action.task_id == task.id
 
 
-def test_ambiguous_client_asks_and_followup_keeps_context(db):
+def test_ambiguous_client_keeps_draft_and_marks_client_to_confirm(db):
     db.add_all([Client(razao_social="Acme Norte"), Client(razao_social="Acme Sul")])
     db.commit()
-    provider = QueueProvider(
-        TaskCreateCommand(title="Fazer vistoria", client="Acme"),
-        TaskCreateCommand(title="Fazer vistoria", client="Acme Norte"),
-    )
+    provider = QueueProvider(TaskCreateCommand(title="Fazer vistoria", client="Acme"))
     service = AssistantService(db, provider, now=_now)
 
-    question = service.handle_message(
-        message="Crie uma tarefa de vistoria para a Acme",
+    preview = service.handle_message(
+        message="Crie uma tarefa de vistoria para a empresa Acme",
         request_id="ambiguous-1",
     )
+
+    assert preview.kind == "confirmation"
+    assert "Acme" in preview.fields["cliente"]
+    assert "confirmar" in preview.fields["cliente"].lower()
+    assert db.query(Task).count() == 0
+
+
+def test_unknown_client_keeps_free_text_and_does_not_block_confirmed_task(db):
+    provider = QueueProvider(TaskCreateCommand(title="Preparar orçamento", client="Roca"))
+    service = AssistantService(db, provider, now=_now)
+
     preview = service.handle_message(
-        message="E a Acme Norte",
-        request_id="ambiguous-2",
-        conversation_id=question.conversation_id,
+        message="Crie tarefa para preparar orçamento para a empresa Roca",
+        request_id="unknown-client-task-1",
     )
 
-    assert question.kind == "clarification"
-    assert "Acme Norte" in question.message
-    assert "Acme Sul" in question.message
     assert preview.kind == "confirmation"
-    assert [message.content for message in provider.calls[1]["messages"]] == [
-        "Crie uma tarefa de vistoria para a Acme",
-        question.message,
-        "E a Acme Norte",
-    ]
+    assert "Roca" in preview.fields["cliente"]
+    assert "revisão" in preview.fields["cliente"].lower()
+    assert db.query(Task).count() == 0
+
+    created = service.confirm_action(preview.action_id, preview.confirmation_token)
+    task = db.get(Task, created.task_id)
+    assert task.client_id is None
+    assert task.client_name == "Roca"
+    assert task.client_link_status == "pending_review"
 
 
-def test_correction_can_complete_a_draft_that_needs_clarification(db):
+def test_explicit_manual_task_request_routes_without_ollama_and_waits_for_confirmation(db):
+    service = AssistantService(db, provider=None, now=_now)
+
+    preview = service.handle_message(
+        message="Crie uma tarefa para preparar orçamento da empresa Roca, sem prazo.",
+        request_id="direct-task-no-ollama-1",
+    )
+
+    assert preview.kind == "confirmation"
+    assert preview.fields["titulo"] == "preparar orçamento"
+    assert "Roca" in preview.fields["cliente"]
+    assert preview.fields["prazo"] == "Sem prazo"
+    assert db.query(Task).count() == 0
+
+
+def test_direct_task_create_parses_relative_date_and_client_name_from_tail(db):
+    service = AssistantService(db, provider=None, now=_now)
+
+    preview = service.handle_message(
+        message="Crie uma tarefa para ligar para Roca na sexta.",
+        request_id="direct-task-date-client-1",
+    )
+
+    assert preview.kind == "confirmation"
+    assert preview.fields["titulo"] == "ligar"
+    assert preview.fields["cliente"].startswith("Roca")
+    assert preview.fields["prazo"] == "02/10/2026"
+
+
+def test_ambiguous_client_keeps_task_draft_without_repeating_question(db):
+    db.add_all([Client(razao_social="Alfa Serviços"), Client(razao_social="Alfa Indústria")])
+    db.commit()
+    service = AssistantService(
+        db,
+        QueueProvider(TaskCreateCommand(title="Preparar relatório", client="Alfa")),
+        now=_now,
+    )
+
+    preview = service.handle_message(
+        message="Crie uma tarefa para preparar relatório da empresa Alfa",
+        request_id="ambiguous-client-task-1",
+    )
+
+    assert preview.kind == "confirmation"
+    assert "Alfa" in preview.fields["cliente"]
+    assert "confirmar" in preview.fields["cliente"].lower()
+    action = db.query(AssistantAction).one()
+    assert action.status == "pending"
+    assert action.arguments_json["client_id"] is None
+    assert action.arguments_json["client_name"] == "Alfa"
+
+
+def test_client_reply_updates_same_clarification_draft_and_rotates_confirmation(db):
+    db.add_all([Client(razao_social="Roca Serviços"), Client(razao_social="Roca Industrial")])
+    db.add(User(nome="Carlos", email="carlos@example.test", senha_hash="hash", ativo=True))
+    db.commit()
+    provider = QueueProvider(
+        TaskCreateCommand(title="Preparar relatório", responsible="Carlos inexistente"),
+        TaskDraftCorrectionCommand(client="Roca Serviços", responsible="Carlos"),
+    )
+    service = AssistantService(db, provider, now=_now)
+    question = service.handle_message(
+        message="Quero uma tarefa para preparar relatório com Carlos inexistente",
+        request_id="same-draft-client-1",
+    )
+    action_before = db.query(AssistantAction).one()
+    old_id = action_before.id
+
+    corrected = service.handle_message(
+        message="Use Roca Serviços e Carlos",
+        request_id="same-draft-client-2",
+        conversation_id=question.conversation_id,
+    )
+    assert "corrigir_tarefa" in provider.calls[1]["allowed_tools"]
+
+    actions = db.query(AssistantAction).all()
+    assert len(actions) == 1
+    assert actions[0].id == old_id
+    assert actions[0].status == "pending"
+    assert corrected.kind == "confirmation", corrected.message
+    assert corrected.action_id == old_id
+    assert corrected.fields["cliente"] == "Roca Serviços"
+    assert corrected.confirmation_token != question.confirmation_token
+
+
+def test_register_company_reply_preserves_task_and_does_not_create_client(db):
+    provider = QueueProvider(
+        TaskCreateCommand(title="Preparar orçamento", client="Roca"),
+        TaskDraftCorrectionCommand(client="Roca"),
+    )
+    service = AssistantService(db, provider, now=_now)
+    preview = service.handle_message(
+        message="Crie tarefa para preparar orçamento da empresa Roca",
+        request_id="register-company-no-loop-1",
+    )
+    revised = service.handle_message(
+        message="Cadastre a empresa Roca",
+        request_id="register-company-no-loop-2",
+        conversation_id=preview.conversation_id,
+    )
+
+    assert revised.kind == "confirmation"
+    assert revised.action_id == preview.action_id
+    assert db.query(Client).count() == 0
+    assert db.query(Task).count() == 0
+    action = db.query(AssistantAction).one()
+    assert action.status == "pending"
+    assert action.arguments_json["client_name"] == "Roca"
+
+
+def test_legacy_client_clarification_can_be_recovered_without_reasking(db):
+    service = AssistantService(
+        db,
+        QueueProvider(TaskCreateCommand(title="Preparar orçamento")),
+        now=_now,
+    )
+    initial = service.handle_message(
+        message="Crie tarefa para preparar orçamento",
+        request_id="legacy-client-loop-1",
+    )
+    action = db.query(AssistantAction).one()
+    action.status = "needs_clarification"
+    action.arguments_json = TaskCreateCommand(
+        title="Preparar orçamento", client="Roca"
+    ).model_dump(mode="json")
+    db.add(AssistantMessage(
+        conversation_id=initial.conversation_id,
+        role="assistant",
+        kind="clarification",
+        content="Não encontrei o cliente 'roca'. Qual cadastro devo usar?",
+        details_json={},
+    ))
+    db.commit()
+
+    recommended = service.handle_message(
+        message="O que você recomenda?",
+        request_id="legacy-client-loop-2",
+        conversation_id=initial.conversation_id,
+    )
+
+    assert recommended.kind == "confirmation"
+    assert recommended.action_id == action.id
+    assert len(db.query(AssistantAction).all()) == 1
+    assert "Roca" in recommended.fields["cliente"]
+
+    registered = service.handle_message(
+        message="Cadastre a empresa Roca",
+        request_id="legacy-client-loop-3",
+        conversation_id=initial.conversation_id,
+    )
+
+    assert registered.kind == "confirmation"
+    assert registered.action_id == action.id
+    assert "não criei nem alterei cadastro" in registered.message.lower()
+    assert db.query(Client).count() == 0
+    assert db.query(Task).count() == 0
+
+    company = service.handle_message(
+        message="Roca",
+        request_id="legacy-client-loop-4",
+        conversation_id=initial.conversation_id,
+    )
+    assert company.kind == "confirmation"
+    assert company.action_id == action.id
+    assert db.query(AssistantAction).count() == 1
+
+
+def test_correction_updates_existing_pending_draft_and_rotates_confirmation(db):
     db.add_all([Client(razao_social="Alfa Norte"), Client(razao_social="Alfa Sul")])
     db.commit()
     provider = QueueProvider(
@@ -739,7 +914,9 @@ def test_correction_can_complete_a_draft_that_needs_clarification(db):
     assert preview.fields["prazo"] == "02/10/2026"
     assert db.query(Task).count() == 0
     actions = db.query(AssistantAction).order_by(AssistantAction.id).all()
-    assert [action.status for action in actions] == ["cancelled", "pending"]
+    assert len(actions) == 1
+    assert actions[0].status == "pending"
+    assert preview.action_id == actions[0].id
 
 
 def test_explicit_date_correction_of_pending_draft_does_not_depend_on_model(db):

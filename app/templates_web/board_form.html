@@ -3,12 +3,13 @@
 {% block content %}
 <div class="page-header">
   <div class="page-header-inner">
+    <span class="eyebrow">Operação · tarefa</span>
     <h1 class="page-title">{% if task %}Editar Tarefa{% else %}Nova Tarefa{% endif %}</h1>
     <p class="page-subtitle">Preencha as informações do card do Kanban.</p>
   </div>
 </div>
 
-<div class="card" style="margin-top: 14px;">
+<div class="card task-form-card">
   <form action="{{ action_url }}" method="post">
     <div class="form-grid-1">
       <div class="field required">
@@ -41,7 +42,7 @@
       </div>
     </div>
 
-    <h3 style="margin: 20px 0 10px; font-size: 14px; border-bottom: 1px solid var(--line); padding-bottom: 5px;">Vínculos (Opcionais)</h3>
+    <div class="section-heading"><h2 class="card-title">Vínculos opcionais</h2><p class="card-subtitle">Associe somente quando o vínculo estiver confirmado.</p></div>
 
     <div class="form-grid-3">
       <div class="field">
@@ -52,6 +53,10 @@
           <option value="{{ c.id }}" {% if task and task.client_id == c.id %}selected{% endif %}>{{ c.razao_social }}</option>
           {% endfor %}
         </select>
+      </div>
+      <div class="field">
+        <label for="client_name">Nome informado / cliente a confirmar</label>
+        <input id="client_name" name="client_name" maxlength="255" value="{{ task.client_name if task and task.client_name else '' }}" placeholder="Opcional; não cria cadastro de cliente">
       </div>
       <div class="field">
         <label for="proposal_id">Proposta</label>
@@ -73,14 +78,14 @@
       </div>
     </div>
 
-    <div class="actions mt-12" style="justify-content: flex-end; margin-top: 20px;">
+    <div class="actions mt-12 actions-end form-actions">
       <a href="/web/board" class="btn btn-ghost">Cancelar</a>
       <button type="submit" class="btn btn-primary">Salvar Tarefa</button>
     </div>
   </form>
 
   {% if task %}
-  <div class="actions mt-12" style="border-top: 1px solid var(--line); padding-top: 14px;">
+  <div class="actions mt-12 destructive-actions">
     <form action="/web/board/{{ task.id }}/delete" method="post"
           onsubmit="return window.confirm('Tem certeza que deseja excluir esta atividade? Esta ação não pode ser desfeita.');">
       <button type="submit" class="btn btn-danger">Excluir atividade</button>

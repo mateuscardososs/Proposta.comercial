@@ -1,6 +1,8 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.assistant.email.classification import to_result
 from app.assistant.email.contracts import (
     EmailMessageRecord,
@@ -24,11 +26,13 @@ class FakeReader:
     def __init__(self, messages, *, sent_available=False, awaiting_reply=False):
         self.messages = messages
         self.calls = 0
+        self.queries = []
         self.sent_available = sent_available
         self.awaiting_reply = awaiting_reply
 
     def query(self, query: EmailQuery) -> EmailQueryResult:
         self.calls += 1
+        self.queries.append(query)
         return EmailQueryResult(
             state="success" if self.messages else "empty",
             provider="synthetic",
@@ -98,6 +102,57 @@ def test_sync_creates_one_linked_task_and_retry_is_idempotent(db):
     assert db.query(InboxEmail).count() == 1
     assert db.query(EmailTaskLink).count() == 1
     assert db.query(EmailTaskLink).one().task_id == task.id
+    assert task.client_name == "Cliente a identificar"
+    assert task.client_link_status == "pending_review"
+    assert task.titulo.startswith("Cliente a identificar:")
+    assert db.query(InboxEmail).one().review_status == "pending"
+
+
+def test_unique_existing_client_is_linked_to_automatic_quote_task(db):
+    client = Client(razao_social="Cliente Alfa")
+    db.add(client)
+    db.commit()
+    message = _quote("synthetic-known-client").model_copy(update={
+        "subject": "Pedido de orçamento da Cliente Alfa",
+        "text": "Solicito orçamento para calibrar a balança da Cliente Alfa.",
+    })
+    service = EmailSyncService(
+        db, FakeReader([message]), mailbox_key="known-client",
+        timezone="America/Recife", auto_task_creation_enabled=True,
+    )
+
+    result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
+
+    assert result.created_tasks == 1
+    task = db.query(Task).one()
+    assert task.client_id == client.id
+    assert task.client_name == client.razao_social
+    assert task.client_link_status == "linked"
+
+
+@pytest.mark.parametrize(
+    ("subject", "body", "category"),
+    [
+        ("Ordem de compra", "Pedido de compra aprovado para revisão.", "purchase_order"),
+        ("Chamado técnico", "Solicitamos atendimento técnico para a balança.", "service_request"),
+    ],
+)
+def test_high_confidence_order_and_service_requests_create_review_tasks(
+    db, subject, body, category
+):
+    message = _quote(f"synthetic-{category}").model_copy(
+        update={"subject": subject, "text": body}
+    )
+    service = EmailSyncService(
+        db, FakeReader([message]), mailbox_key=f"auto-{category}",
+        timezone="America/Recife", auto_task_creation_enabled=True,
+    )
+
+    result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
+
+    assert result.created_tasks == 1
+    assert db.query(Task).one().status == "a_fazer"
+    assert db.query(EmailTaskLink).one().action_type == f"email:{category}"
 
 
 def test_origin_idempotency_link_survives_task_deletion(db):
@@ -138,7 +193,7 @@ def test_existing_task_link_remains_authoritative_if_automation_is_later_disable
 
     assert retry.created_tasks == 0
     assert db.query(Task).count() == 1
-    assert db.query(InboxEmail).one().review_status == "task_created"
+    assert db.query(InboxEmail).one().review_status == "pending"
 
 
 def test_manual_classification_survives_repeated_sync(db):
@@ -232,7 +287,7 @@ def test_paused_sync_does_not_query_provider(db):
     assert db.query(InboxEmail).count() == 0
 
 
-def test_similar_customer_names_route_quote_to_review_without_guessing(db):
+def test_similar_customer_names_still_create_unlinked_review_task(db):
     db.add_all(
         [Client(razao_social="Alfa Serviços"), Client(razao_social="Alfa Indústria")]
     )
@@ -254,14 +309,18 @@ def test_similar_customer_names_route_quote_to_review_without_guessing(db):
 
     result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
 
-    assert result.created_tasks == 0
-    assert db.query(Task).count() == 0
+    assert result.created_tasks == 1
+    assert db.query(Task).count() == 1
+    task = db.query(Task).one()
+    assert task.client_id is None
+    assert task.client_name == "Alfa"
+    assert task.client_link_status == "needs_confirmation"
     stored = db.query(InboxEmail).one()
     assert stored.review_status == "pending"
     assert "mais de um cadastro" in stored.classification_reason
 
 
-def test_unknown_explicit_customer_name_routes_quote_to_review(db):
+def test_unknown_explicit_customer_name_creates_unlinked_task_for_review(db):
     quote = _quote("synthetic-unknown-customer").model_copy(
         update={"subject": "Pedido de orçamento da empresa Ômega"}
     )
@@ -275,11 +334,52 @@ def test_unknown_explicit_customer_name_routes_quote_to_review(db):
 
     result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
 
-    assert result.created_tasks == 0
-    assert db.query(Task).count() == 0
+    assert result.created_tasks == 1
+    assert db.query(Task).count() == 1
+    task = db.query(Task).one()
+    assert task.client_id is None
+    assert task.client_name == "Ômega"
+    assert task.client_link_status == "pending_review"
     stored = db.query(InboxEmail).one()
     assert stored.review_status == "pending"
     assert "não encontrado no cadastro" in stored.classification_reason
+
+    repeated = service.sync_once(now=datetime(2026, 10, 2, 12, 15, tzinfo=TEST_ZONE))
+    assert repeated.created_tasks == 0
+    assert db.query(Task).count() == 1
+    assert db.query(InboxEmail).one().review_status == "pending"
+
+
+def test_first_sync_starts_at_activation_and_never_imports_older_messages(db):
+    reader = FakeReader([_quote("synthetic-after-activation")])
+    service = EmailSyncService(
+        db, reader, mailbox_key="activation-boundary", timezone="America/Recife",
+        auto_task_creation_enabled=True,
+    )
+    activation = datetime(2026, 10, 2, 11, 30, tzinfo=TEST_ZONE)
+    service.activate(now=activation)
+
+    service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
+
+    assert reader.queries[0].start_at == activation
+    assert db.query(EmailSyncState).one().activation_at == activation.replace(tzinfo=None)
+
+
+def test_sync_retry_overlap_is_clamped_to_activation(db):
+    reader = FakeReader([_quote("synthetic-clamp")])
+    service = EmailSyncService(
+        db, reader, mailbox_key="activation-clamp", timezone="America/Recife",
+        auto_task_creation_enabled=True,
+    )
+    activation = datetime(2026, 10, 2, 11, 30, tzinfo=TEST_ZONE)
+    service.activate(now=activation)
+    state = db.query(EmailSyncState).one()
+    state.last_success_at = datetime(2026, 10, 2, 11, 45, tzinfo=TEST_ZONE).replace(tzinfo=None)
+    db.commit()
+
+    service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
+
+    assert reader.queries[0].start_at == activation
 
 
 def test_pending_reply_task_requires_complete_sent_coverage(db):

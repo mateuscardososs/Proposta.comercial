@@ -7,17 +7,23 @@
 {% set event_labels = {'call_received': 'Chamado recebido', 'visit_started': 'Visita iniciada', 'inspection': 'Inspecao', 'execution_started': 'Execucao iniciada', 'execution_completed': 'Execucao concluida', 'note': 'Observacao', 'correction': 'Correcao'} %}
 
 {% block content %}
-<section class="page-header">
+<section class="page-header" data-service-summary>
+  <div><span class="eyebrow">Serviço confirmado</span>
   <h1 class="page-title">Chamado #{{ call.id }} · {{ call.summary }}</h1>
   <p class="page-subtitle">{{ call.client.razao_social }} · Aberto em {{ format_date_br(call.opened_on) }}</p>
   <div class="meta-line">
     <span class="badge {{ 'success' if call.execution_status == 'completed' else 'primary' if call.execution_status == 'in_progress' else '' }}">Execucao tecnica: {{ execution_labels[call.execution_status] }}</span>
     <span class="badge {{ 'success' if call.administrative_status == 'closed' else 'warning' }}">Situacao administrativa: {{ administration_labels[call.administrative_status] }}</span>
   </div>
-  <div class="actions mt-12"><a href="/web/services" class="btn btn-ghost">Voltar aos chamados</a></div>
+  <div class="actions mt-12"><a href="/web/services" class="btn btn-ghost">Voltar aos chamados</a></div></div>
 </section>
 
-<section class="card">
+<section class="card service-next-step" data-service-next-step>
+  <div class="card-head"><div><span class="eyebrow">Próxima etapa</span><h2 class="card-title">{% if call.execution_status != 'completed' %}Concluir execução técnica{% elif next_step %}{{ step_labels[next_step.step_type] }}{% else %}Fluxo concluído{% endif %}</h2></div></div>
+  <p class="card-subtitle">{% if call.execution_status != 'completed' %}A execução ainda está em {{ execution_labels[call.execution_status]|lower }}.{% elif next_step %}Situação atual: {{ status_labels[next_step.status] }}.{% else %}Não há pendências administrativas registradas.{% endif %}</p>
+</section>
+
+<section class="card" data-service-administration>
   <div class="card-head"><div><h2 class="card-title">Etapas administrativas</h2><p class="card-subtitle">Estado atual de cada etapa.</p></div></div>
   <div class="table-wrap"><table>
     <thead><tr><th>Etapa</th><th>Estado atual</th></tr></thead>
@@ -29,7 +35,7 @@
   </table></div>
 </section>
 
-<section class="card">
+<section class="card" data-service-timeline>
   <div class="card-head"><div><h2 class="card-title">Historico de eventos</h2><p class="card-subtitle">Fatos originais e correcoes permanecem visiveis.</p></div></div>
   <div class="table-wrap"><table>
     <thead><tr><th>Data</th><th>Evento</th><th>Descricao e correcao</th><th>Autorizacao</th></tr></thead>

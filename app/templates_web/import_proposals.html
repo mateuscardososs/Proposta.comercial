@@ -48,6 +48,7 @@
 </style>
 <div class="import-page">
   <section class="page-header">
+    <span class="eyebrow">Documentos · importação</span>
     <h1 class="page-title">Importar propostas PDF (legado)</h1>
     <p class="page-subtitle">Gere preview, confira dados extraidos e confirme a importacao apenas quando estiver seguro.</p>
     <div class="meta-line">
@@ -55,7 +56,7 @@
     </div>
   </section>
 
-  <section class="card mobile-collapsible" data-collapsed-mobile="false">
+  <section class="card mobile-collapsible" data-collapsed-mobile="false" data-upload-state="idle">
     <button type="button" class="collapse-toggle" aria-expanded="true">
       <span>Configuracao de importacao</span>
       <span class="icon">?</span>
@@ -102,7 +103,7 @@
     </div>
   </section>
 
-  <section class="card" id="importStatusCard" style="display:none;">
+  <section class="card" id="importStatusCard" style="display:none;" role="status" aria-live="polite">
     <div class="card-head">
       <div>
         <h2 class="card-title">Status da operacao</h2>
@@ -111,7 +112,7 @@
     <div id="importStatus"></div>
   </section>
 
-  <section class="card mobile-collapsible" id="previewCard" data-collapsed-mobile="false" style="display:none;">
+  <section class="card mobile-collapsible" id="previewCard" data-collapsed-mobile="false" data-upload-preview style="display:none;">
     <button type="button" class="collapse-toggle" aria-expanded="true">
       <span>Preview extraido</span>
       <span class="icon">?</span>
