@@ -24,6 +24,26 @@ def test_board_shows_service_done_column_in_approved_order():
     assert positions == sorted(positions)
     assert NEW_LABEL in response.text
     assert '--kanban-columns: 5' in response.text
+    assert 'data-board-filters' in response.text
+    assert 'data-filter-search' in response.text
+    assert 'data-filter-owner' in response.text
+    assert 'data-filter-client' in response.text
+    assert 'data-filter-deadline' in response.text
+    assert 'data-task-total' in response.text
+
+
+def test_board_card_has_accessible_move_control_and_client_fallback(db):
+    task = Task(titulo="Validar atendimento", status="a_fazer", ordem=0)
+    db.add(task)
+    db.commit()
+
+    with TestClient(app) as client:
+        response = client.get("/web/board")
+
+    assert response.status_code == 200
+    assert "Cliente a identificar" in response.text
+    assert 'data-task-move' in response.text
+    assert 'aria-label="Mover tarefa Validar atendimento"' in response.text
 
 
 def test_task_form_offers_service_done_status():

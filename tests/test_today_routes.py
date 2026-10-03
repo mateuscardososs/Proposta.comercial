@@ -13,10 +13,19 @@ def test_today_is_home_and_shell_has_keyboard_navigation(db):
         response = client.get("/")
 
     assert response.status_code == 200
-    assert "Ordem recomendada" in response.text
+    assert "Precisa de atenção" in response.text
     assert 'href="#mainContent"' in response.text
     assert 'aria-label="Navegação principal"' in response.text
     assert 'aria-controls="siteNav"' in response.text
+    assert "data-app-shell" in response.text
+    assert "data-sidebar" in response.text
+    assert "data-sidebar-toggle" in response.text
+    assert 'data-nav-group="operacao"' in response.text
+    assert 'data-nav-group="comunicacao"' in response.text
+    assert response.text.index('aria-label="E-mails e mensagens"') < response.text.index(
+        'aria-label="Assistente"'
+    )
+    assert 'localStorage.getItem("adbalancas-nav-collapsed")' in response.text
     assert (
         'aria-label="Breadcrumb"' not in response.text
     )  # home has no redundant breadcrumb

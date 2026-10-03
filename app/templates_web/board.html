@@ -1,66 +1,120 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="page-header">
-  <div class="page-header-inner">
-    <h1 class="page-title">Quadro de Tarefas</h1>
-    <p class="page-subtitle">Acompanhe o andamento dos serviços e propostas.</p>
+{% set columns = [
+  ('a_fazer', 'A Fazer', ''),
+  ('em_andamento', 'Em Andamento', 'primary'),
+  ('servico_feito_falta_nota_pedido', 'Serviços Feitos — Falta Nota/Pedido', 'warning'),
+  ('aguardando_cliente', 'Aguardando Cliente', 'warning'),
+  ('concluido', 'Concluído', 'success')
+] %}
+<div data-kanban-scope>
+  <div class="page-header">
+    <div class="page-header-inner">
+      <span class="eyebrow">Operação</span>
+      <h1 class="page-title">Tarefas</h1>
+      <p class="page-subtitle"><strong data-task-total>{{ task_total }}</strong> atividade(s) organizadas por etapa.</p>
+    </div>
+    <div class="actions">
+      <a href="/web/board/new" class="btn btn-primary">Nova tarefa</a>
+    </div>
   </div>
-  <div class="actions" style="margin-top: 14px;">
-    <a href="/web/board/new" class="btn btn-primary">Nova Tarefa</a>
-  </div>
-</div>
 
-<p class="kanban-error" data-kanban-error role="alert"></p>
-
-<div class="kanban-board" data-kanban-board data-ordered="true"
-     data-endpoint-template="/api/tasks/{id}/move" style="--kanban-columns: 5;">
-  {% set columns = [
-    ('a_fazer', 'A Fazer', ''),
-    ('em_andamento', 'Em Andamento', ''),
-    ('servico_feito_falta_nota_pedido', 'Serviços Feitos — Falta Nota/Pedido', 'primary'),
-    ('aguardando_cliente', 'Aguardando Cliente', 'warning'),
-    ('concluido', 'Concluído', 'success')
-  ] %}
-
-  {% for status_key, label, badge_class in columns %}
-  <section class="kanban-column" data-status="{{ status_key }}">
-    <h2 class="kanban-column-title">
-      {{ label }}
-      <span class="badge {{ badge_class }}">{{ board_data[status_key] | length }}</span>
-    </h2>
-    <div class="kanban-dropzone" data-dropzone>
-      {% for task in board_data[status_key] %}
-      <article class="kanban-card" draggable="true" data-id="{{ task.id }}">
-        <div class="kanban-card-header">
-          <h3 class="kanban-card-title">
-            <a href="/web/board/{{ task.id }}/edit">{{ task.titulo }}</a>
-          </h3>
-          {% if task.prazo %}
-          <span class="badge" title="Prazo">{{ task.prazo.strftime('%d/%m/%y') }}</span>
-          {% endif %}
-        </div>
-        <div class="kanban-card-meta">
-          {% if task.client %}
-          <div><strong>Cliente:</strong> {{ task.client.razao_social }}</div>
-          {% endif %}
-          {% if task.user %}
-          <div><strong>Resp:</strong> {{ task.user.nome }}</div>
-          {% endif %}
-          {% if task.proposal %}
-          <div>
-            <strong>Proposta:</strong>
-            <a href="/web/proposals/{{ task.proposal.id }}" class="badge primary">
-              #{{ task.proposal.numero }}/{{ task.proposal.revisao }}
-            </a>
-          </div>
-          {% endif %}
-        </div>
-      </article>
-      {% endfor %}
+  <section class="card filter-bar" data-board-filters aria-label="Filtros de tarefas">
+    <div class="form-grid-4">
+      <div class="field">
+        <label for="task-search">Buscar</label>
+        <input id="task-search" type="search" data-filter-search placeholder="Título, cliente ou proposta">
+      </div>
+      <div class="field">
+        <label for="task-status">Status</label>
+        <select id="task-status" data-filter-status>
+          <option value="">Todos os status</option>
+          {% for status_key, label, badge_class in columns %}<option value="{{ status_key }}">{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="task-owner">Responsável</label>
+        <select id="task-owner" data-filter-owner>
+          <option value="">Todos</option>
+          {% for owner in owners %}<option value="{{ owner }}">{{ owner }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="task-client">Cliente</label>
+        <select id="task-client" data-filter-client>
+          <option value="">Todos</option>
+          <option value="Cliente a identificar">Cliente a identificar</option>
+          {% for client_name in client_names %}<option value="{{ client_name }}">{{ client_name }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="filter-bar-footer">
+      <div class="field field-inline">
+        <label for="task-deadline">Prazo</label>
+        <select id="task-deadline" data-filter-deadline>
+          <option value="">Todos</option>
+          <option value="overdue">Atrasadas</option>
+          <option value="today">Hoje</option>
+          <option value="none">Sem prazo</option>
+        </select>
+      </div>
+      <span class="muted" data-filter-feedback aria-live="polite">{{ task_total }} tarefa(s) visível(is)</span>
     </div>
   </section>
-  {% endfor %}
+
+  <p class="kanban-error" data-kanban-error role="alert"></p>
+
+  <div class="kanban-board" data-kanban-board data-ordered="true"
+       data-endpoint-template="/api/tasks/{id}/move" data-today="{{ today.isoformat() }}"
+       style="--kanban-columns: 5;">
+    {% for status_key, label, badge_class in columns %}
+    <section class="kanban-column" data-status="{{ status_key }}">
+      <h2 class="kanban-column-title">
+        <span>{{ label }}</span>
+        <span class="badge {{ badge_class }}">{{ board_data[status_key] | length }}</span>
+      </h2>
+      <div class="kanban-dropzone" data-dropzone>
+        {% for task in board_data[status_key] %}
+        {% set client_label = task.client.razao_social if task.client else (task.client_name if task.client_name else 'Cliente a identificar') %}
+        <article class="kanban-card{% if task.prazo and task.prazo < today and task.status != 'concluido' %} is-overdue{% endif %}"
+                 draggable="true" data-id="{{ task.id }}" data-status="{{ task.status }}"
+                 data-owner="{{ task.user.nome if task.user else '' }}" data-client="{{ client_label }}"
+                 data-deadline="{{ task.prazo.isoformat() if task.prazo else '' }}"
+                 data-search="{{ task.titulo }} {{ client_label }} {{ task.user.nome if task.user else '' }} {{ task.proposal.numero if task.proposal else '' }}">
+          <div class="kanban-card-header">
+            <h3 class="kanban-card-title"><a href="/web/board/{{ task.id }}/edit">{{ task.titulo }}</a></h3>
+            {% if task.prazo and task.prazo < today and task.status != 'concluido' %}
+              <span class="badge danger">Atrasada</span>
+            {% elif task.prazo == today %}
+              <span class="badge warning">Hoje</span>
+            {% elif task.prazo %}
+              <span class="badge">{{ task.prazo.strftime('%d/%m/%y') }}</span>
+            {% else %}
+              <span class="badge">Sem prazo</span>
+            {% endif %}
+          </div>
+          <div class="kanban-card-meta">
+            <div><strong>Cliente</strong><span>{{ client_label }}</span></div>
+            {% if task.client_link_status == 'needs_confirmation' %}<div><span class="badge warning">A confirmar</span></div>{% endif %}
+            {% if task.client_link_status == 'pending_review' %}<div><span class="badge warning">Revisar vínculo</span></div>{% endif %}
+            {% if task.user %}<div><strong>Responsável</strong><span>{{ task.user.nome }}</span></div>{% endif %}
+            {% if task.proposal %}<div><strong>Proposta</strong><a href="/web/proposals/{{ task.proposal.id }}">#{{ task.proposal.numero }}/{{ task.proposal.revisao }}</a></div>{% endif %}
+            {% if task.id in email_task_ids %}<div><span class="badge primary">Origem: e-mail</span></div>{% endif %}
+          </div>
+          <div class="field kanban-card-move">
+            <label class="sr-only" for="move-task-{{ task.id }}">Mover tarefa {{ task.titulo }}</label>
+            <select id="move-task-{{ task.id }}" data-task-move aria-label="Mover tarefa {{ task.titulo }}">
+              {% for move_key, move_label, move_badge in columns %}<option value="{{ move_key }}"{% if move_key == task.status %} selected{% endif %}>{{ move_label }}</option>{% endfor %}
+            </select>
+          </div>
+        </article>
+        {% endfor %}
+        <div class="empty-state compact" data-column-empty{% if board_data[status_key] %} hidden{% endif %}>Nenhuma tarefa nesta etapa.</div>
+      </div>
+    </section>
+    {% endfor %}
+  </div>
 </div>
 
 {% include "_kanban_drag.html" %}

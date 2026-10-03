@@ -78,12 +78,12 @@ def test_instruction_in_email_body_does_not_change_classification_capability():
             "vendor_quotation",
             "review",
         ),
-        ("Ordem de compra", "Pedido de compra recebido.", "purchase_order", "review"),
+        ("Ordem de compra", "Pedido de compra recebido.", "purchase_order", "task"),
         (
             "Nota fiscal",
             "Por favor emitir nota fiscal do serviço.",
             "invoice_request",
-            "task",
+            "review",
         ),
         (
             "Nota fiscal recebida",

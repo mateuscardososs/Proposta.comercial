@@ -175,6 +175,8 @@ class Task(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(50), default="a_fazer", nullable=False)
 
     client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
+    client_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_link_status: Mapped[str] = mapped_column(String(30), default="unlinked", nullable=False)
     proposal_id: Mapped[int | None] = mapped_column(ForeignKey("proposals.id"), nullable=True, index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
 
@@ -351,6 +353,7 @@ class EmailSyncState(Base, TimestampMixin):
     provider: Mapped[str] = mapped_column(String(30), nullable=False)
     mailbox_key: Mapped[str] = mapped_column(String(160), nullable=False)
     paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    activation_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(200), nullable=True)

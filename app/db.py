@@ -47,6 +47,20 @@ class Base(DeclarativeBase):
 
 def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
     inspector = inspect(target_engine)
+    table_names = set(inspector.get_table_names())
+    if "tasks" in table_names:
+        task_columns = {str(column["name"]) for column in inspector.get_columns("tasks")}
+        task_additions = (
+            ("client_name", "VARCHAR(255)", None),
+            ("client_link_status", "VARCHAR(30)", "'unlinked'"),
+        )
+        for column_name, column_type, default_value in task_additions:
+            if column_name in task_columns:
+                continue
+            default_clause = f" NOT NULL DEFAULT {default_value}" if default_value else ""
+            statement = f"ALTER TABLE tasks ADD COLUMN {column_name} {column_type}{default_clause}"
+            with target_engine.begin() as conn:
+                conn.execute(text(statement))
     if "inbox_emails" in inspector.get_table_names():
         email_columns = {str(column["name"]) for column in inspector.get_columns("inbox_emails")}
         for column_name, column_type, sqlite_default, postgres_default in (
@@ -61,6 +75,12 @@ def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
                 statement = f"ALTER TABLE inbox_emails ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {sqlite_default}"
             with target_engine.begin() as conn:
                 conn.execute(text(statement))
+    if "email_sync_states" in table_names:
+        state_columns = {str(column["name"]) for column in inspector.get_columns("email_sync_states")}
+        if "activation_at" not in state_columns:
+            timestamp_type = "TIMESTAMP" if target_engine.dialect.name == "postgresql" else "DATETIME"
+            with target_engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE email_sync_states ADD COLUMN activation_at {timestamp_type}"))
     if "proposals" not in inspector.get_table_names():
         return
 

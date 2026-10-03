@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-header">
+  <div><span class="eyebrow">Comercial</span>
   <h1 class="page-title">Historico de propostas</h1>
   <p class="page-subtitle">Consulte, duplique e abra revisoes com foco em velocidade de atendimento.</p>
   <div class="meta-line">
     <span class="badge primary">Catalogo completo</span>
     <span class="badge">Organizado por data mais recente</span>
-  </div>
+  </div></div>
 </section>
 
 <section class="card">
@@ -16,10 +17,16 @@
       <p class="card-subtitle">Use o filtro para localizar por numero, cliente ou responsavel.</p>
     </div>
     <div class="actions">
-      <input id="proposalSearch" class="search-input" type="search" placeholder="Filtrar propostas..." aria-label="Filtrar propostas">
       <a class="btn btn-secondary" href="/web/proposals/upload-externo">Upload externo</a>
       <a class="btn btn-primary" href="/web/proposals/new">Nova proposta</a>
     </div>
+  </div>
+
+  <div class="form-grid-4 filter-grid" data-proposal-filters>
+    <div class="field"><label for="proposalSearch">Buscar</label><input id="proposalSearch" type="search" placeholder="Número ou responsável"></div>
+    <div class="field"><label for="proposalClient">Cliente</label><select id="proposalClient"><option value="">Todos</option>{% for name in proposals|map(attribute='client.razao_social')|unique|sort %}<option value="{{ name }}">{{ name }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="proposalOrigin">Origem</label><select id="proposalOrigin"><option value="">Todas</option><option value="sistema">Sistema</option><option value="upload_externo">Upload externo</option><option value="reupload_editado">Word reenviado</option></select></div>
+    <div class="field"><label for="proposalDate">Data</label><input id="proposalDate" type="date"></div>
   </div>
 
   <div class="table-wrap">
@@ -39,7 +46,7 @@
       </thead>
       <tbody id="proposalRows">
         {% for proposal in proposals %}
-        <tr data-search="{{ (proposal.numero|string) ~ '/' ~ (proposal.revisao|string) ~ ' ' ~ proposal.client.razao_social ~ ' ' ~ proposal.user.nome }}">
+        <tr data-search="{{ (proposal.numero|string) ~ '/' ~ (proposal.revisao|string) ~ ' ' ~ proposal.client.razao_social ~ ' ' ~ proposal.user.nome }}" data-client="{{ proposal.client.razao_social }}" data-origin="{{ proposal.origem }}" data-date="{{ proposal.data_geracao.isoformat() }}">
           <td><strong>{{ proposal.numero }}/{{ proposal.revisao }}</strong></td>
           <td>{{ proposal.client.razao_social }}</td>
           <td>{{ format_date_br(proposal.data_geracao) }}</td>
@@ -96,6 +103,9 @@
 <script>
   const searchInput = document.getElementById("proposalSearch");
   const feedback = document.getElementById("proposalSearchFeedback");
+  const clientFilter = document.getElementById("proposalClient");
+  const originFilter = document.getElementById("proposalOrigin");
+  const dateFilter = document.getElementById("proposalDate");
   const rows = Array.from(document.querySelectorAll("#proposalRows tr[data-search]"));
 
   function runSearch() {
@@ -103,7 +113,10 @@
     let visible = 0;
     rows.forEach((row) => {
       const content = (row.getAttribute("data-search") || "").toLowerCase();
-      const match = !term || content.includes(term);
+      const match = (!term || content.includes(term))
+        && (!clientFilter.value || row.dataset.client === clientFilter.value)
+        && (!originFilter.value || row.dataset.origin === originFilter.value)
+        && (!dateFilter.value || row.dataset.date === dateFilter.value);
       row.style.display = match ? "" : "none";
       if (match) visible += 1;
     });
@@ -116,5 +129,8 @@
   }
 
   searchInput.addEventListener("input", runSearch);
+  clientFilter.addEventListener("change", runSearch);
+  originFilter.addEventListener("change", runSearch);
+  dateFilter.addEventListener("change", runSearch);
 </script>
 {% endblock %}

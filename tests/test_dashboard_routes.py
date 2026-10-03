@@ -50,9 +50,12 @@ def test_index_renders_dashboard_contract_and_danger_states(db):
     assert response.status_code == 200
     assert "agenda priorizada" in response.text
     assert "Hoje" in response.text
-    assert "Ordem recomendada" in response.text
+    assert 'aria-label="Resumo operacional do dia"' in response.text
+    assert 'data-today-section="attention"' in response.text
+    assert 'data-today-section="agenda"' in response.text
+    assert 'data-today-section="services"' in response.text
+    assert 'data-today-section="finance"' in response.text
     assert "Indicadores financeiros e propostas do mês" in response.text
-    assert response.text.count('class="kpi-card') == 11
     assert "R$ 100,00" in response.text
     assert "R$ 250,00" in response.text
     assert "Tarefa atrasada" in response.text
@@ -69,6 +72,5 @@ def test_index_empty_state_is_clear_and_keeps_monthly_kpis():
         response = client_app.get("/")
 
     assert response.status_code == 200
-    assert response.text.count('class="kpi-card') == 11
     assert response.text.count("R$ 0,00") == 5
-    assert "Nenhum item encontrado" in response.text
+    assert "Nenhuma pendência encontrada nesta janela" in response.text

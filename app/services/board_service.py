@@ -75,6 +75,12 @@ def create_task(db: Session, payload: TaskCreate, *, commit: bool = True) -> Tas
         descricao=payload.descricao,
         status=payload.status,
         client_id=client_id,
+        client_name=(payload.client_name.strip() or None) if payload.client_name else None,
+        client_link_status=(
+            "linked" if client_id is not None and payload.client_link_status == "unlinked"
+            else "pending_review" if client_id is None and payload.client_name and payload.client_link_status == "unlinked"
+            else payload.client_link_status
+        ),
         proposal_id=proposal_id,
         user_id=user_id,
         prazo=payload.prazo,
@@ -104,6 +110,14 @@ def update_task(db: Session, task_id: int, payload: TaskUpdate) -> Task:
     task.client_id = client_id
     task.proposal_id = proposal_id
     task.user_id = user_id
+    if "client_name" in payload.model_fields_set:
+        task.client_name = (payload.client_name.strip() or None) if payload.client_name else None
+    if "client_link_status" in payload.model_fields_set and payload.client_link_status:
+        task.client_link_status = payload.client_link_status
+    elif "client_id" in payload.model_fields_set or "client_name" in payload.model_fields_set:
+        task.client_link_status = "linked" if client_id is not None else (
+            "pending_review" if task.client_name else "unlinked"
+        )
 
     db.commit()
     db.refresh(task)

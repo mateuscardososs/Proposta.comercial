@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-header">
+  <span class="eyebrow">Documentos · nova revisão</span>
   <h1 class="page-title">Reenviar Word editado</h1>
   <p class="page-subtitle">Envie o documento alterado para criar uma nova revisão da proposta {{ proposal.numero }}/{{ proposal.revisao }}.</p>
   <div class="meta-line">
@@ -9,7 +10,7 @@
   </div>
 </section>
 
-<section class="card">
+<section class="card" data-upload-state="idle">
   <div class="card-head">
     <div>
       <h2 class="card-title">Arquivo Word</h2>
@@ -30,7 +31,7 @@
       </div>
     </div>
     <div id="wordWarnings" class="warning" hidden></div>
-    <p id="wordStatus" class="muted">Selecione o arquivo e clique em analisar. Se o marcador não existir, digite o valor manualmente.</p>
+    <p id="wordStatus" class="muted" role="status" aria-live="polite">Selecione o arquivo e clique em analisar. Se o marcador não existir, digite o valor manualmente.</p>
     <div class="actions">
       <button id="analyzeWordButton" class="btn btn-secondary" type="button">Analisar arquivo</button>
       <button id="confirmWordButton" class="btn btn-primary" type="submit" disabled>Confirmar e criar revisão</button>

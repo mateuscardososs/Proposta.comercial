@@ -6,45 +6,48 @@
   <title>{{ title or "Propostas AD Balancas" }}</title>
   <style>
     :root {
-      --bg: #edf2f8;
+      --canvas: #f3f4f5;
       --surface: #ffffff;
-      --surface-muted: #f7f9fc;
-      --line: #d6dee9;
-      --line-strong: #bcc7d8;
-      --text: #162233;
-      --text-soft: #4f6078;
-      --brand: #0d5a9d;
-      --brand-dark: #083f71;
-      --accent: #1d8f6e;
-      --warning: #b5591f;
-      --danger: #b2333e;
-      --focus: rgba(13, 90, 157, 0.25);
+      --surface-muted: #f7f8f9;
+      --surface-active: #edf1f4;
+      --line: #e1e5e8;
+      --line-strong: #cbd2d8;
+      --text: #18232d;
+      --text-soft: #66727d;
+      --text-faint: #87919a;
+      --brand: #183f62;
+      --brand-dark: #102f4a;
+      --brand-soft: #e8f0f6;
+      --accent: #277355;
+      --warning: #986515;
+      --warning-soft: #fff2d9;
+      --danger: #b83c3c;
+      --danger-soft: #fdeaea;
+      --focus: rgba(43, 118, 174, 0.24);
       --radius-sm: 8px;
-      --radius-md: 12px;
-      --radius-lg: 16px;
-      --shadow-sm: 0 3px 12px rgba(12, 28, 48, 0.06);
-      --shadow-md: 0 10px 24px rgba(12, 28, 48, 0.08);
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --shadow-sm: 0 0 0 1px rgba(21, 31, 40, .04), 0 2px 5px rgba(21, 31, 40, .04);
+      --shadow-md: 0 12px 32px rgba(21, 31, 40, .12);
     }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      font-family: "Barlow", "Trebuchet MS", sans-serif;
+      font-family: "Barlow", "Aptos", "Segoe UI", sans-serif;
       color: var(--text);
-      background:
-        radial-gradient(circle at 14% -10%, #d8e5f3 0%, transparent 46%),
-        radial-gradient(circle at 100% 0%, #e4efdf 0%, transparent 38%),
-        var(--bg);
+      background: var(--canvas);
       line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
     }
 
     a { color: var(--brand-dark); }
 
     .shell {
-      max-width: 1320px;
-      margin: 0 auto;
-      padding: 0 20px;
+      width: 100%;
+      margin: 0;
+      padding: 0 18px;
     }
 
     .topbar {
@@ -52,8 +55,8 @@
       top: 0;
       z-index: 30;
       border-bottom: 1px solid var(--line);
-      background: rgba(245, 249, 253, 0.94);
-      backdrop-filter: blur(8px);
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(10px);
     }
 
     .topbar-inner {
@@ -61,8 +64,8 @@
       gap: 14px;
       align-items: flex-start;
       justify-content: space-between;
-      min-height: 64px;
-      padding: 8px 0;
+      min-height: 58px;
+      padding: 7px 0;
     }
 
     .topbar-head {
@@ -80,7 +83,7 @@
 
     .brand-title {
       margin: 0;
-      font-size: 18px;
+      font-size: 15px;
       font-weight: 700;
       letter-spacing: 0.2px;
     }
@@ -88,7 +91,7 @@
     .brand-subtitle {
       margin: 2px 0 0;
       color: var(--text-soft);
-      font-size: 12px;
+      font-size: 10px;
       letter-spacing: 0.4px;
       text-transform: uppercase;
     }
@@ -145,7 +148,7 @@
       background: #fff;
       border-radius: 999px;
       padding: 7px 12px;
-      transition: all 0.15s ease;
+      transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
       white-space: nowrap;
       flex: 0 0 auto;
     }
@@ -157,21 +160,36 @@
 
     .nav a.active {
       border-color: transparent;
-      color: #fff;
-      background: linear-gradient(135deg, var(--brand), var(--brand-dark));
-      box-shadow: 0 6px 16px rgba(13, 90, 157, 0.3);
+      color: var(--text);
+      background: var(--surface-active);
+      box-shadow: inset 3px 0 var(--brand);
     }
 
-    .app-frame { max-width: 1320px; margin: 0 auto; padding: 0 20px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; align-items: start; }
-    .sidebar { position: sticky; top: 82px; max-height: calc(100vh - 96px); overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); padding: 10px; }
-    .sidebar .nav { display: grid; justify-content: stretch; gap: 4px; }
-    .sidebar .nav a { display: flex; gap: 10px; align-items: center; width: 100%; border-radius: 10px; padding: 10px; }
-    .nav-mark { display: inline-grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border-radius: 7px; color: var(--brand-dark); background: #e8f2fc; font-size: 11px; font-weight: 800; }
-    .sidebar .nav a.active .nav-mark { color: var(--brand-dark); background: #fff; }
+    .app-frame { min-height: calc(100vh - 58px); display: grid; grid-template-columns: 238px minmax(0, 1fr); gap: 0; align-items: stretch; }
+    .sidebar { position: sticky; top: 58px; height: calc(100vh - 58px); overflow: auto; border-right: 1px solid var(--line); background: var(--surface); padding: 18px 14px; }
+    .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; margin-bottom: 16px; border-bottom: 1px solid #eff1f3; }
+    .sidebar-brand-mark { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; border-radius: 9px; background: var(--brand-dark); color: #fff; font-size: 13px; font-weight: 800; }
+    .sidebar-brand-copy { min-width: 0; }
+    .sidebar-brand-copy strong { display: block; font-size: 13px; line-height: 1.2; }
+    .sidebar-brand-copy span { color: var(--text-faint); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+    .sidebar .nav { display: block; }
+    .nav-group { margin-top: 16px; }
+    .nav-group:first-child { margin-top: 0; }
+    .nav-group-title { margin: 0; padding: 0 10px 6px; color: var(--text-faint); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .sidebar .nav a { display: flex; gap: 10px; align-items: center; width: 100%; min-height: 36px; margin: 2px 0; border: 0; border-radius: var(--radius-sm); padding: 8px 10px; color: #4f5963; background: transparent; box-shadow: none; }
+    .sidebar .nav a:hover { color: var(--text); background: var(--surface-muted); }
+    .sidebar .nav a.active { color: var(--text); background: var(--surface-active); box-shadow: inset 3px 0 var(--brand); }
+    .nav-mark { display: inline-grid; place-items: center; width: 18px; height: 18px; flex: 0 0 18px; color: #68727c; background: transparent; }
+    .nav-mark svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .sidebar .nav a.active .nav-mark { color: var(--brand); background: transparent; }
     .app-frame.is-collapsed { grid-template-columns: 72px minmax(0, 1fr); }
+    .app-frame.is-collapsed .sidebar { padding-inline: 10px; }
+    .app-frame.is-collapsed .sidebar-brand { justify-content: center; padding-inline: 0; }
+    .app-frame.is-collapsed .sidebar-brand-copy,
+    .app-frame.is-collapsed .nav-group-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
     .app-frame.is-collapsed .sidebar .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
-    .app-frame.is-collapsed .sidebar .nav a { justify-content: center; padding: 10px 4px; }
-    .app-frame.is-collapsed .nav-mark { width: 34px; height: 34px; flex-basis: 34px; }
+    .app-frame.is-collapsed .sidebar .nav a { justify-content: center; padding: 9px 4px; }
+    .app-frame.is-collapsed .nav-mark { width: 24px; height: 24px; flex-basis: 24px; }
     .topbar-inner { align-items: center; }
     .topbar-head { width: auto; }
     .menu-toggle { display: inline-flex; }
@@ -180,10 +198,27 @@
     .breadcrumbs { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; color: var(--text-soft); font-size: 13px; }
     .breadcrumbs a { font-weight: 700; }
     .breadcrumbs button { border: 0; padding: 0; background: transparent; color: var(--brand-dark); text-decoration: underline; cursor: pointer; font: inherit; }
-    .today-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .today-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .today-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .today-workspace { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, .75fr); gap: 14px; }
+    .today-secondary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .today-panel { min-width: 0; padding: 0; overflow: hidden; }
+    .today-panel > .card-head { padding: 14px 16px; margin: 0; border-bottom: 1px solid var(--line); }
+    .today-panel > .muted { display: block; padding: 14px 16px; margin: 0; }
+    .today-section-heading { display: flex; align-items: center; gap: 10px; }
+    .calibration-mark { display: flex; align-items: end; gap: 2px; width: 18px; height: 16px; }
+    .calibration-mark i { display: block; width: 2px; border-radius: 1px; background: var(--warning); }
+    .calibration-mark i:nth-child(1), .calibration-mark i:nth-child(5) { height: 5px; }
+    .calibration-mark i:nth-child(2), .calibration-mark i:nth-child(4) { height: 9px; }
+    .calibration-mark i:nth-child(3) { height: 14px; }
+    .text-link { color: var(--brand); font-size: 12px; font-weight: 700; text-decoration: none; }
+    .text-link:hover { text-decoration: underline; }
     .today-items, .message-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .today-panel .today-items { gap: 0; }
     .today-item, .message-item { border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); padding: 14px; }
-    .today-item { display: flex; gap: 14px; align-items: center; justify-content: space-between; border-left: 4px solid var(--accent); }
+    .today-panel .today-item { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 13px 16px; }
+    .today-panel .today-item:last-child { border-bottom: 0; }
+    .today-item { display: flex; gap: 14px; align-items: center; justify-content: space-between; border-left: 3px solid var(--accent); }
     .today-item-overdue { border-left-color: var(--danger); }
     .today-item-main { min-width: 0; }
     .today-item-meta, .message-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
@@ -191,6 +226,14 @@
     .today-item p, .message-item p { margin: 4px 0; color: var(--text-soft); }
     .today-secondary summary { cursor: pointer; display: grid; gap: 4px; }
     .today-secondary summary span { color: var(--text-soft); font-size: 13px; }
+    .today-compact-list { list-style: none; margin: 0; padding: 0; }
+    .today-compact-list li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+    .today-compact-list li:last-child { border-bottom: 0; }
+    .today-compact-list strong { display: block; font-size: 13px; }
+    .today-compact-list strong a { color: var(--text); text-decoration: none; }
+    .today-compact-list strong a:hover { color: var(--brand); text-decoration: underline; }
+    .today-compact-list li div > span { display: block; margin-top: 3px; color: var(--text-soft); font-size: 11px; line-height: 1.45; }
+    .today-compact-list time { color: var(--text-soft); font-size: 11px; white-space: nowrap; }
     .eyebrow { margin: 0 0 5px; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .sync-status { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin: 0; }
     .sync-status div { background: var(--surface-muted); border-radius: 10px; padding: 12px; }
@@ -203,10 +246,11 @@
     .review-form label { display: grid; gap: 5px; font-size: 13px; }
 
     .app-main {
-      padding-top: 20px;
-      padding-bottom: 24px;
+      min-width: 0;
+      padding: 22px 24px 28px;
       max-width: none;
       margin: 0;
+      background: var(--canvas);
     }
 
     .layout-grid {
@@ -229,9 +273,9 @@
     .page-header {
       border: 1px solid var(--line);
       border-radius: var(--radius-lg);
-      background: linear-gradient(140deg, #ffffff 0%, #f6f9fe 80%);
+      background: var(--surface);
       padding: 18px;
-      box-shadow: var(--shadow-sm);
+      box-shadow: none;
     }
 
     .page-title {
@@ -260,7 +304,7 @@
       align-items: center;
       gap: 5px;
       padding: 5px 9px;
-      border-radius: 999px;
+      border-radius: 6px;
       font-size: 12px;
       font-weight: 700;
       letter-spacing: 0.2px;
@@ -306,7 +350,7 @@
       border: 1px solid var(--line);
       border-radius: var(--radius-md);
       padding: 16px;
-      box-shadow: var(--shadow-sm);
+      box-shadow: none;
     }
 
     .card-head {
@@ -594,11 +638,11 @@
       transform: translateY(0);
     }
 
-    .btn-primary { color: #fff; background: linear-gradient(135deg, var(--brand), var(--brand-dark)); }
-    .btn-success { color: #fff; background: linear-gradient(135deg, #2b9d78, #1f785c); }
-    .btn-secondary { color: #fff; background: linear-gradient(135deg, #52637b, #394a62); }
-    .btn-warning { color: #fff; background: linear-gradient(135deg, #cb6d2b, #a75218); }
-    .btn-danger { color: #fff; background: linear-gradient(135deg, #cc434e, #a82f39); }
+    .btn-primary { color: #fff; background: var(--brand); }
+    .btn-success { color: #fff; background: var(--accent); }
+    .btn-secondary { color: #fff; background: #53616e; }
+    .btn-warning { color: #fff; background: var(--warning); }
+    .btn-danger { color: #fff; background: var(--danger); }
     .btn-ghost {
       color: var(--brand-dark);
       background: #edf5ff;
@@ -618,6 +662,12 @@
       color: var(--text-soft);
       font-size: 13px;
     }
+
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .empty-state { padding: 28px 18px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); text-align: center; background: var(--surface-muted); }
+    .empty-state h3 { margin: 0 0 5px; font-size: 16px; }
+    .empty-state p { margin: 0 0 14px; color: var(--text-soft); }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
     .stepper {
       display: flex;
@@ -696,6 +746,22 @@
       margin-top: 10px;
       align-items: start;
     }
+
+    .filter-bar { margin-top: 16px; padding: 16px; }
+    .filter-bar-footer {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 12px;
+    }
+    .actions-end { justify-content: flex-end; }
+    .task-form-card { margin-top: 16px; }
+    .section-heading { margin: 24px 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+    .section-heading .card-title, .section-heading .card-subtitle { margin: 0; }
+    .form-actions { margin-top: 24px; }
+    .destructive-actions { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .field-inline { width: min(240px, 100%); }
 
     .kanban-column {
       background: var(--surface-muted);
@@ -792,6 +858,10 @@
 
     .kanban-card-meta strong { color: var(--text); }
 
+    .kanban-card-move { margin-top: 12px; }
+    .kanban-card-move select { min-height: 34px; padding: 6px 30px 6px 9px; font-size: 12px; }
+    .empty-state.compact { padding: 16px 10px; font-size: 12px; }
+
     .kanban-error {
       display: none;
       color: var(--danger);
@@ -823,6 +893,7 @@
       .form-grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .form-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .kanban-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .filter-bar-footer { align-items: stretch; flex-direction: column; }
       table { min-width: 600px; }
       .app-frame { grid-template-columns: minmax(0,1fr); padding: 0 16px; }
       .sidebar { position: fixed; z-index: 60; left: 10px; top: 70px; width: min(290px, calc(100vw - 20px)); max-height: calc(100vh - 82px); transform: translateX(calc(-100% - 20px)); transition: transform .18s ease; }
@@ -833,6 +904,8 @@
       .app-frame.is-collapsed .sidebar .nav a { justify-content: flex-start; padding: 10px; }
       .app-frame.is-collapsed .nav-mark { width: 24px; height: 24px; flex-basis: 24px; }
       .today-counts { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .today-workspace,
+      .today-secondary-grid { grid-template-columns: minmax(0,1fr); }
       .sync-status { grid-template-columns: repeat(2,minmax(0,1fr)); }
       .mobile-collapsible .collapse-toggle {
         display: inline-flex;
@@ -864,6 +937,7 @@
       }
       .app-main { padding-top: 14px; }
       .today-item { align-items: flex-start; flex-direction: column; }
+      .today-header { flex-direction: column; }
       .mobile-bottom-actions {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
@@ -941,29 +1015,43 @@
           <p class="brand-title">AD Balancas e Engenharia</p>
           <p class="brand-subtitle">Gestao interna de propostas comerciais</p>
         </div>
-        <button type="button" class="menu-toggle" id="menuToggle" aria-controls="siteNav" aria-expanded="false">
-          <span aria-hidden="true" id="menuToggleIcon">☰</span>
+        <button type="button" class="menu-toggle" id="menuToggle" data-sidebar-toggle aria-controls="siteNav" aria-expanded="false">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
           <span class="menu-toggle-label" id="menuToggleLabel">Abrir navegação</span>
         </button>
       </div>
     </div>
   </header>
 
-  <div class="app-frame" id="appFrame">
+  <div class="app-frame" id="appFrame" data-app-shell>
     <button class="nav-overlay" id="navOverlay" type="button" aria-label="Fechar navegação" hidden></button>
-    <aside class="sidebar" id="siteNav" aria-label="Navegação principal">
+    <aside class="sidebar" id="siteNav" data-sidebar aria-label="Navegação principal">
+      <div class="sidebar-brand">
+        <span class="sidebar-brand-mark" aria-hidden="true">AD</span>
+        <span class="sidebar-brand-copy"><strong>AD Balanças</strong><span>Engenharia</span></span>
+      </div>
       <nav class="nav">
-        <a href="/" aria-label="Hoje" title="Hoje" {% if request.url.path == '/' %}aria-current="page"{% endif %} class="{% if request.url.path == '/' %}active{% endif %}"><span class="nav-mark" aria-hidden="true">H</span><span class="nav-label">Hoje</span></a>
-        <a href="/web/board" aria-label="Tarefas" title="Tarefas" {% if request.url.path.startswith('/web/board') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/board') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">T</span><span class="nav-label">Tarefas</span></a>
-        <a href="/web/services" aria-label="Serviços" title="Serviços" {% if request.url.path.startswith('/web/services') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/services') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">S</span><span class="nav-label">Serviços</span></a>
-        <a href="/web/mensagens" aria-label="E-mails e mensagens" title="E-mails e mensagens" {% if request.url.path.startswith('/web/mensagens') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/mensagens') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">@</span><span class="nav-label">E-mails e mensagens</span></a>
-        <a href="/web/assistente" aria-label="Assistente" title="Assistente" {% if request.url.path.startswith('/web/assistente') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/assistente') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">A</span><span class="nav-label">Assistente</span></a>
-        <a href="/web/proposals" aria-label="Propostas" title="Propostas" class="{% if request.url.path.startswith('/web/proposals') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">P</span><span class="nav-label">Propostas</span></a>
-        <a href="/web/clients" aria-label="Clientes" title="Clientes" class="{% if request.url.path.startswith('/web/clients') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">C</span><span class="nav-label">Clientes</span></a>
-        <a href="/web/contas-a-pagar" aria-label="Contas a pagar" title="Contas a pagar" class="{% if request.url.path.startswith('/web/contas-a-pagar') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">↓</span><span class="nav-label">Contas a pagar</span></a>
-        <a href="/web/contas-a-receber" aria-label="Contas a receber" title="Contas a receber" class="{% if request.url.path.startswith('/web/contas-a-receber') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">↑</span><span class="nav-label">Contas a receber</span></a>
-        <a href="/web/users" aria-label="Usuários" title="Usuários" class="{% if request.url.path.startswith('/web/users') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">U</span><span class="nav-label">Usuários</span></a>
-        <a href="/import-proposals" aria-label="Importar propostas" title="Importar propostas" class="{% if request.url.path.startswith('/import-proposals') %}active{% endif %}"><span class="nav-mark" aria-hidden="true">I</span><span class="nav-label">Importar propostas</span></a>
+        <section class="nav-group" data-nav-group="operacao" aria-labelledby="nav-operacao"><h2 class="nav-group-title" id="nav-operacao">Operação</h2>
+          <a href="/" aria-label="Hoje" title="Hoje" {% if request.url.path == '/' %}aria-current="page"{% endif %} class="{% if request.url.path == '/' %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V20H4Z"/><path d="M9 20v-6h6v6"/></svg></span><span class="nav-label">Hoje</span></a>
+          <a href="/web/board" aria-label="Tarefas" title="Tarefas" {% if request.url.path.startswith('/web/board') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/board') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><span class="nav-label">Tarefas</span></a>
+          <a href="/web/services" aria-label="Serviços" title="Serviços" {% if request.url.path.startswith('/web/services') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/services') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5 5L3 18v3h3l6.7-6.7a4 4 0 0 0 5-5l-3 3-3-3Z"/></svg></span><span class="nav-label">Serviços</span></a>
+        </section>
+        <section class="nav-group" data-nav-group="comunicacao" aria-labelledby="nav-comunicacao"><h2 class="nav-group-title" id="nav-comunicacao">Comunicação</h2>
+          <a href="/web/mensagens" aria-label="E-mails e mensagens" title="E-mails e mensagens" {% if request.url.path.startswith('/web/mensagens') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/mensagens') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4Z"/><path d="m4 7 8 6 8-6"/></svg></span><span class="nav-label">E-mails e mensagens</span></a>
+          <a href="/web/assistente" aria-label="Assistente" title="Assistente" {% if request.url.path.startswith('/web/assistente') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/assistente') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 14 9l6 2-6 2-2 6-2-6-6-2 6-2Z"/></svg></span><span class="nav-label">Assistente</span></a>
+        </section>
+        <section class="nav-group" data-nav-group="comercial" aria-labelledby="nav-comercial"><h2 class="nav-group-title" id="nav-comercial">Comercial</h2>
+          <a href="/web/proposals" aria-label="Propostas" title="Propostas" {% if request.url.path.startswith('/web/proposals') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/proposals') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 2h9l4 4v16H6Z"/><path d="M14 2v5h5M9 12h7M9 16h7"/></svg></span><span class="nav-label">Propostas</span></a>
+          <a href="/web/clients" aria-label="Clientes" title="Clientes" {% if request.url.path.startswith('/web/clients') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/clients') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7M16 7h6M19 4v6"/></svg></span><span class="nav-label">Clientes</span></a>
+        </section>
+        <section class="nav-group" data-nav-group="financeiro" aria-labelledby="nav-financeiro"><h2 class="nav-group-title" id="nav-financeiro">Financeiro</h2>
+          <a href="/web/contas-a-receber" aria-label="Contas a receber" title="Contas a receber" {% if request.url.path.startswith('/web/contas-a-receber') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/contas-a-receber') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v18M17 7c0-2-2-3-5-3S7 5 7 7s2 3 5 3 5 1 5 3-2 3-5 3-5-1-5-3"/></svg></span><span class="nav-label">Contas a receber</span></a>
+          <a href="/web/contas-a-pagar" aria-label="Contas a pagar" title="Contas a pagar" {% if request.url.path.startswith('/web/contas-a-pagar') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/contas-a-pagar') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v18M17 7c0-2-2-3-5-3S7 5 7 7s2 3 5 3 5 1 5 3-2 3-5 3-5-1-5-3"/></svg></span><span class="nav-label">Contas a pagar</span></a>
+        </section>
+        <section class="nav-group" data-nav-group="administracao" aria-labelledby="nav-administracao"><h2 class="nav-group-title" id="nav-administracao">Administração</h2>
+          <a href="/import-proposals" aria-label="Importar documentos" title="Importar documentos" {% if request.url.path.startswith('/import-proposals') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/import-proposals') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg></span><span class="nav-label">Importar documentos</span></a>
+          <a href="/web/users" aria-label="Usuários" title="Usuários" {% if request.url.path.startswith('/web/users') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/users') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7M17 11h5M19.5 8.5v5"/></svg></span><span class="nav-label">Usuários</span></a>
+        </section>
       </nav>
     </aside>
   <main class="app-main" id="mainContent" tabindex="-1">

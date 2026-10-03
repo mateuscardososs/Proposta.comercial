@@ -226,3 +226,16 @@ O fluxo auditado e navegador/chat → endpoint texto ou endpoint voz → STT →
 
 **Estado das fases seguintes:** Inbox/triagem sintetica, agenda Hoje e shell Jinja2 continuam implementados conforme secao de linha de base; regressao especifica de email, agenda, paginas e voz foi executada nesta rodada. Nao foi iniciada nova sincronizacao Yahoo. O redesenho incremental esta parcialmente entregue: sidebar, drawer, estado ativo, breadcrumbs/retorno e teclado existem; busca conectada e tema escuro permanecem adiados. A aplicacao da porta 8011 e para a validacao sintetica autorizada; a 8000 permanece intocada. Validacao visual manual em navegador continua pendente, pois nao havia browser disponivel no ambiente.
 </details>
+
+## Piloto local de e-mail e correção do vínculo de tarefas (02/10/2026)
+
+Esta seção atualiza e substitui, para o piloto autorizado, as declarações históricas anteriores de que não houve consulta Yahoo real. A execução e a configuração exatas estão em `piloto-email-tarefas.md`.
+
+- `Task.client_id` segue opcional; foram adicionados `client_name` e `client_link_status` com migração aditiva para SQLite/PostgreSQL. Nome não cadastrado é preservado como texto livre; correspondência múltipla fica “a confirmar”. Formulário e quadro mostram o estado.
+- Criação manual inequívoca tem rota determinística curta para reduzir dependência do formato do Ollama, sem ignorar a prévia/confirmação. Correções atualizam a mesma `AssistantAction`, com token de confirmação renovado; cadastro da empresa não é criado automaticamente.
+- O motivo do ciclo anterior era tratar cliente não encontrado como campo obrigatório e, em `needs_clarification`, cancelar o rascunho e recomeçar. O fluxo agora mantém a mesma ação e pode recuperar rascunhos antigos.
+- O worker persiste `activation_at`, inicia o primeiro ciclo imediatamente e limita cada sobreposição ao momento de ativação; não usa o lookback histórico para o piloto. Pedidos de orçamento, ordens de compra e solicitações explícitas de serviço/atendimento podem gerar tarefa `A fazer`; finanças/notas/pagamentos ficam na revisão.
+- **Executado:** `PYTHONPATH=. .venv/bin/pytest -q` — 481 passaram, 10 ignorados. Ruff passou nos módulos/testes de e-mail; `compileall` e `git diff --check` passaram. SQLite de teste e migrações antigas sintéticas preservaram os dados. PostgreSQL não foi executado.
+- **Yahoo real em isolamento:** configuração carregada de `.env.yahoo.local` ignorado pelo Git; arquivo não foi exibido. A instância consultou Entrada com sucesso e retornou zero mensagens novas desde `activation_at`; após reinício exclusivo da 8012, novo ciclo teve sucesso e manteve o limite. Não significa caixa inteira vazia e não prova cobertura de Enviados. Nenhuma flag foi modificada; nenhuma mensagem foi enviada, movida ou excluída.
+- **Conversação real via 8012:** pedido sintético sem cliente e as correções “Cadastre a empresa Roca” e “Roca” retornaram prévias com o mesmo `action_id`; o teste parou antes da confirmação, sem criar tarefa/cadastro. A fala inequívoca foi tratada pelo parser determinístico e não é uma validação de qualidade do Ollama. Uma tentativa anterior no processo antigo devolveu formato inválido; conversação geral dependente do modelo permanece pendente.
+- A 8012 está em `127.0.0.1:8012`. As portas 8000 e 8011, seus processos e bancos não foram alterados.

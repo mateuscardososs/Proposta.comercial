@@ -11,6 +11,12 @@
   </div>
 </section>
 
+<section class="kpi-grid" aria-label="Resumo da caixa de entrada">
+  <article class="kpi-card"><span>Novas</span><strong>{{ message_summary.new }}</strong><small>Não lidas no servidor</small></article>
+  <article class="kpi-card"><span>Prioridade</span><strong>{{ message_summary.priority }}</strong><small>Alta ou urgente</small></article>
+  <article class="kpi-card"><span>Revisar</span><strong>{{ message_summary.review }}</strong><small>Classificação local pendente</small></article>
+</section>
+
 <section class="card">
   <div class="card-head">
     <div><h2 class="card-title">Estado da sincronização</h2><p class="card-subtitle">Uma falha é diferente de uma caixa vazia.</p></div>
@@ -31,17 +37,24 @@
   <p class="muted">Pausar impede novas consultas no próximo ciclo; uma leitura já iniciada termina sem alterar mensagens ou flags.</p>
 </section>
 
-<section class="card">
+<section class="card" data-message-queue>
   <div class="card-head"><div><h2 class="card-title">Mensagens recentes</h2><p class="card-subtitle">Metadados e resumo reduzido; corpo integral não é armazenado pelo sincronizador.</p></div></div>
+  <div class="message-filters form-grid-4" data-message-filters>
+    <div class="field"><label for="message-search">Buscar</label><input id="message-search" type="search" data-message-search placeholder="Assunto ou remetente"></div>
+    <div class="field"><label for="message-category">Categoria</label><select id="message-category" data-message-category><option value="">Todas</option>{% for category in messages|map(attribute='category')|unique|sort %}<option value="{{ category }}">{{ category|replace('_', ' ') }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="message-priority">Prioridade</label><select id="message-priority" data-message-priority><option value="">Todas</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="normal">Normal</option><option value="low">Baixa</option></select></div>
+    <div class="field"><label for="message-review">Revisão</label><select id="message-review" data-message-review><option value="">Todas</option><option value="pending">Pendente</option><option value="reviewed">Revisada</option><option value="classified">Classificada</option><option value="task_created">Tarefa vinculada</option></select></div>
+  </div>
   {% if messages %}
   <div class="message-list">
     {% for message in messages %}
-    <article class="message-item">
+    <article class="message-item" data-message-row data-category="{{ message.category }}" data-priority="{{ message.priority }}" data-review="{{ message.review_status }}" data-search="{{ message.subject }} {{ message.sender }} {{ message.summary }}">
       <div class="message-heading"><div><span class="badge{% if message.seen %}{% else %} warning{% endif %}">{{ "Lida no servidor" if message.seen else "Não lida no servidor" }}</span> <span class="badge">{{ message.category|replace("_", " ") }}</span> <span class="badge">Confiança {{ message.confidence_band }}</span>{% if message.category == "pending_reply" %}<span class="badge{% if message.awaiting_reply == 'yes' %} warning{% endif %}">{% if message.awaiting_reply == "yes" and message.sent_coverage %}Possível retorno pendente (Enviados consultados){% elif message.awaiting_reply == "no" and message.sent_coverage %}Resposta posterior encontrada em Enviados{% else %}Não verificável: cobertura de Enviados insuficiente{% endif %}</span>{% endif %}</div><time datetime="{{ message.received_at.isoformat() }}">{{ message.received_at.strftime('%d/%m/%Y %H:%M') }}</time></div>
       <h3>{{ message.subject }}</h3><p class="message-sender">{{ message.sender }}</p><p>{{ message.summary }}</p>
-      <p class="message-reason"><strong>Prioridade {{ message.priority }}:</strong> {{ message.classification_reason }}</p>
+      <details class="message-evidence"><summary>Ver evidências da classificação</summary><p class="message-reason"><strong>Prioridade {{ message.priority }}:</strong> {{ message.classification_reason }}</p></details>
+      {% if message.task_id %}<p class="message-reason"><a href="/web/board/{{ message.task_id }}/edit">Tarefa #{{ message.task_id }} criada a partir desta mensagem</a>{% if message.review_status == "pending" %}; revisar categoria ou vínculo do cliente{% endif %}</p>{% endif %}
       {% if message.review_status == "pending" %}
-      <form method="post" action="/web/mensagens/{{ message.id }}/review" class="review-form">
+      <details class="message-evidence"><summary>Revisar classificação local</summary><form method="post" action="/web/mensagens/{{ message.id }}/review" class="review-form">
         <label>Revisar categoria
           <select name="category">
             {% for category in ["customer_quote_request", "vendor_quotation", "purchase_order", "invoice_request", "invoice_received", "accounts_payable", "accounts_receivable", "payment_proof", "service_request", "pending_reply", "informational", "other_review"] %}
@@ -50,11 +63,30 @@
           </select>
         </label>
         <button class="btn btn-ghost" type="submit">Salvar revisão</button>
-      </form>
+      </form></details>
       {% else %}<span class="badge success">{{ "Tarefa vinculada" if message.review_status == "task_created" else "Classificada" if message.review_status == "classified" else "Revisada" }}</span>{% endif %}
     </article>
     {% endfor %}
   </div>
   {% else %}<div class="empty-state"><h3>Nenhuma mensagem sincronizada</h3><p>{% if sync_state and sync_state.last_error %}A consulta falhou ou ficou parcial; isso não confirma que a caixa esteja vazia.{% elif not sync_enabled %}Ative e configure o sincronizador em ambiente de teste sintético para iniciar a triagem.{% else %}A sincronização ainda não concluiu uma consulta.{% endif %}</p></div>{% endif %}
 </section>
+<script>
+  (() => {
+    const filters = document.querySelector('[data-message-filters]');
+    if (!filters) return;
+    const rows = [...document.querySelectorAll('[data-message-row]')];
+    const normalize = (value) => String(value || '').toLocaleLowerCase('pt-BR');
+    const apply = () => {
+      const search = normalize(filters.querySelector('[data-message-search]').value);
+      const category = filters.querySelector('[data-message-category]').value;
+      const priority = filters.querySelector('[data-message-priority]').value;
+      const review = filters.querySelector('[data-message-review]').value;
+      rows.forEach((row) => {
+        row.hidden = Boolean((search && !normalize(row.dataset.search).includes(search)) || (category && row.dataset.category !== category) || (priority && row.dataset.priority !== priority) || (review && row.dataset.review !== review));
+      });
+    };
+    filters.addEventListener('input', apply);
+    filters.addEventListener('change', apply);
+  })();
+</script>
 {% endblock %}

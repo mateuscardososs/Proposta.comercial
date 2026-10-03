@@ -42,10 +42,10 @@ def classify_message(message: EmailMessageRecord) -> Classification:
     elif any(term in content for term in ("nota fiscal recebida", "segue nota fiscal", "nf-e", "nfe anexada")):
         category, destination, confidence = "invoice_received", "review", "high"
     elif any(term in content for term in ("emitir nota fiscal", "emissao da nota fiscal", "enviar a nota fiscal")):
-        category, destination, confidence = "invoice_request", "task", "high"
-        auto_task_eligible = True
+        category, destination, confidence = "invoice_request", "review", "high"
     elif any(term in content for term in ("ordem de compra", "pedido de compra", "purchase order")):
-        category, destination, confidence = "purchase_order", "review", "medium"
+        category, destination, confidence = "purchase_order", "task", "high"
+        auto_task_eligible = True
     elif any(term in content for term in ("cotacao recebida", "segue nossa cotacao", "cotacao do fornecedor")):
         category, destination, confidence = "vendor_quotation", "review", "high"
     elif any(term in content for term in (
@@ -61,7 +61,13 @@ def classify_message(message: EmailMessageRecord) -> Classification:
     elif any(term in content for term in ("cobranca pendente", "conta a receber", "pagamento em atraso")):
         category, destination, confidence = "accounts_receivable", "review", "medium"
     elif any(term in content for term in ("chamado tecnico", "solicitamos atendimento", "solicitacao de servico", "balanca apresentou")):
-        category, destination, confidence = "service_request", "task", "medium"
+        explicit_service_request = any(
+            term in content
+            for term in ("chamado tecnico", "solicitamos atendimento", "solicitacao de servico")
+        )
+        category, destination = "service_request", "task"
+        confidence = "high" if explicit_service_request else "medium"
+        auto_task_eligible = explicit_service_request
     elif any(
         term in content
         for term in (
@@ -76,7 +82,7 @@ def classify_message(message: EmailMessageRecord) -> Classification:
 
     category_actions = {
         "customer_quote_request": "Avaliar o pedido de orçamento.",
-        "invoice_request": "Conferir a solicitação de emissão ou envio de nota fiscal.",
+        "purchase_order": "Conferir a ordem de compra.",
         "service_request": "Triar o chamado de serviço.",
         "pending_reply": "Revisar se é necessário responder.",
     }

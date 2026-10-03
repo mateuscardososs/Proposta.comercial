@@ -54,17 +54,20 @@ class EmailSyncService:
             local_now = local_now.replace(tzinfo=self.zone)
         naive_now = local_now.astimezone(self.zone).replace(tzinfo=None)
         state = self._state()
+        if state.activation_at is None:
+            state.activation_at = naive_now
         state.last_attempt_at = naive_now
         if state.paused:
             self.db.commit()
             return SyncSummary(state="paused")
         try:
             last_success = state.last_success_at
-            start_at = (
-                (last_success.replace(tzinfo=self.zone) - timedelta(days=1))
-                if last_success
-                else local_now - timedelta(days=self.lookback_days)
+            activation_at = state.activation_at.replace(tzinfo=self.zone)
+            overlap_start = (
+                last_success.replace(tzinfo=self.zone) - timedelta(days=1)
+                if last_success else activation_at
             )
+            start_at = max(activation_at, overlap_start)
             result = self.reader.query(
                 EmailQuery(
                     start_at=start_at,
@@ -134,6 +137,18 @@ class EmailSyncService:
             created_tasks=created,
             review_items=review,
         )
+
+    def activate(self, *, now: datetime | None = None) -> datetime:
+        """Persist the pilot's first-read boundary without querying the mailbox."""
+        local_now = now or datetime.now(self.zone)
+        if local_now.tzinfo is None:
+            local_now = local_now.replace(tzinfo=self.zone)
+        activation_at = local_now.astimezone(self.zone).replace(tzinfo=None)
+        state = self._state()
+        if state.activation_at is None:
+            state.activation_at = activation_at
+            self.db.commit()
+        return state.activation_at.replace(tzinfo=self.zone)
 
     def _state(self) -> EmailSyncState:
         state = (
@@ -221,17 +236,25 @@ class EmailSyncService:
             .one_or_none()
         )
         if existing:
-            message.review_status = (
-                "task_created" if existing.task_id else "task_created_deleted"
-            )
+            if existing.task_id is None:
+                message.review_status = "task_created_deleted"
+            elif message.review_status != "pending":
+                message.review_status = "task_created"
             return 0
         if not self.auto_task_creation_enabled:
+            message.review_status = "pending"
+            return 0
+        if result.category in {
+            "invoice_request", "invoice_received", "accounts_payable",
+            "accounts_receivable", "payment_proof",
+        }:
             message.review_status = "pending"
             return 0
 
         searchable = normalize_text(
             f"{message.sender}\n{message.subject}\n{message.summary}"
         )
+        raw_searchable = f"{message.sender}\n{message.subject}\n{message.summary}"
         generic_name_tokens = {
             "empresa",
             "industria",
@@ -264,7 +287,9 @@ class EmailSyncService:
             ):
                 matches.append(client)
         named_client = re.search(
-            r"\b(?:empresa|cliente)\s+([a-z0-9][a-z0-9.-]{1,40})\b", searchable
+            r"\b(?:empresa|cliente)\s+([A-ZÀ-ÿ0-9][A-ZÀ-ÿa-z0-9.-]{1,40})\b",
+            raw_searchable,
+            re.IGNORECASE,
         )
         explicit_client_name = bool(
             named_client
@@ -279,25 +304,30 @@ class EmailSyncService:
                 "autoriza",
             }
         )
-        if explicit_client_name and not matches:
-            message.review_status = "pending"
-            message.classification_reason = (
-                message.classification_reason
-                + "; cliente citado não encontrado no cadastro"
-            )[:2000]
-            return 0
         if len(matches) > 1:
-            message.review_status = "pending"
             message.classification_reason = (
                 message.classification_reason
                 + "; nome de cliente corresponde a mais de um cadastro"
             )[:2000]
-            return 0
-        client_id = matches[0].id if matches else None
+        client_id = matches[0].id if len(matches) == 1 else None
+        explicit_name = named_client.group(1).strip()[:255] if explicit_client_name and named_client else None
+        if client_id is not None:
+            client_name = matches[0].razao_social
+            link_status = "linked"
+        elif len(matches) > 1:
+            client_name = explicit_name or "Cliente a identificar"
+            link_status = "needs_confirmation"
+        elif explicit_name:
+            client_name = explicit_name
+            link_status = "pending_review"
+            message.classification_reason = (
+                message.classification_reason + "; cliente citado não encontrado no cadastro"
+            )[:2000]
+        else:
+            client_name = "Cliente a identificar"
+            link_status = "pending_review"
 
-        title = f"{result.action_suggested or 'Revisar e-mail'}: {message.subject}"[
-            :255
-        ]
+        title = f"{client_name}: {result.action_suggested or 'Revisar e-mail'}: {message.subject}"[:255]
         deadline: date | None = None
         if result.explicit_deadline:
             try:
@@ -317,6 +347,8 @@ class EmailSyncService:
                 )[:4000],
                 status="a_fazer",
                 client_id=client_id,
+                client_name=client_name,
+                client_link_status=link_status,
                 prazo=deadline,
             ),
             commit=False,
@@ -333,4 +365,6 @@ class EmailSyncService:
             )
         )
         message.review_status = "task_created"
+        if link_status in {"pending_review", "needs_confirmation"}:
+            message.review_status = "pending"
         return 1

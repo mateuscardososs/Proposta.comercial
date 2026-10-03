@@ -60,6 +60,7 @@ def list_service_calls(db: Session, query: ServiceCallQuery) -> list[ServiceCall
     statement = select(ServiceCall).options(
         joinedload(ServiceCall.client),
         selectinload(ServiceCall.workflow_steps),
+        selectinload(ServiceCall.events),
     )
     if query.client_id is not None:
         statement = statement.where(ServiceCall.client_id == query.client_id)

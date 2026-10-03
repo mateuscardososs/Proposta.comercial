@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request, status
@@ -145,15 +145,21 @@ def _form_context(
 
 def _board(request: Request, tipo: str, db: Session) -> object:
     entries = lancamento_service.list_lancamentos(db, tipo)
+    pendentes = [entry for entry in entries if entry.status == "pendente"]
+    pagos = [entry for entry in entries if entry.status == "pago"]
     return _render_template(
         request,
         "lancamentos_board.html",
         {
             "config": BOARD_CONFIG[tipo],
             "tipo": tipo,
-            "pendentes": [entry for entry in entries if entry.status == "pendente"],
-            "pagos": [entry for entry in entries if entry.status == "pago"],
+            "entries": entries,
+            "pendentes": pendentes,
+            "pagos": pagos,
+            "pending_total": sum((Decimal(entry.valor) for entry in pendentes), Decimal("0")),
+            "paid_total": sum((Decimal(entry.valor) for entry in pagos), Decimal("0")),
             "today": date.today(),
+            "near_due_limit": date.today() + timedelta(days=7),
             "is_atrasado": lancamento_service.is_atrasado,
         },
     )

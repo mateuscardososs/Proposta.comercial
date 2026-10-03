@@ -140,6 +140,9 @@ export function bootstrapAssistantChat(root = document) {
     empty?.remove();
     const article = document.createElement("article");
     article.className = `assistant-message ${role}${kind === "error" || kind === "success" ? ` ${kind}` : ""}`;
+    if (!article.dataset) article.dataset = {};
+    article.dataset.messageRole = role;
+    article.dataset.responseKind = kind;
     const label = document.createElement("span");
     label.className = "assistant-message-label";
     label.textContent = role === "user" ? "Você" : "Assistente";

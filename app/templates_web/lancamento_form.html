@@ -2,6 +2,7 @@
 
 {% block content %}
 <section class="page-header">
+  <span class="eyebrow">Financeiro · lançamento manual</span>
   <h1 class="page-title">
     {% if entry %}Editar{% else %}Novo{% endif %}
     {{ 'recebimento' if tipo == 'receber' else 'pagamento' }}
@@ -88,7 +89,7 @@
       </div>
     </div>
 
-    <div class="actions mt-12" style="justify-content: flex-end;">
+    <div class="actions mt-12 actions-end">
       <a href="{{ config.board_url }}" class="btn btn-ghost">Cancelar</a>
       <button type="submit" class="btn btn-primary">Salvar lançamento</button>
     </div>
