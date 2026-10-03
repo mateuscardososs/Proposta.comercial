@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-header">
+  <div><span class="eyebrow">Administração</span>
   <h1 class="page-title">Usuarios internos</h1>
-  <p class="page-subtitle">Gerencie quem pode emitir propostas e manter o fluxo comercial atualizado.</p>
+  <p class="page-subtitle">Registros internos usados como responsáveis em propostas e tarefas.</p>
   <div class="meta-line">
-    <span class="badge primary">Controle de acesso operacional</span>
-  </div>
+    <span class="badge primary">Cadastro operacional</span><span class="badge">Não representa uma conta autenticada</span>
+  </div></div>
 </section>
 
 <section class="card">
@@ -45,7 +46,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="4" class="muted">Nenhum usuario cadastrado.</td></tr>
+        <tr><td colspan="4"><div class="empty-state compact">Nenhum usuario cadastrado.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>

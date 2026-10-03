@@ -13,6 +13,7 @@
 </style>
 <div class="detail-page">
   <section class="page-header">
+    <div><span class="eyebrow">Comercial</span>
     <h1 class="page-title">Proposta {{ proposal.numero }}/{{ proposal.revisao }}</h1>
     <p class="page-subtitle">{% if proposal.origem == "sistema" %}Preview operacional da proposta com foco em leitura rapida antes de envio ao cliente.{% else %}Proposta documental registrada a partir de arquivo oficial.{% endif %}</p>
     <div class="meta-line">
@@ -25,14 +26,14 @@
       {% else %}
       <span class="badge success">Sistema</span>
       {% endif %}
-    </div>
+    </div></div>
   </section>
 
   {% if warning %}
   <div class="warning">{{ warning }}</div>
   {% endif %}
 
-  <section class="card mobile-collapsible" data-collapsed-mobile="false">
+  <section class="card mobile-collapsible" data-collapsed-mobile="false" data-proposal-documents>
     <button type="button" class="collapse-toggle" aria-expanded="true">
       <span>Acoes da proposta</span>
       <span class="icon">v</span>
@@ -66,7 +67,7 @@
   </section>
 
   {% if proposal.origem == "sistema" %}
-  <section class="card mobile-collapsible" data-collapsed-mobile="true">
+  <section class="card mobile-collapsible" data-collapsed-mobile="true" data-proposal-commercial-summary>
     <button type="button" class="collapse-toggle" aria-expanded="false">
       <span>Resumo comercial</span>
       <span class="icon">v</span>
@@ -144,7 +145,7 @@
     </div>
   </section>
 
-  <section class="card mobile-collapsible" data-collapsed-mobile="true">
+  <section class="card mobile-collapsible" data-collapsed-mobile="true" data-proposal-items>
     <button type="button" class="collapse-toggle" aria-expanded="false">
       <span>Itens e servicos</span>
       <span class="icon">v</span>
@@ -187,7 +188,7 @@
     </div>
   </section>
 
-  <section class="card mobile-collapsible" data-collapsed-mobile="true">
+  <section class="card mobile-collapsible" data-collapsed-mobile="true" data-proposal-schedule>
     <button type="button" class="collapse-toggle" aria-expanded="false">
       <span>Cronograma</span>
       <span class="icon">v</span>
@@ -226,7 +227,7 @@
     </div>
   </section>
 
-  <section class="card mobile-collapsible" data-collapsed-mobile="false">
+  <section class="card mobile-collapsible" data-collapsed-mobile="false" data-proposal-finance>
     <button type="button" class="collapse-toggle" aria-expanded="true">
       <span>Resumo financeiro</span>
       <span class="icon">v</span>

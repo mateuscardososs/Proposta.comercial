@@ -1,0 +1,2 @@
+"""Assistente operacional local."""
+

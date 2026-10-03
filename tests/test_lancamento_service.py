@@ -170,10 +170,158 @@ def test_edit_url_type_cannot_cross_financial_board(db):
 def test_is_atrasado_only_for_unpaid_past_due_entries():
     today_value = date(2026, 8, 27)
     pending = Lancamento(status="pendente", data_vencimento=date(2026, 8, 26))
+    future = Lancamento(status="pendente", data_vencimento=date(2026, 8, 28))
     paid = Lancamento(status="pago", data_vencimento=date(2026, 8, 26))
 
     assert lancamento_service.is_atrasado(pending, today_value) is True
+    assert lancamento_service.is_atrasado(future, today_value) is False
     assert lancamento_service.is_atrasado(paid, today_value) is False
+
+
+def test_archive_only_paid_entries_with_confirmed_payment_at_30_days(db):
+    today_value = date(2026, 10, 3)
+    exactly_30_days = Lancamento(
+        tipo="pagar",
+        descricao="Pagamento elegível",
+        valor=10,
+        data_vencimento=date(2026, 9, 1),
+        status="pago",
+        data_pagamento=date(2026, 9, 3),
+    )
+    newer_payment = Lancamento(
+        tipo="receber",
+        descricao="Recebimento recente",
+        valor=10,
+        data_vencimento=date(2026, 9, 1),
+        status="pago",
+        data_pagamento=date(2026, 9, 4),
+    )
+    unconfirmed_payment = Lancamento(
+        tipo="pagar",
+        descricao="Sem data confirmada",
+        valor=10,
+        data_vencimento=date(2026, 9, 1),
+        status="pago",
+        data_pagamento=None,
+    )
+    overdue_unpaid = Lancamento(
+        tipo="receber",
+        descricao="Em aberto vencido",
+        valor=10,
+        data_vencimento=date(2026, 9, 1),
+        status="pendente",
+    )
+    db.add_all([exactly_30_days, newer_payment, unconfirmed_payment, overdue_unpaid])
+    db.commit()
+
+    archived_count = lancamento_service.archive_expired_lancamentos(
+        db, today_value=today_value
+    )
+    repeated_count = lancamento_service.archive_expired_lancamentos(
+        db, today_value=today_value
+    )
+
+    assert archived_count == 1
+    assert repeated_count == 0
+    assert exactly_30_days.arquivado_em is not None
+    assert exactly_30_days.status == "pago"
+    assert exactly_30_days.data_pagamento == date(2026, 9, 3)
+    assert newer_payment.arquivado_em is None
+    assert unconfirmed_payment.arquivado_em is None
+    assert overdue_unpaid.arquivado_em is None
+
+    from app.models import LancamentoHistorico
+
+    events = db.query(LancamentoHistorico).filter_by(lancamento_id=exactly_30_days.id).all()
+    assert len(events) == 1
+    assert events[0].event_type == "archived"
+    assert events[0].acao_confirmada == "auto_archive_after_30_days"
+    assert events[0].status_anterior == "pago"
+    assert events[0].status_novo == "pago"
+    assert events[0].data_pagamento_anterior == date(2026, 9, 3)
+    assert events[0].data_pagamento_nova == date(2026, 9, 3)
+
+
+def test_repeated_payment_action_preserves_confirmed_date_and_audit_count(db, monkeypatch):
+    from app.models import LancamentoHistorico
+
+    entry = Lancamento(
+        tipo="pagar",
+        descricao="Conta paga",
+        valor=10,
+        data_vencimento=date(2026, 9, 1),
+    )
+    db.add(entry)
+    db.commit()
+
+    monkeypatch.setattr(lancamento_service, "today", lambda: date(2026, 9, 10))
+    first = lancamento_service.move_lancamento(
+        db, entry.id, LancamentoMove(status="pago")
+    )
+    assert first.data_pagamento == date(2026, 9, 10)
+    assert db.query(LancamentoHistorico).filter_by(lancamento_id=entry.id).count() == 1
+
+    monkeypatch.setattr(lancamento_service, "today", lambda: date(2026, 9, 12))
+    repeated = lancamento_service.move_lancamento(
+        db, entry.id, LancamentoMove(status="pago")
+    )
+    assert repeated.data_pagamento == date(2026, 9, 10)
+    assert db.query(LancamentoHistorico).filter_by(lancamento_id=entry.id).count() == 1
+
+
+def test_financial_history_is_append_only_and_restricts_parent_deletion(db):
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError, IntegrityError
+
+    from app.models import LancamentoHistorico
+
+    entry = Lancamento(
+        tipo="pagar",
+        descricao="Conta histórica",
+        valor=10,
+        data_vencimento=date(2026, 9, 1),
+    )
+    db.add(entry)
+    db.flush()
+    event = LancamentoHistorico(
+        lancamento_id=entry.id,
+        event_key="manual:test-1",
+        event_type="status_changed",
+        status_anterior="pendente",
+        status_novo="pago",
+        data_pagamento_anterior=None,
+        data_pagamento_nova=date(2026, 9, 1),
+        arquivado_em_anterior=None,
+        arquivado_em_novo=None,
+        acao_confirmada="manual_ui_status_change",
+        observacao="Ação explícita de teste",
+    )
+    db.add(event)
+    db.commit()
+
+    event.observacao = "tentativa de reescrita"
+    with pytest.raises(ValueError, match="Histórico financeiro imutável"):
+        db.commit()
+    db.rollback()
+    db.expire_all()
+    preserved = db.query(LancamentoHistorico).filter_by(lancamento_id=entry.id).one()
+    assert preserved.observacao == "Ação explícita de teste"
+
+    db.delete(preserved)
+    with pytest.raises(ValueError, match="Histórico financeiro imutável"):
+        db.commit()
+    db.rollback()
+    db.delete(entry)
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+    with pytest.raises(DBAPIError, match="financial history is immutable"):
+        db.execute(
+            text("UPDATE lancamento_historicos SET observacao = 'SQL direto' WHERE id = :id"),
+            {"id": preserved.id},
+        )
+        db.commit()
+    db.rollback()
 
 
 def test_proposal_creation_does_not_create_financial_entry(db):

@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Client, Proposal, User
+from app.models import Client, EmailTaskLink, Proposal, User
 from app.routers.pages import render_template
 from app.schemas import TaskCreate, TaskMove, TaskRead, TaskUpdate
 from app.services import board_service
@@ -18,6 +18,12 @@ router = APIRouter(tags=["board"])
 @router.get("/web/board", name="web_board")
 def board_page(request: Request, db: Session = Depends(get_db)) -> object:
     tasks = board_service.get_tasks(db)
+    email_task_ids = {
+        task_id
+        for (task_id,) in db.query(EmailTaskLink.task_id)
+        .filter(EmailTaskLink.task_id.is_not(None))
+        .all()
+    }
 
     # Group by status
     board_data = {
@@ -34,10 +40,28 @@ def board_page(request: Request, db: Session = Depends(get_db)) -> object:
         else:
             board_data["a_fazer"].append(task)
 
+    owners = sorted({task.user.nome for task in tasks if task.user}, key=str.casefold)
+    client_names = sorted(
+        {
+            task.client.razao_social if task.client else task.client_name
+            for task in tasks
+            if task.client or task.client_name
+        },
+        key=str.casefold,
+    )
+
     return render_template(
         request,
         "board.html",
-        {"board_data": board_data, "full_width": True},
+        {
+            "board_data": board_data,
+            "email_task_ids": email_task_ids,
+            "today": datetime.now().astimezone().date(),
+            "task_total": len(tasks),
+            "owners": owners,
+            "client_names": client_names,
+            "full_width": True,
+        },
     )
 
 
@@ -76,6 +100,7 @@ async def board_new_submit(request: Request, db: Session = Depends(get_db)) -> R
             descricao=str(form.get("descricao", "")).strip(),
             status=str(form.get("status", "a_fazer")).strip(),
             client_id=int(client_id_val) if client_id_val else None,
+            client_name=str(form.get("client_name", "")).strip() or None,
             proposal_id=int(proposal_id_val) if proposal_id_val else None,
             user_id=int(user_id_val) if user_id_val else None,
             prazo=datetime.strptime(str(prazo_val), "%Y-%m-%d").date() if prazo_val else None,
@@ -128,6 +153,7 @@ async def board_edit_submit(task_id: int, request: Request, db: Session = Depend
             descricao=str(form.get("descricao", "")).strip(),
             status=str(form.get("status", "a_fazer")).strip(),
             client_id=int(client_id_val) if client_id_val else None,
+            client_name=str(form.get("client_name", "")).strip() or None,
             proposal_id=int(proposal_id_val) if proposal_id_val else None,
             user_id=int(user_id_val) if user_id_val else None,
             prazo=datetime.strptime(str(prazo_val), "%Y-%m-%d").date() if prazo_val else None,

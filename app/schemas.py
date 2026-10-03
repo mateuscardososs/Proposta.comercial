@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 
 class ORMModel(BaseModel):
@@ -12,6 +12,75 @@ class ORMModel(BaseModel):
 
 
 ProposalOrigin = Literal["sistema", "reupload_editado", "upload_externo"]
+TaskStatus = Literal[
+    "a_fazer",
+    "em_andamento",
+    "servico_feito_falta_nota_pedido",
+    "aguardando_cliente",
+    "concluido",
+]
+ServiceExecutionStatus = Literal["not_started", "in_progress", "completed"]
+ServiceAdministrativeStatus = Literal["open", "closed"]
+CorrectableServiceEventType = Literal[
+    "call_received", "visit_started", "inspection", "execution_started",
+    "execution_completed", "note",
+]
+ServiceEventType = Literal[
+    "call_received", "visit_started", "inspection", "execution_started",
+    "execution_completed", "note", "correction",
+]
+ServiceStepType = Literal["report", "proposal", "proposal_sent", "invoice", "receipt"]
+ServiceStepStatus = Literal["unknown", "not_applicable", "pending", "waiting_customer", "completed"]
+
+
+class ServiceStepChange(BaseModel):
+    step_type: ServiceStepType
+    status: ServiceStepStatus
+    note: str = Field(default="", max_length=1000)
+
+
+class ServiceEventCreate(BaseModel):
+    client_id: int = Field(ge=1)
+    service_call_id: int | None = Field(default=None, ge=1)
+    force_new_call: bool = False
+    summary: str = Field(min_length=1, max_length=500)
+    event_type: ServiceEventType
+    occurred_on: date
+    description: str = Field(min_length=1, max_length=4000)
+    step_changes: list[ServiceStepChange] = Field(default_factory=list, max_length=5)
+
+
+class ServiceEventCorrectionCreate(BaseModel):
+    service_call_id: int = Field(ge=1)
+    supersedes_event_id: int = Field(ge=1)
+    occurred_on: date
+    reason: str = Field(min_length=1, max_length=1000)
+    corrected_event_type: CorrectableServiceEventType | None = None
+    corrected_occurred_on: date | None = None
+    corrected_description: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def require_corrected_field(self) -> "ServiceEventCorrectionCreate":
+        if not any((self.corrected_event_type, self.corrected_occurred_on, self.corrected_description)):
+            raise ValueError("Informe ao menos um campo corrigido.")
+        return self
+
+
+class ServiceCallQuery(BaseModel):
+    client_id: int | None = Field(default=None, ge=1)
+    execution_status: ServiceExecutionStatus | None = None
+    administrative_status: ServiceAdministrativeStatus | None = None
+    pending_only: bool = False
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class ServiceReminderCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=4000)
+    status: TaskStatus = "a_fazer"
+    due_date: date | None = None
+    user_id: int | None = Field(default=None, ge=1)
+    step_type: ServiceStepType | None = None
 
 
 class ClientBase(BaseModel):
@@ -260,8 +329,10 @@ class ImportProposalsResponse(BaseModel):
 class TaskBase(BaseModel):
     titulo: str
     descricao: str = ""
-    status: str = "a_fazer"
+    status: TaskStatus = "a_fazer"
     client_id: int | None = None
+    client_name: str | None = Field(default=None, max_length=255)
+    client_link_status: Literal["unlinked", "linked", "pending_review", "needs_confirmation"] = "unlinked"
     proposal_id: int | None = None
     user_id: int | None = None
     prazo: date | None = None
@@ -274,8 +345,10 @@ class TaskCreate(TaskBase):
 class TaskUpdate(BaseModel):
     titulo: str | None = None
     descricao: str | None = None
-    status: str | None = None
+    status: TaskStatus | None = None
     client_id: int | None = None
+    client_name: str | None = Field(default=None, max_length=255)
+    client_link_status: Literal["unlinked", "linked", "pending_review", "needs_confirmation"] | None = None
     proposal_id: int | None = None
     user_id: int | None = None
     prazo: date | None = None
@@ -293,7 +366,7 @@ class TaskRead(ORMModel, TaskBase):
 
 
 class TaskMove(BaseModel):
-    status: str
+    status: TaskStatus
     ordem: int
 
 
@@ -332,6 +405,7 @@ class LancamentoUpdate(LancamentoBase):
 class LancamentoRead(ORMModel, LancamentoBase):
     id: int
     tipo: TipoLancamento
+    arquivado_em: date | None = None
     created_at: datetime
     updated_at: datetime
     client: ClientRead | None = None
