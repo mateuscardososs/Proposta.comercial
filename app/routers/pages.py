@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+from datetime import datetime
 from urllib.parse import quote_plus
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func
+from sqlalchemy import and_, func, not_, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.assistant.email.classification import OPERATIONAL_CATEGORIES
 from app.config import get_settings
 from app.db import get_db
-from app.models import Client, EmailSyncState, EmailTaskLink, InboxEmail, Proposal, ServiceCall, User
+from app.models import (
+    Client,
+    EmailSyncState,
+    EmailTaskLink,
+    InboxEmail,
+    Proposal,
+    ServiceCall,
+    User,
+)
+from app.routers.users import hash_password
 from app.schemas import (
     ProposalCreate,
     ProposalItemCreate,
@@ -24,12 +36,9 @@ from app.services import (
     suggestion_service,
 )
 from app.services.today_service import get_today_agenda
-from app.routers.users import hash_password
 from app.utils.currency import format_brl
 from app.utils.dates import format_date_br
 from app.utils.formatters import decimal_from_str
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 router = APIRouter(tags=["pages"])
 settings = get_settings()
@@ -224,17 +233,29 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
         )
         .one_or_none()
     )
-    messages = (
-        db.query(InboxEmail)
-        .filter_by(
-            provider=settings.email_provider,
-            mailbox_key=settings.email_sync_mailbox_key,
-        )
-        .order_by(InboxEmail.received_at.desc(), InboxEmail.id.desc())
-        .limit(100)
-        .all()
+    base_query = db.query(InboxEmail).filter_by(
+        provider=settings.email_provider,
+        mailbox_key=settings.email_sync_mailbox_key,
     )
-    message_references = [message.reference for message in messages]
+    operational_filter = and_(
+        InboxEmail.category.in_(OPERATIONAL_CATEGORIES),
+        InboxEmail.confidence_band.in_(("medium", "high")),
+    )
+    informational_filter = InboxEmail.category == "informational"
+    review_filter = not_(or_(operational_filter, informational_filter))
+
+    def latest_messages(query):
+        return (
+            query.order_by(InboxEmail.received_at.desc(), InboxEmail.id.desc())
+            .limit(100)
+            .all()
+        )
+
+    operational_messages = latest_messages(base_query.filter(operational_filter))
+    informational_messages = latest_messages(base_query.filter(informational_filter))
+    review_messages = latest_messages(base_query.filter(review_filter))
+    messages = operational_messages + informational_messages + review_messages
+    message_references = list({message.reference for message in messages})
     task_links = (
         db.query(EmailTaskLink)
         .filter(
@@ -250,9 +271,11 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
     for message in messages:
         message.task_id = task_ids_by_reference.get(message.reference)
     message_summary = {
-        "new": sum(not message.seen for message in messages),
-        "priority": sum(message.priority in {"high", "urgent"} for message in messages),
-        "review": sum(message.review_status == "pending" for message in messages),
+        "new": base_query.filter(InboxEmail.seen.is_(False)).count(),
+        "priority": base_query.filter(InboxEmail.priority.in_(("high", "critical"))).count(),
+        "review": base_query.filter(review_filter).count(),
+        "operational": base_query.filter(operational_filter).count(),
+        "informational": base_query.filter(informational_filter).count(),
     }
     if settings.email_provider == "synthetic":
         provider_configured = True
@@ -265,7 +288,49 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
         "messages.html",
         {
             "title": "E-mails e mensagens",
-            "messages": messages,
+            "message_groups": [
+                {
+                    "key": "operational",
+                    "title": "Operacionais",
+                    "panel_id": "messages-operational",
+                    "messages": operational_messages,
+                    "count": message_summary["operational"],
+                    "empty_text": "Nenhuma mensagem operacional classificada no momento.",
+                },
+                {
+                    "key": "informational",
+                    "title": "Informativos/outros",
+                    "panel_id": "messages-informational",
+                    "messages": informational_messages,
+                    "count": message_summary["informational"],
+                    "empty_text": "Nenhum informativo ou outro item classificado.",
+                },
+                {
+                    "key": "review",
+                    "title": "Revisar",
+                    "panel_id": "messages-review",
+                    "messages": review_messages,
+                    "count": message_summary["review"],
+                    "empty_text": "Nenhum item aguardando revisão.",
+                },
+            ],
+            "message_count_total": sum(
+                message_summary[key] for key in ("operational", "informational", "review")
+            ),
+            "category_labels": {
+                "customer_quote_request": "Orçamento solicitado por cliente",
+                "vendor_quotation": "Cotação de fornecedor",
+                "purchase_order": "Pedido/ordem de compra",
+                "invoice_request": "Solicitação de nota fiscal",
+                "invoice_received": "Nota fiscal recebida",
+                "accounts_payable": "Conta a pagar",
+                "accounts_receivable": "Cobrança/conta a receber",
+                "payment_proof": "Comprovante de pagamento",
+                "service_request": "Chamado/serviço técnico",
+                "pending_reply": "Possível resposta pendente",
+                "informational": "Informativo/outros",
+                "other_review": "Revisar classificação",
+            },
             "message_summary": message_summary,
             "sync_state": state,
             "sync_enabled": settings.email_sync_enabled,

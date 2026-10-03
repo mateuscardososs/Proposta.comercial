@@ -54,6 +54,7 @@ def test_marketing_is_classification_only_even_when_unread():
     assert result.category == "informational"
     assert result.destination == "classification_only"
     assert not result.auto_task_eligible
+    assert result.priority == "low"
 
 
 def test_instruction_in_email_body_does_not_change_classification_capability():
@@ -67,6 +68,110 @@ def test_instruction_in_email_body_does_not_change_classification_capability():
     assert result.category == "customer_quote_request"
     assert result.destination == "task"
     assert "pague" not in (result.action or "").casefold()
+
+
+def test_vendor_quote_is_distinct_from_customer_quote_request():
+    vendor = classify_message(
+        _message("Cotação recebida do fornecedor", "Segue nossa cotação para manutenção.")
+    )
+    customer = classify_message(
+        _message("Pedido de orçamento", "Solicitamos orçamento para calibrar a balança.")
+    )
+
+    assert vendor.category == "vendor_quotation"
+    assert vendor.destination == "review"
+    assert not vendor.auto_task_eligible
+    assert customer.category == "customer_quote_request"
+    assert customer.auto_task_eligible
+
+
+def test_ambiguous_quote_goes_to_review_without_high_priority_or_task():
+    result = classify_message(_message("Cotação", "Segue a cotação para avaliação."))
+
+    assert result.category == "other_review"
+    assert result.destination == "review"
+    assert result.confidence_band == "low"
+    assert result.priority == "low"
+    assert not result.auto_task_eligible
+
+
+def test_unread_operational_email_is_not_high_priority_without_impact_or_deadline():
+    result = classify_message(
+        _message("Pedido de orçamento", "Solicito orçamento para manutenção preventiva.")
+    )
+
+    assert result.category == "customer_quote_request"
+    assert result.priority == "normal"
+    assert "não lido" not in " ".join(result.reasons).casefold()
+
+
+def test_date_alone_is_not_treated_as_a_deadline():
+    result = classify_message(
+        _message("Pedido de orçamento", "Solicito orçamento para serviço previsto em 12/10/2026.")
+    )
+
+    assert result.category == "customer_quote_request"
+    assert result.explicit_deadline is None
+    assert result.priority == "normal"
+
+
+@pytest.mark.parametrize(
+    ("subject", "body", "reason_fragment"),
+    [
+        (
+            "Orçamento de manutenção",
+            "Favor enviar orçamento até 12/10/2026.",
+            "prazo explícito",
+        ),
+        (
+            "Balança parada",
+            "A produção está parada porque a balança está indisponível.",
+            "impacto operacional explícito",
+        ),
+    ],
+)
+def test_high_priority_requires_explicit_deadline_or_operational_impact(
+    subject, body, reason_fragment
+):
+    result = classify_message(_message(subject, body))
+
+    assert result.priority in {"high", "critical"}
+    assert reason_fragment in " ".join(result.reasons).casefold()
+
+
+def test_unrelated_content_is_separated_as_informational_not_task():
+    result = classify_message(
+        _message("Fotos do fim de semana", "Veja as fotos da viagem em família.")
+    )
+
+    assert result.category == "informational"
+    assert result.destination == "classification_only"
+    assert result.priority == "low"
+    assert not result.auto_task_eligible
+
+
+def test_personal_message_with_generic_word_pedido_is_not_sent_to_review_queue():
+    result = classify_message(
+        _message("Pedido de casamento", "Convite para celebrar com a família.")
+    )
+
+    assert result.category == "informational"
+    assert result.destination == "classification_only"
+    assert not result.auto_task_eligible
+
+
+def test_promotion_with_quote_language_is_reviewed_not_automatically_tasked():
+    result = classify_message(
+        _message(
+            "Newsletter: solicite orçamento grátis",
+            "Promoção para clientes. Favor enviar orçamento para calibrar sua balança.",
+        )
+    )
+
+    assert result.category == "other_review"
+    assert result.destination == "review"
+    assert result.confidence_band == "low"
+    assert not result.auto_task_eligible
 
 
 @pytest.mark.parametrize(
