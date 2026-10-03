@@ -8,25 +8,30 @@
 
 <section class="kpi-grid" aria-label="Resumo financeiro">
   <article class="kpi-card"><span>{{ config.pending_label }}</span><strong>{{ format_brl(pending_total) }}</strong><small>{{ pendentes|length }} lançamento(s)</small></article>
-  <article class="kpi-card"><span>Pago</span><strong>{{ format_brl(paid_total) }}</strong><small>{{ pagos|length }} lançamento(s)</small></article>
+  <article class="kpi-card"><span>Pagas/recebidas</span><strong>{{ format_brl(paid_total) }}</strong><small>{{ pagos|length }} lançamento(s) ativos</small></article>
   <article class="kpi-card"><span>Total registrado</span><strong>{{ format_brl(pending_total + paid_total) }}</strong><small>Sem alterar baixas</small></article>
 </section>
 
 <p class="kanban-error" data-finance-error role="alert"></p>
+<nav class="filter-tabs" aria-label="Grupos financeiros">
+  {% for key, label in [('abertas', 'Em aberto'), ('atrasadas', 'Atrasadas'), ('pagas', 'Pagas/recebidas'), ('arquivadas', 'Arquivadas')] %}
+  <a class="btn {% if active_group == key %}btn-primary{% else %}btn-ghost{% endif %}" href="{{ config.board_url }}?grupo={{ key }}"{% if active_group == key %} aria-current="page"{% endif %}>{{ label }} <span class="badge">{{ groups[key]|length }}</span></a>
+  {% endfor %}
+</nav>
 <section class="card" data-finance-table>
-  <div class="card-head"><div><h2 class="card-title">Lançamentos</h2><p class="card-subtitle">Atualize a situação somente pelo controle explícito de cada linha.</p></div></div>
+  <div class="card-head"><div><h2 class="card-title">{% if active_group == 'abertas' %}Em aberto{% elif active_group == 'atrasadas' %}Atrasadas{% elif active_group == 'pagas' %}Pagas/recebidas{% else %}Arquivadas{% endif %}</h2><p class="card-subtitle">Vencimentos futuros permanecem em aberto. Arquivamento preserva o histórico e não apaga lançamentos.</p></div></div>
   <div class="table-wrap"><table>
     <thead><tr><th>Descrição</th><th>Cliente/fornecedor</th><th>Valor</th><th>Vencimento</th><th>Situação</th><th>Ação</th></tr></thead>
     <tbody>
       {% for entry in entries %}
       {% set overdue = is_atrasado(entry, today) %}
-      <tr{% if overdue %} class="kanban-card is-overdue"{% endif %} data-finance-row data-id="{{ entry.id }}">
-        <td><strong><a href="{{ config.edit_prefix }}/{{ entry.id }}/edit">{{ entry.descricao }}</a></strong>{% if entry.proposal %}<br><a class="muted" href="/web/proposals/{{ entry.proposal.id }}">Proposta #{{ entry.proposal.numero }}/{{ entry.proposal.revisao }}</a>{% endif %}</td>
+      <tr{% if overdue %} class="kanban-card is-overdue"{% endif %}{% if active_group != 'arquivadas' %} data-finance-row data-id="{{ entry.id }}"{% endif %}>
+        <td><strong>{% if active_group == 'arquivadas' %}{{ entry.descricao }}{% else %}<a href="{{ config.edit_prefix }}/{{ entry.id }}/edit">{{ entry.descricao }}</a>{% endif %}</strong>{% if entry.proposal %}<br><a class="muted" href="/web/proposals/{{ entry.proposal.id }}">Proposta #{{ entry.proposal.numero }}/{{ entry.proposal.revisao }}</a>{% endif %}</td>
         <td>{{ entry.client.razao_social if entry.client else (entry.fornecedor or 'Não informado') }}</td>
         <td><strong>{{ format_brl(entry.valor) }}</strong></td>
-        <td>{{ format_date_br(entry.data_vencimento) }}<br>{% if overdue %}<span class="badge danger">Atrasado</span>{% elif entry.status == 'pendente' and entry.data_vencimento <= near_due_limit %}<span class="badge warning">Vence em breve</span>{% elif entry.status == 'pago' %}<span class="muted">Pago{% if entry.data_pagamento %} em {{ format_date_br(entry.data_pagamento) }}{% endif %}</span>{% endif %}</td>
-        <td><label class="sr-only" for="finance-status-{{ entry.id }}">Situação de {{ entry.descricao }}</label><select id="finance-status-{{ entry.id }}" data-finance-status aria-label="Situação de {{ entry.descricao }}"><option value="pendente"{% if entry.status == 'pendente' %} selected{% endif %}>{{ config.pending_label }}</option><option value="pago"{% if entry.status == 'pago' %} selected{% endif %}>Pago</option></select></td>
-        <td><a class="btn btn-ghost" href="{{ config.edit_prefix }}/{{ entry.id }}/edit">Editar</a></td>
+        <td>{{ format_date_br(entry.data_vencimento) }}<br>{% if overdue %}<span class="badge danger">Atrasado</span>{% elif entry.status != 'pago' and entry.data_vencimento <= near_due_limit %}<span class="badge warning">Vence em breve</span>{% elif entry.status == 'pago' %}<span class="muted">Pago{% if entry.data_pagamento %} em {{ format_date_br(entry.data_pagamento) }}{% endif %}{% if entry.arquivado_em %}<br>Arquivado em {{ format_date_br(entry.arquivado_em) }}{% endif %}</span>{% endif %}</td>
+        <td>{% if active_group == 'arquivadas' %}<span class="badge">Arquivada · somente consulta</span>{% else %}<label class="sr-only" for="finance-status-{{ entry.id }}">Situação de {{ entry.descricao }}</label><select id="finance-status-{{ entry.id }}" data-finance-status aria-label="Situação de {{ entry.descricao }}"><option value="pendente"{% if entry.status != 'pago' %} selected{% endif %}>{{ config.pending_label }}</option><option value="pago"{% if entry.status == 'pago' %} selected{% endif %}>Pago/recebido</option></select>{% endif %}</td>
+        <td>{% if active_group != 'arquivadas' %}<a class="btn btn-ghost" href="{{ config.edit_prefix }}/{{ entry.id }}/edit">Editar</a>{% endif %}</td>
       </tr>
       {% else %}<tr><td colspan="6"><div class="empty-state compact">Nenhum lançamento registrado.</div></td></tr>{% endfor %}
     </tbody>

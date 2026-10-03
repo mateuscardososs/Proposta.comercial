@@ -144,6 +144,34 @@ def test_email_projection_adds_reply_coverage_columns_without_losing_rows(tmp_pa
     assert row.sent_coverage == 0
 
 
+def test_financial_archive_column_is_added_to_existing_schema(tmp_path):
+    engine = create_engine(f"sqlite:///{(tmp_path / 'old_lancamentos.sqlite3').as_posix()}")
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE lancamentos (
+                id INTEGER PRIMARY KEY, tipo VARCHAR(20) NOT NULL,
+                descricao VARCHAR(255) NOT NULL, valor NUMERIC(14, 2) NOT NULL,
+                data_emissao DATE NOT NULL, data_vencimento DATE NOT NULL,
+                status VARCHAR(20) NOT NULL, data_pagamento DATE
+            )
+        """))
+        connection.execute(text("""
+            INSERT INTO lancamentos (id, tipo, descricao, valor, data_emissao,
+                data_vencimento, status, data_pagamento)
+            VALUES (1, 'pagar', 'Conta preservada', 100, '2026-09-01',
+                '2026-10-01', 'pendente', NULL)
+        """))
+
+    ensure_schema_compatibility_for_engine(engine)
+
+    assert "arquivado_em" in {column["name"] for column in inspect(engine).get_columns("lancamentos")}
+    assert "ix_lancamentos_arquivado_em" in {
+        index["name"] for index in inspect(engine).get_indexes("lancamentos")
+    }
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT descricao FROM lancamentos WHERE id = 1")) == "Conta preservada"
+
+
 def test_task_client_text_fields_are_added_without_losing_existing_tasks(tmp_path):
     engine = create_engine(f"sqlite:///{(tmp_path / 'old_tasks.sqlite3').as_posix()}")
     with engine.begin() as connection:

@@ -405,6 +405,7 @@ class LancamentoUpdate(LancamentoBase):
 class LancamentoRead(ORMModel, LancamentoBase):
     id: int
     tipo: TipoLancamento
+    arquivado_em: date | None = None
     created_at: datetime
     updated_at: datetime
     client: ClientRead | None = None

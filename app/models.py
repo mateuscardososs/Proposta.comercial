@@ -384,9 +384,39 @@ class Lancamento(Base, TimestampMixin):
     data_vencimento: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), default="pendente", nullable=False, index=True)
     data_pagamento: Mapped[date | None] = mapped_column(Date, nullable=True)
+    arquivado_em: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
 
     client: Mapped[Client | None] = relationship()
     proposal: Mapped[Proposal | None] = relationship()
+
+
+class LancamentoHistorico(Base):
+    """Append-only audit trail for explicit and automatic financial transitions."""
+
+    __tablename__ = "lancamento_historicos"
+    __table_args__ = (
+        UniqueConstraint("lancamento_id", "event_key", name="uq_lancamento_historico_event_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lancamento_id: Mapped[int] = mapped_column(
+        ForeignKey("lancamentos.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    event_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    status_anterior: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status_novo: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    data_emissao_anterior: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_emissao_nova: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_vencimento_anterior: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_vencimento_nova: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_pagamento_anterior: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_pagamento_nova: Mapped[date | None] = mapped_column(Date, nullable=True)
+    arquivado_em_anterior: Mapped[date | None] = mapped_column(Date, nullable=True)
+    arquivado_em_novo: Mapped[date | None] = mapped_column(Date, nullable=True)
+    acao_confirmada: Mapped[str] = mapped_column(String(80), nullable=False)
+    observacao: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class ServiceCall(Base, TimestampMixin):
