@@ -1,34 +1,30 @@
-import { fetchWithTimeout, getAssistantChat, responseJson } from "/assets/assistant_chat.js";
+import { fetchWithTimeout, getAssistantChat, responseJson } from "/assets/assistant_chat.js?v=voice-agenda-transcript-20261003-1";
 import {
   VoiceSessionController,
   createBrowserAudio,
   createBrowserCapture,
-} from "/assets/assistant_voice.js";
+  voiceInputConstraints,
+} from "/assets/assistant_voice.js?v=voice-agenda-transcript-20261003-1";
 
 
 export async function bootstrapAssistantVoice(root = document, chat = getAssistantChat()) {
   const voiceStart = root.getElementById("voice-start");
   if (!voiceStart || !chat) return null;
-  const voiceFinish = root.getElementById("voice-finish");
   const voiceStop = root.getElementById("voice-stop");
   const voiceRepeat = root.getElementById("voice-repeat");
   const voiceEnd = root.getElementById("voice-end");
   const voiceState = root.getElementById("voice-state");
   const voiceLevel = root.getElementById("voice-level");
-  const transcriptReview = root.getElementById("voice-transcript-review");
-  const transcriptSend = root.getElementById("voice-transcript-send");
-  const messageInput = root.getElementById("assistant-message");
   let controller = null;
   let voiceReady = false;
 
   const labels = {
     idle: "Conversa encerrada.",
-    requesting: "Solicitando acesso ao microfone...",
-    listening: "Ouvindo. Fale naturalmente; o silêncio encerra a fala.",
-    transcribing: "Transcrevendo localmente...",
-    reviewing: "Confira ou corrija a transcrição antes de enviar.",
-    processing: "Consultando o assistente local...",
-    speaking: "Reproduzindo a resposta...",
+    requesting: "Ouvindo",
+    listening: "Ouvindo",
+    transcribing: "Pensando",
+    processing: "Pensando",
+    speaking: "Falando",
     error: "A voz encontrou um problema. O texto continua disponível.",
   };
 
@@ -37,13 +33,10 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
     voiceState.dataset.state = state;
     voiceState.textContent = labels[state] || state;
     voiceStart.disabled = !voiceReady || active;
-    voiceStart.textContent = state === "requesting" ? "Abrindo microfone..." : "Iniciar conversa";
-    voiceFinish.disabled = state !== "listening";
+    voiceStart.textContent = "Iniciar conversa";
     voiceStop.disabled = state !== "speaking";
     voiceRepeat.disabled = !active || (!controller?.lastAudioBlob && !controller?.lastReply);
     voiceEnd.disabled = !active;
-    if (transcriptSend) transcriptSend.disabled = state !== "reviewing";
-    if (transcriptReview) transcriptReview.hidden = state !== "reviewing";
     if (state !== "listening") voiceLevel.value = 0;
   }
 
@@ -92,20 +85,16 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
     const configuration = await responseJson(response);
     voiceReady = configuration.enabled && configuration.transcription_available && configuration.synthesis_available;
     controller = new VoiceSessionController({
-      getStream: () => navigator.mediaDevices.getUserMedia({ audio: true }),
+      getStream: () => navigator.mediaDevices.getUserMedia(voiceInputConstraints()),
       captureFactory: createBrowserCapture,
       transcribe,
-      sendText: (text) => chat.send(text),
+      sendText: (text) => chat.send(text, { source: "voice" }),
       synthesize,
       audioFactory: createBrowserAudio,
-      silenceMs: configuration.silence_ms,
+      silenceMs: Math.max(configuration.silence_ms || 0, 2500),
       maxUtteranceMs: configuration.max_duration_seconds * 1000,
-      idleTimeoutMs: configuration.idle_timeout_seconds * 1000,
+      resumeDelayMs: 500,
       onState: renderState,
-      onTranscript: (text) => {
-        if (messageInput) messageInput.value = text;
-        voiceState.textContent = `Transcrição para revisar: ${text}`;
-      },
       onLevel: (level) => { voiceLevel.value = Math.min(1, level * 8); },
       onError: (error) => {
         renderState("error");
@@ -127,16 +116,12 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
   }
 
   voiceStart.addEventListener("click", () => controller.start());
-  voiceFinish.addEventListener("click", () => controller.finishUtterance());
   voiceStop.addEventListener("click", () => controller.stopPlayback());
   voiceRepeat.addEventListener("click", () => {
     if (controller.lastAudioBlob) controller.repeatSpeech();
     else controller.retrySpeech();
   });
   voiceEnd.addEventListener("click", () => controller.stop());
-  transcriptSend?.addEventListener("click", () => {
-    controller.submitTranscript(messageInput?.value || "");
-  });
   window.addEventListener("pagehide", () => controller.stop());
   return controller;
 }

@@ -273,6 +273,7 @@ class AssistantMessageRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     conversation_id: int | None = Field(default=None, ge=1)
     retry: bool = False
+    source: Literal["text", "voice"] = "text"
 
 
 class AssistantHistory(BaseModel):

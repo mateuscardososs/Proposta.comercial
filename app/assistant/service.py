@@ -61,6 +61,7 @@ from app.models import (
     AssistantRequest,
     Client,
     Proposal,
+    Task,
     User,
 )
 from app.schemas import TaskCreate
@@ -149,9 +150,12 @@ class AssistantService:
         request_id: str,
         conversation_id: int | None = None,
         retry: bool = False,
+        source: str = "text",
     ) -> AssistantReply:
         clean_message = message.strip()
         clean_request_id = request_id.strip()
+        if source not in {"text", "voice"}:
+            raise ValueError("Origem da mensagem inválida.")
         if not clean_message:
             raise ValueError("A mensagem nao pode ficar vazia.")
         if len(clean_message) > 4000:
@@ -168,6 +172,7 @@ class AssistantService:
             request_id=clean_request_id,
             conversation_id=conversation_id,
             retry=retry,
+            source=source,
         )
         if isinstance(claimed_request, AssistantReply):
             return claimed_request
@@ -253,40 +258,13 @@ class AssistantService:
                             allowed_tools={"responder_conversa"},
                             traces=provider_inferences,
                         )
-            if command is None:
-                direct_query = self._direct_board_query(clean_message)
-                if direct_query is not None:
-                    execution = self._execute_task_query(
-                        conversation.id, direct_query, current_date
-                    )
-                    if execution.result is None:
-                        command = direct_query
-                        reply = execution.reply
-                    else:
-                        if self.provider is None:
-                            raise ProviderUnavailableError("Provedor nao configurado.")
-                        result_payload = dict(execution.result.payload)
-                        result_tasks = list(result_payload.get("tasks", []))
-                        result_payload["tasks_considered"] = len(result_tasks)
-                        result_payload["tasks"] = result_tasks[:1]
-                        result_payload["selection"] = (
-                            "A primeira tarefa foi selecionada pela ordenacao real de prioridades do backend."
-                        )
-                        focused_result = execution.result.model_copy(
-                            update={"payload": result_payload}
-                        )
-                        tool_results.append(focused_result)
-                        executed_tools.append("consultar_tarefas")
-                        command = self._interpret_provider(
-                            self._provider_messages(conversation.id),
-                            today=current_date,
-                            timezone=self.timezone_name,
-                            tool_results=tuple(tool_results),
-                            pending_action=self._provider_pending_action(conversation.id),
-                            allowed_tools={"responder_conversa"},
-                            traces=provider_inferences,
-                        )
-            if command is None:
+            if command is None and self._direct_board_query(clean_message):
+                reply, task_result = self._execute_task_agenda(
+                    conversation.id, current_date
+                )
+                tool_results.append(task_result)
+                executed_tools.append("consultar_tarefas")
+            if command is None and reply is None:
                 if self.provider is None:
                     raise ProviderUnavailableError("Provedor nao configurado.")
                 pending_action = self._provider_pending_action(conversation.id)
@@ -799,18 +777,147 @@ class AssistantService:
         )
 
     @staticmethod
-    def _direct_board_query(message: str) -> TaskQueryCommand | None:
+    def _direct_board_query(message: str) -> bool:
         normalized = normalize_text(message)
-        has_board_scope = "quadro" in normalized and any(
-            term in normalized for term in ("pendencia", "tarefa")
-        )
-        asks_recommendation = any(
+        asks_for_agenda = any(
             term in normalized
-            for term in ("recomende", "prioridade", "priorizar", "primeiro", "por onde comecar")
+            for term in (
+                "organize",
+                "organizar",
+                "planeje",
+                "planejar",
+                "priorize",
+                "priorizar",
+                "o que devo fazer",
+                "o que tenho para fazer",
+                "o que posso fazer",
+                "por onde comecar",
+                "o que fazer primeiro",
+                "recomende",
+                "recomendacao",
+                "prioridade",
+            )
         )
-        if has_board_scope and asks_recommendation:
-            return TaskQueryCommand(priorities=True)
-        return None
+        asks_to_consult = any(
+            term in normalized
+            for term in (
+                "olhe",
+                "olhar",
+                "veja",
+                "verifique",
+                "consulte",
+                "consultar",
+                "mostre",
+                "mostrar",
+                "liste",
+                "listar",
+                "quais tarefas",
+                "minhas tarefas abertas",
+                "quadro de tarefas",
+                "quais sao as tarefas",
+            )
+        )
+        has_agenda_scope = "agenda" in normalized
+        has_task_scope = any(
+            term in normalized
+            for term in ("quadro", "tarefas", "tarefa", "pendencias", "pendencia")
+        )
+        asks_about_today = "hoje" in normalized and any(
+            term in normalized for term in ("fazer", "tarefas", "tarefa", "quadro")
+        )
+        return bool(
+            (has_agenda_scope and (asks_for_agenda or asks_to_consult))
+            or (has_task_scope and (asks_for_agenda or asks_to_consult or asks_about_today))
+            or (asks_about_today and asks_for_agenda)
+        )
+
+    def _execute_task_agenda(
+        self,
+        conversation_id: int,
+        today: date,
+    ) -> tuple[AssistantReply, ProviderToolResult]:
+        # Read every board task. The task query tool's normal UI limit is intentionally
+        # not used here: a long-running open task must not disappear from the agenda.
+        tasks = [task for task in board_service.get_tasks(self.db) if task.status != "concluido"]
+        urgency_markers = (
+            "urgente",
+            "prioridade alta",
+            "alta prioridade",
+            "critico",
+            "critica",
+        )
+
+        def priority(task: Task) -> tuple[int, date, int, int, str, str]:
+            due = task.prazo
+            text = normalize_text(f"{task.titulo} {task.descricao}")
+            explicit_urgency = any(marker in text for marker in urgency_markers)
+            if explicit_urgency:
+                return (0, due or date.max, task.ordem, task.id, "Alta", "Marcada como urgente no texto da tarefa.")
+            if due is not None and due < today:
+                return (1, due, task.ordem, task.id, "Alta", f"Prazo vencido em {due:%d/%m/%Y}.")
+            if due == today:
+                return (2, due, task.ordem, task.id, "Alta", "Prazo informado para hoje.")
+            if task.status == "servico_feito_falta_nota_pedido":
+                return (3, due or date.max, task.ordem, task.id, "Alta", "O status indica serviço concluído com etapa documental pendente.")
+            if task.status == "em_andamento":
+                return (4, due or date.max, task.ordem, task.id, "Média", "Execução já iniciada; concluir ou atualizar esta tarefa.")
+            if task.status == "aguardando_cliente":
+                return (7, due or date.max, task.ordem, task.id, "Normal", "A tarefa está aguardando retorno do cliente.")
+            if due is not None:
+                return (5, due, task.ordem, task.id, "Normal", f"Próximo prazo registrado: {due:%d/%m/%Y}.")
+            return (6, date.max, task.ordem, task.id, "Normal", "Tarefa aberta sem prazo registrado.")
+
+        ranked = [(priority(task), task) for task in tasks]
+        ranked.sort(key=lambda item: item[0][:4])
+        due_today_count = sum(task.prazo == today for _, task in ranked)
+        if not ranked:
+            message = "Consultei o quadro: não há tarefas abertas."
+        else:
+            lines = [
+                "Consultei todas as tarefas abertas do quadro.",
+                "Prioridade sugerida, calculada por urgência explícita, status e prazo; não é um campo salvo.",
+            ]
+            if due_today_count == 0:
+                lines.append("Não há tarefa com prazo hoje; seguem as próximas pendências abertas relevantes.")
+            lines.append("Ordem sugerida, sem inventar horários ou duração:")
+            for position, (rank, task) in enumerate(ranked, start=1):
+                due_label = task.prazo.strftime("%d/%m/%Y") if task.prazo else "sem prazo"
+                parts = [
+                    f"{position}. {task.titulo}",
+                    f"Status: {STATUS_LABELS.get(task.status, task.status)}",
+                    f"Prioridade sugerida: {rank[4]} ({rank[5]})",
+                    f"Prazo: {due_label}",
+                ]
+                client_name = task.client.razao_social if task.client else task.client_name
+                if client_name:
+                    parts.append(f"Cliente: {client_name}")
+                lines.append(" — ".join(parts))
+            message = "\n".join(lines)
+
+        result = ProviderToolResult(
+            tool="consultar_tarefas",
+            payload={
+                "criteria": {
+                    "scope": "all_open_board_tasks",
+                    "reference_date": today.isoformat(),
+                    "read_only": True,
+                    "limited": False,
+                },
+                "tasks": [
+                    {
+                        "id": task.id,
+                        "title": task.titulo,
+                        "status": STATUS_LABELS.get(task.status, task.status),
+                        "priority_suggested": rank[4],
+                        "priority_reason": rank[5],
+                        "due_date": task.prazo.isoformat() if task.prazo else None,
+                        "client": task.client.razao_social if task.client else task.client_name,
+                    }
+                    for rank, task in ranked
+                ],
+            },
+        )
+        return AssistantReply(conversation_id=conversation_id, kind="text", message=message), result
 
     def _direct_pending_date_correction(
         self,
@@ -1182,6 +1289,7 @@ class AssistantService:
         request_id: str,
         conversation_id: int | None,
         retry: bool = False,
+        source: str = "text",
     ) -> AssistantConversation | AssistantReply:
         now = self._request_now()
         lease_expires_at = now + timedelta(seconds=self.request_lease_seconds)
@@ -1292,7 +1400,7 @@ class AssistantService:
             kind="text",
             content=message,
             request_id=request_id,
-            details_json={},
+            details_json={"source": source},
         )
         self.db.add(user_message)
         self.db.flush()
