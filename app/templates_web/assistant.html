@@ -173,7 +173,6 @@
   }
 
   .assistant-voice-state[data-state="listening"] { color: var(--brand); }
-  .assistant-voice-state[data-state="reviewing"] { color: #8b5a12; }
   .assistant-voice-state[data-state="error"] { color: #8b202b; }
 
   .assistant-voice-level {
@@ -259,16 +258,11 @@
       </div>
       <div class="assistant-voice-actions">
         <button class="btn btn-primary" id="voice-start" type="button" disabled>Iniciar conversa</button>
-        <button class="btn btn-ghost" id="voice-finish" type="button" disabled>Encerrar fala</button>
-        <button class="btn btn-ghost" id="voice-stop" type="button" disabled>Interromper audio</button>
-        <button class="btn btn-ghost" id="voice-repeat" type="button" disabled>Repetir audio</button>
+        <button class="btn btn-ghost" id="voice-stop" type="button" disabled>Interromper resposta</button>
+        <button class="btn btn-ghost" id="voice-repeat" type="button" disabled>Repetir resposta</button>
         <button class="btn btn-ghost" id="voice-end" type="button" disabled>Encerrar conversa</button>
         <meter class="assistant-voice-level" id="voice-level" min="0" max="1" value="0"
                aria-label="Nivel do microfone"></meter>
-      </div>
-      <div id="voice-transcript-review" class="assistant-confirm-actions" hidden>
-        <span>Confira a transcrição no campo Mensagem. Ela ainda não foi enviada.</span>
-        <button class="btn btn-primary" id="voice-transcript-send" type="button" disabled>Enviar transcrição</button>
       </div>
     </div>
 
@@ -287,6 +281,6 @@
   </section>
 </div>
 
-<script type="module" src="/assets/assistant_chat.js"></script>
-<script type="module" src="/assets/assistant_voice_bootstrap.js"></script>
+<script type="module" src="/assets/assistant_chat.js?v=voice-agenda-transcript-20261003-1"></script>
+<script type="module" src="/assets/assistant_voice_bootstrap.js?v=voice-agenda-transcript-20261003-1"></script>
 {% endblock %}

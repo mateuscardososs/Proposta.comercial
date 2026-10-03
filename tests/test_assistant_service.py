@@ -18,7 +18,6 @@ from app.assistant.email.synthetic import SyntheticEmailReader, synthetic_messag
 from app.assistant.provider import (
     ProviderInferenceTrace,
     ProviderInterpretation,
-    ProviderMessage,
     ProviderResponseError,
     ProviderUnavailableError,
 )
@@ -349,7 +348,7 @@ def test_question_about_previous_answer_reaches_provider_with_history(db):
     ]
 
 
-def test_query_result_returns_to_provider_for_a_grounded_natural_answer(db):
+def test_known_task_recommendation_returns_a_grounded_complete_order_without_model(db):
     db.add(
         Task(
             titulo="Enviar relatorio Alfa",
@@ -359,12 +358,7 @@ def test_query_result_returns_to_provider_for_a_grounded_natural_answer(db):
         )
     )
     db.commit()
-    provider = QueueProvider(
-        TaskQueryCommand(priorities=True),
-        ConversationCommand(
-            message="Eu começaria por Enviar relatorio Alfa, porque vence hoje, 30/09/2026."
-        ),
-    )
+    provider = QueueProvider()
     service = AssistantService(db, provider, now=_now)
 
     reply = service.handle_message(
@@ -372,18 +366,13 @@ def test_query_result_returns_to_provider_for_a_grounded_natural_answer(db):
         request_id="query-synthesis-1",
     )
 
-    assert reply.message.startswith("Eu começaria")
-    assert len(provider.calls) == 2
-    result = provider.calls[1]["tool_results"][0]
-    assert result.tool == "consultar_tarefas"
-    assert result.payload["tasks"][0]["title"] == "Enviar relatorio Alfa"
-    assert provider.calls[1]["allowed_tools"] == {
-        "responder_conversa",
-        "consultar_tarefas",
-    }
+    assert "Enviar relatorio Alfa" in reply.message
+    assert "Prazo: 30/09/2026" in reply.message
+    assert "Prioridade sugerida: Alta" in reply.message
+    assert provider.calls == []
 
 
-def test_recommendation_request_applies_real_priority_order_even_if_model_omits_flag(db):
+def test_recommendation_order_uses_real_status_and_deadline_without_model(db):
     db.add_all(
         [
             Task(titulo="Tarefa comum", status="a_fazer", prazo=date(2026, 9, 30), ordem=0),
@@ -396,20 +385,17 @@ def test_recommendation_request_applies_real_priority_order_even_if_model_omits_
         ]
     )
     db.commit()
-    provider = QueueProvider(
-        TaskQueryCommand(priorities=False),
-        ConversationCommand(message="Comece por Documento de servico feito."),
-    )
+    provider = QueueProvider()
     service = AssistantService(db, provider, now=_now)
 
-    service.handle_message(
+    reply = service.handle_message(
         message="Analise minhas tarefas e recomende qual devo fazer primeiro.",
         request_id="priority-grounding-1",
     )
 
-    tasks = provider.calls[1]["tool_results"][0].payload["tasks"]
-    assert tasks[0]["title"] == "Documento de servico feito"
-    assert tasks[0]["priority_position"] == 1
+    assert reply.message.index("Tarefa comum") < reply.message.index("Documento de servico feito")
+    assert "etapa documental pendente" in normalize_text(reply.message)
+    assert provider.calls == []
 
 
 def test_explicit_broad_board_recommendation_skips_classification_inference(db):
@@ -430,13 +416,91 @@ def test_explicit_broad_board_recommendation_skips_classification_inference(db):
         request_id="direct-board-recommendation-1",
     )
 
-    assert reply.message == "Comece por Documento pendente."
-    assert len(provider.calls) == 1
-    result = provider.calls[0]["tool_results"][0].payload
-    assert result["criteria"]["priorities"] is True
-    assert result["tasks_considered"] == 2
-    assert [task["title"] for task in result["tasks"]] == ["Documento pendente"]
-    assert result["tasks"][0]["priority_position"] == 1
+    assert "Documento pendente" in reply.message
+    assert "Tarefa secundaria" in reply.message
+    assert provider.calls == []
+    assert "Prioridade sugerida" in reply.message
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Organize minha agenda",
+        "Olhe o quadro de tarefas e diga o que devo fazer hoje",
+        "Mostre minhas tarefas abertas",
+        "O que devo fazer hoje?",
+    ],
+)
+def test_known_agenda_intent_queries_the_board_without_model_tool_choice(db, phrase):
+    db.add(Task(titulo="Pendência sintética", status="a_fazer", ordem=0))
+    db.commit()
+    service = AssistantService(db, provider=None, now=_now)
+
+    reply = service.handle_message(message=phrase, request_id=f"agenda-direct-{len(phrase)}")
+
+    assert reply.kind == "text"
+    assert "Pendência sintética" in reply.message
+    assert "consultei" in normalize_text(reply.message)
+    assert "quadro" in normalize_text(reply.message)
+
+
+def test_agenda_includes_all_open_task_states_and_never_truncates_at_fifty(db):
+    client = Client(razao_social="Cliente sintético agenda")
+    db.add(client)
+    db.flush()
+    tasks = [
+        Task(titulo="Urgência explícita", descricao="Marcada como urgente", status="a_fazer", ordem=0),
+        Task(titulo="Tarefa atrasada sintética", status="a_fazer", prazo=date(2026, 9, 29), client_id=client.id, ordem=0),
+        Task(titulo="Tarefa para hoje sintética", status="em_andamento", prazo=date(2026, 9, 30), ordem=0),
+        Task(titulo="Tarefa próxima sintética", status="a_fazer", prazo=date(2026, 10, 2), client_id=client.id, ordem=0),
+        Task(titulo="Tarefa sem prazo sintética", status="a_fazer", ordem=0),
+        Task(titulo="Tarefa aguardando cliente sintética", status="aguardando_cliente", ordem=0),
+        Task(titulo="Tarefa concluída sintética", status="concluido", ordem=0),
+    ]
+    tasks.extend(
+        Task(titulo=f"Tarefa aberta #{index:02d}", status="a_fazer", ordem=index)
+        for index in range(55)
+    )
+    db.add_all(tasks)
+    db.commit()
+    original_task_count = db.query(Task).count()
+    service = AssistantService(db, provider=None, now=_now)
+
+    reply = service.handle_message(
+        message="Olhe o quadro de tarefas e diga o que devo fazer hoje",
+        request_id="agenda-complete-board-1",
+    )
+
+    assert reply.kind == "text"
+    assert "Tarefa atrasada sintética" in reply.message
+    assert "Tarefa para hoje sintética" in reply.message
+    assert "Tarefa próxima sintética" in reply.message
+    assert "Tarefa sem prazo sintética" in reply.message
+    assert "Tarefa aguardando cliente sintética" in reply.message
+    assert "Tarefa aberta #54" in reply.message
+    assert "Tarefa concluída sintética" not in reply.message
+    assert "Cliente sintético agenda" in reply.message
+    assert "sem prazo" in normalize_text(reply.message)
+    assert "atrasada" in normalize_text(reply.message)
+    assert "Prioridade sugerida" in reply.message
+    assert reply.message.index("Urgência explícita") < reply.message.index("Tarefa atrasada sintética")
+    assert reply.message.index("Tarefa atrasada sintética") < reply.message.index("Tarefa para hoje sintética")
+    assert db.query(Task).count() == original_task_count
+
+
+def test_agenda_says_nothing_is_due_today_but_lists_open_upcoming_tasks(db):
+    db.add(Task(titulo="Próxima tarefa aberta", status="a_fazer", prazo=date(2026, 10, 2), ordem=0))
+    db.commit()
+    service = AssistantService(db, provider=None, now=_now)
+
+    reply = service.handle_message(
+        message="Organize minha agenda para hoje",
+        request_id="agenda-no-today-deadline-1",
+    )
+
+    assert "não há tarefa com prazo hoje" in reply.message.lower()
+    assert "Próxima tarefa aberta" in reply.message
+    assert "02/10/2026" in reply.message
 
 
 def test_two_distinct_queries_can_ground_one_answer(db):
@@ -485,7 +549,7 @@ def test_repeated_query_is_stopped_without_an_unbounded_model_loop(db):
     service = AssistantService(db, provider, now=_now, max_tool_rounds=2)
 
     reply = service.handle_message(
-        message="Liste e explique minhas tarefas.", request_id="loop-query-1"
+        message="Estou avaliando a situação da operação e quero uma análise.", request_id="loop-query-1"
     )
 
     assert reply.message.startswith("Comece por Unica tarefa")
@@ -608,21 +672,32 @@ def test_invalid_model_reply_for_unavailable_operation_has_a_safe_useful_fallbac
     assert "nada foi executado" in normalize_text(reply.message)
 
 
-def test_empty_query_explicitly_reports_empty_board_and_offers_help(db):
-    provider = QueueProvider(
-        TaskQueryCommand(),
-        ConversationCommand(
-            message="Não há tarefas cadastradas com esses critérios. Se quiser, posso ajudar a criar uma."
-        ),
-    )
-    service = AssistantService(db, provider, now=_now)
+def test_empty_query_reports_empty_only_after_real_open_task_query(db):
+    service = AssistantService(db, provider=None, now=_now)
 
     reply = service.handle_message(
         message="O que tenho para fazer hoje?", request_id="empty-query-1"
     )
 
-    assert "Não há tarefas cadastradas" in reply.message
-    assert "criar" in reply.message.lower()
+    assert "Consultei o quadro" in reply.message
+    assert "não há tarefas abertas" in reply.message.lower()
+
+
+def test_voice_agenda_uses_the_same_real_task_query_and_keeps_transcript_visible(db):
+    db.add(Task(titulo="Tarefa sintética para voz", status="a_fazer", prazo=date(2026, 9, 30), ordem=0))
+    db.commit()
+    service = AssistantService(db, provider=None, now=_now)
+
+    reply = service.handle_message(
+        message="Organize minha agenda",
+        request_id="voice-agenda-synthetic-1",
+        source="voice",
+    )
+    history = service.get_history(reply.conversation_id)
+
+    assert "Tarefa sintética para voz" in reply.message
+    assert history[0].role == "user"
+    assert history[0].content == "Organize minha agenda"
 
 
 def test_create_does_not_accept_a_due_date_invented_by_the_model(db):
@@ -1034,7 +1109,7 @@ def test_expired_request_is_reclaimed_and_completed_without_duplicate_user_messa
         conversation_id=conversation.id,
         role="user",
         kind="text",
-        content="Mostre as tarefas",
+            content="Preciso de uma análise geral do andamento.",
         request_id="expired-request-1",
         details_json={},
     )
@@ -1058,7 +1133,7 @@ def test_expired_request_is_reclaimed_and_completed_without_duplicate_user_messa
     service = AssistantService(db, provider, now=_now, request_lease_seconds=120)
 
     reply = service.handle_message(
-        message="Mostre as tarefas",
+            message="Preciso de uma análise geral do andamento.",
         request_id="expired-request-1",
         conversation_id=conversation.id,
     )

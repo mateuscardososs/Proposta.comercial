@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import struct
+import sys
+import wave
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from io import BytesIO
-import json
-import os
 from pathlib import Path
-import struct
-import sys
 from tempfile import TemporaryDirectory
 from time import monotonic
-from typing import Iterator
-import wave
 from zoneinfo import ZoneInfo
-
 
 SCENARIO = (
     "Crie uma tarefa para revisar o relatorio amanha.",
@@ -114,6 +113,54 @@ def run_validation(*, model_dir: Path, ollama_model: str) -> dict[str, object]:
                     ):
                         raise RuntimeError(status_payload["message"])
 
+                    natural_phrase = "Oi, como você pode me ajudar?"
+                    natural_audio = client.post(
+                        "/api/assistant/voice/speech",
+                        json={"text": natural_phrase, "kind": "text"},
+                    )
+                    if natural_audio.status_code != 200:
+                        raise RuntimeError(natural_audio.text)
+                    natural_transcription = client.post(
+                        "/api/assistant/voice/transcriptions",
+                        files={
+                            "audio": (
+                                "natural-conversation.wav",
+                                natural_audio.content,
+                                "audio/wav",
+                            )
+                        },
+                    )
+                    if natural_transcription.status_code != 200:
+                        raise RuntimeError(natural_transcription.text)
+                    natural_text = natural_transcription.json()["text"]
+                    natural_reply_response = client.post(
+                        "/api/assistant/messages",
+                        json={
+                            "message": natural_text,
+                            "request_id": "voice-real-natural-conversation",
+                            "source": "voice",
+                        },
+                    )
+                    if natural_reply_response.status_code != 200:
+                        raise RuntimeError(natural_reply_response.text)
+                    natural_reply = natural_reply_response.json()
+                    natural_speech = client.post(
+                        "/api/assistant/voice/speech",
+                        json={
+                            "text": natural_reply["message"],
+                            "kind": natural_reply["kind"],
+                        },
+                    )
+                    natural_history = client.get(
+                        f"/api/assistant/conversations/{natural_reply['conversation_id']}"
+                    )
+                    natural_history_private = (
+                        natural_history.status_code == 200
+                        and natural_history.json()["messages"][0]["content"]
+                        == "Mensagem por voz"
+                        and natural_text not in natural_history.text
+                    )
+
                     for index, phrase in enumerate(SCENARIO, start=1):
                         tts_started = monotonic()
                         speech = client.post(
@@ -143,6 +190,7 @@ def run_validation(*, model_dir: Path, ollama_model: str) -> dict[str, object]:
                                 "message": transcript,
                                 "request_id": f"voice-real-{index}",
                                 "conversation_id": conversation_id,
+                                "source": "voice",
                             },
                         )
                         assistant_seconds = monotonic() - assistant_started
@@ -200,7 +248,25 @@ def run_validation(*, model_dir: Path, ollama_model: str) -> dict[str, object]:
                             "message": records[-1]["transcript"],
                             "request_id": "voice-real-repeat-confirmation",
                             "conversation_id": conversation_id,
+                            "source": "voice",
                         },
+                    )
+                    history = client.get(
+                        f"/api/assistant/conversations/{conversation_id}"
+                    )
+                    history_payload = history.json()
+                    voice_history_is_private = (
+                        history.status_code == 200
+                        and all(
+                            message["content"] == "Mensagem por voz"
+                            for message in history_payload["messages"]
+                            if message["role"] == "user"
+                            and message.get("details", {}).get("source") == "voice"
+                        )
+                        and all(
+                            record["transcript"] not in history.text
+                            for record in records
+                        )
                     )
 
                     cancel_records = []
@@ -233,6 +299,7 @@ def run_validation(*, model_dir: Path, ollama_model: str) -> dict[str, object]:
                                 "message": cancel_text,
                                 "request_id": f"voice-real-cancel-{index}",
                                 "conversation_id": cancel_conversation_id,
+                                "source": "voice",
                             },
                         )
                         if cancel_reply.status_code != 200:
@@ -275,6 +342,13 @@ def run_validation(*, model_dir: Path, ollama_model: str) -> dict[str, object]:
                             "invalid_audio_rejected": invalid.status_code == 422,
                             "silence_rejected": silence.status_code == 422,
                             "spoken_confirmation_generated": spoken_confirmation.content.startswith(b"RIFF"),
+                            "transcript_not_returned_in_history": voice_history_is_private,
+                            "natural_ollama_reply_synthesized": (
+                                natural_reply["kind"] == "text"
+                                and natural_speech.status_code == 200
+                                and natural_speech.content.startswith(b"RIFF")
+                            ),
+                            "natural_voice_transcript_hidden": natural_history_private,
                         }
                         created_task = {
                             "id": created.id,
@@ -302,6 +376,8 @@ def run_validation(*, model_dir: Path, ollama_model: str) -> dict[str, object]:
         "ollama_model": ollama_model,
         "whisper_model": "Systran/faster-whisper-small (CPU int8)",
         "piper_voice": "pt_BR-faber-medium",
+        "natural_voice_reply_kind": natural_reply["kind"],
+        "natural_voice_reply_synthesized": natural_speech.content.startswith(b"RIFF"),
         "first_audio_seconds": round(first_audio_seconds or 0, 3),
         "records": records,
         "cancel_records": cancel_records,

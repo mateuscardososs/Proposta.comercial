@@ -6,14 +6,14 @@ export class AssistantChatController {
     this.pending = null;
   }
 
-  async send(message, { retry = false } = {}) {
+  async send(message, { retry = false, source = "text" } = {}) {
     const cleanMessage = String(message || "").trim();
     if (!cleanMessage) throw new Error("Digite uma mensagem antes de enviar.");
     if (this.busy) throw new Error("O assistente ainda está processando a solicitação anterior.");
 
     const attempt = retry && this.pending
       ? this.pending
-      : { message: cleanMessage, requestId: this.options.makeRequestId() };
+      : { message: cleanMessage, requestId: this.options.makeRequestId(), source };
     if (!retry) this.options.onUserMessage?.(attempt.message);
     this.pending = attempt;
     this.options.onRetryAvailable?.(false);
@@ -30,6 +30,7 @@ export class AssistantChatController {
           request_id: attempt.requestId,
           conversation_id: this.options.getConversationId?.() ?? null,
           retry: Boolean(retry),
+          source: attempt.source,
         }),
         signal: abortController.signal,
       });
@@ -64,7 +65,7 @@ export class AssistantChatController {
 
   retry() {
     if (!this.pending) throw new Error("Não há uma solicitação para tentar novamente.");
-    return this.send(this.pending.message, { retry: true });
+    return this.send(this.pending.message, { retry: true, source: this.pending.source });
   }
 
   _setBusy(value) {

@@ -61,6 +61,86 @@ test("send gives immediate feedback and always clears busy state", async () => {
 });
 
 
+test("voice messages appear as one normal user bubble when automatically sent", async () => {
+  const sample = harness();
+  await sample.controller.send("frase reconhecida de teste", { source: "voice" });
+
+  assert.deepEqual(sample.events.filter((event) => event[0] === "user"), [
+    ["user", "frase reconhecida de teste"],
+  ]);
+  assert.equal(sample.requests[0].message, "frase reconhecida de teste");
+  assert.equal(sample.requests[0].source, "voice");
+});
+
+
+test("retrying a voice request retains its id and transcript without duplicating the bubble", async () => {
+  let calls = 0;
+  const sample = harness({
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      calls += 1;
+      sample.requests.push(body);
+      return calls === 1
+        ? response({ conversation_id: 7, kind: "error", retryable: true, message: "Tente novamente." })
+        : response({ conversation_id: 7, kind: "text", message: "Pronto." });
+    },
+  });
+  await sample.controller.send("frase de voz sintética", { source: "voice" });
+  await sample.controller.retry();
+
+  assert.equal(sample.requests[0].request_id, sample.requests[1].request_id);
+  assert.equal(sample.requests[1].source, "voice");
+  assert.deepEqual(sample.events.filter((event) => event[0] === "user"), [
+    ["user", "frase de voz sintética"],
+  ]);
+});
+
+
+test("voice history shows the stored transcript as a normal user message", async () => {
+  const oldWindow = globalThis.window;
+  const oldDocument = globalThis.document;
+  const makeElement = (tagName = "div") => ({
+    tagName, children: [], classList: { toggle() {} }, listeners: {}, dataset: {},
+    addEventListener(name, callback) { this.listeners[name] = callback; },
+    append(...items) { this.children.push(...items); },
+    appendChild(item) { this.children.push(item); },
+    remove() { this.removed = true; },
+    focus() {}, requestSubmit() {},
+    querySelectorAll() { return []; },
+  });
+  const elements = new Map([
+    ["assistant-form", makeElement("form")], ["assistant-message", makeElement("textarea")],
+    ["assistant-send", makeElement("button")], ["assistant-history", makeElement("main")],
+    ["assistant-empty", makeElement("div")], ["assistant-status", makeElement("div")],
+    ["assistant-retry", makeElement("button")],
+  ]);
+  globalThis.window = {
+    location: { href: "http://127.0.0.1:8013/web/assistente?conversation_id=22", search: "?conversation_id=22" },
+    history: { replaceState() {} }, crypto: { randomUUID: () => "voice-history" },
+    fetch: async () => response({ conversation_id: 22, messages: [
+      { role: "user", kind: "text", content: "frase reconhecida no histórico", details: { source: "voice" } },
+      { role: "assistant", kind: "text", content: "Resposta audível" },
+    ] }),
+  };
+  globalThis.document = { createElement: makeElement };
+  try {
+    const controller = bootstrapAssistantChat({ getElementById: (id) => elements.get(id) });
+    await controller.loadHistory();
+    const rendered = [];
+    const walk = (element) => {
+      if (element.textContent) rendered.push(element.textContent);
+      for (const child of element.children || []) walk(child);
+    };
+    walk(elements.get("assistant-history"));
+    assert.ok(rendered.includes("Resposta audível"));
+    assert.ok(rendered.includes("frase reconhecida no histórico"));
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.document = oldDocument;
+  }
+});
+
+
 test("service and reminder links returned after confirmation are rendered in history", async () => {
   const oldWindow = globalThis.window;
   const oldDocument = globalThis.document;

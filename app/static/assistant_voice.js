@@ -1,10 +1,11 @@
 export class VoiceSessionController {
   constructor(options) {
     this.options = options;
-    this.silenceMs = options.silenceMs ?? 1800;
+    const minimumSilenceMs = options.minimumSilenceMs ?? 2500;
+    this.silenceMs = Math.max(options.silenceMs ?? minimumSilenceMs, minimumSilenceMs);
     this.speechThreshold = options.speechThreshold ?? 0.018;
     this.maxUtteranceMs = options.maxUtteranceMs ?? 30000;
-    this.idleTimeoutMs = options.idleTimeoutMs ?? 120000;
+    this.resumeDelayMs = options.resumeDelayMs ?? 450;
     this.active = false;
     this.state = "idle";
     this.generation = 0;
@@ -13,12 +14,12 @@ export class VoiceSessionController {
     this.currentAudio = null;
     this.lastReply = null;
     this.lastAudioBlob = null;
-    this.pendingTranscript = null;
     this.heardSpeech = false;
     this.lastSpeechAt = 0;
     this._inFlight = Promise.resolve();
     this._utteranceTimer = 0;
-    this._idleTimer = 0;
+    this._resumeTimer = 0;
+    this._recoveryTimer = 0;
   }
 
   _setState(state) {
@@ -67,12 +68,7 @@ export class VoiceSessionController {
     );
     this.capture.start();
     this._setState("listening");
-    this._utteranceTimer = setTimeout(() => this.finishUtterance(), this.maxUtteranceMs);
-    this._idleTimer = setTimeout(() => {
-      if (!this.active || this.state !== "listening" || this.heardSpeech) return;
-      this.stop();
-      this.options.onError?.(new Error("Conversa encerrada por falta de fala."));
-    }, this.idleTimeoutMs);
+    this._utteranceTimer = setTimeout(() => this._finishUtterance(), this.maxUtteranceMs);
   }
 
   observeLevel(level, now = performance.now()) {
@@ -84,11 +80,11 @@ export class VoiceSessionController {
       return;
     }
     if (this.heardSpeech && now - this.lastSpeechAt >= this.silenceMs) {
-      this._inFlight = this.finishUtterance();
+      this._inFlight = this._finishUtterance();
     }
   }
 
-  finishUtterance() {
+  _finishUtterance() {
     if (!this.active || this.state !== "listening" || !this.capture) {
       return Promise.resolve();
     }
@@ -109,31 +105,12 @@ export class VoiceSessionController {
       if (!this._isCurrent(generation)) return;
       const transcript = await this.options.transcribe(blob);
       if (!this._isCurrent(generation)) return;
-      this.options.onTranscript?.(transcript.text);
-      this.pendingTranscript = transcript.text;
-      // Speech recognition is fallible; review or edit before any intent can
-      // reach a read or write operation.
-      this._setState("reviewing");
-    } catch (error) {
-      if (!this._isCurrent(generation)) return;
-      this._failSession(error instanceof Error ? error : new Error(String(error)));
-    }
-  }
-
-  async submitTranscript(text = this.pendingTranscript) {
-    if (!this.active || this.state !== "reviewing" || !this.pendingTranscript) return;
-    const cleanText = String(text || "").trim();
-    if (!cleanText) {
-      this.options.onError?.(new Error("Revise a transcrição antes de enviar."));
-      return;
-    }
-    const generation = this.generation;
-    this.pendingTranscript = null;
-    this.lastReply = null;
-    this.lastAudioBlob = null;
-    this._setState("processing");
-    try {
-      const reply = await this.options.sendText(cleanText);
+      const text = String(transcript?.text || "").trim();
+      if (!text) throw new Error("Não foi possível reconhecer uma fala. Tente novamente.");
+      this.lastReply = null;
+      this.lastAudioBlob = null;
+      this._setState("processing");
+      const reply = await this.options.sendText(text);
       if (!this._isCurrent(generation)) return;
       this.lastReply = reply;
       this.lastAudioBlob = null;
@@ -141,11 +118,13 @@ export class VoiceSessionController {
       await this._requestSpeech(reply, generation);
     } catch (error) {
       if (!this._isCurrent(generation)) return;
-      this._failSession(error instanceof Error ? error : new Error(String(error)));
+      this._recoverSession(error instanceof Error ? error : new Error(String(error)), generation);
     }
   }
 
   async _requestSpeech(reply, generation) {
+    clearTimeout(this._recoveryTimer);
+    this._recoveryTimer = 0;
     this._setState("speaking");
     try {
       const blob = await this.options.synthesize(reply);
@@ -154,10 +133,9 @@ export class VoiceSessionController {
       this._startPlayback(blob, generation);
     } catch (error) {
       if (!this._isCurrent(generation)) return;
-      this._setState("error");
-      this.options.onError?.(new Error(
-        `A resposta foi concluida, mas o audio falhou: ${error.message || error}`
-      ));
+      this._recoverSession(new Error(
+        `A resposta foi concluida, mas o audio falhou: ${error.message || error}`,
+      ), generation);
     }
   }
 
@@ -172,8 +150,7 @@ export class VoiceSessionController {
       (error) => {
         if (!this._isCurrent(generation) || this.currentAudio !== audio) return;
         this.currentAudio = null;
-        this._setState("error");
-        this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
+        this._recoverSession(error instanceof Error ? error : new Error(String(error)), generation);
       },
     );
   }
@@ -181,7 +158,7 @@ export class VoiceSessionController {
   _afterPlayback(audio, generation) {
     if (!this._isCurrent(generation) || this.currentAudio !== audio) return;
     this.currentAudio = null;
-    this._beginListening(generation);
+    this._scheduleListeningResume(generation);
   }
 
   stopPlayback() {
@@ -189,7 +166,7 @@ export class VoiceSessionController {
     const audio = this.currentAudio;
     this.currentAudio = null;
     audio.stop();
-    if (this.active) this._beginListening(this.generation);
+    if (this.active) this._scheduleListeningResume(this.generation);
   }
 
   async repeatSpeech() {
@@ -209,7 +186,7 @@ export class VoiceSessionController {
   stop() {
     ++this.generation;
     this.active = false;
-    this.pendingTranscript = null;
+    this._clearSessionTimers();
     this.capture?.cancel();
     this.capture = null;
     this.currentAudio?.stop();
@@ -223,6 +200,7 @@ export class VoiceSessionController {
   _failSession(error) {
     ++this.generation;
     this.active = false;
+    this._clearSessionTimers();
     this.capture?.cancel();
     this.capture = null;
     this.currentAudio?.stop();
@@ -236,14 +214,61 @@ export class VoiceSessionController {
 
   _clearListeningTimers() {
     clearTimeout(this._utteranceTimer);
-    clearTimeout(this._idleTimer);
     this._utteranceTimer = 0;
-    this._idleTimer = 0;
+  }
+
+  _clearSessionTimers() {
+    this._clearListeningTimers();
+    clearTimeout(this._resumeTimer);
+    clearTimeout(this._recoveryTimer);
+    this._resumeTimer = 0;
+    this._recoveryTimer = 0;
+  }
+
+  _scheduleListeningResume(generation) {
+    if (!this._isCurrent(generation)) return;
+    clearTimeout(this._resumeTimer);
+    this._resumeTimer = setTimeout(() => {
+      this._resumeTimer = 0;
+      if (!this._isCurrent(generation)) return;
+      try {
+        this._beginListening(generation);
+      } catch (error) {
+        this._recoverSession(error instanceof Error ? error : new Error(String(error)), generation);
+      }
+    }, this.resumeDelayMs);
+  }
+
+  _recoverSession(error, generation) {
+    if (!this._isCurrent(generation)) return;
+    this.capture?.cancel();
+    this.capture = null;
+    this.currentAudio?.stop();
+    this.currentAudio = null;
+    this.options.onLevel?.(0);
+    this._setState("error");
+    this.options.onError?.(error);
+    clearTimeout(this._recoveryTimer);
+    this._recoveryTimer = setTimeout(() => {
+      this._recoveryTimer = 0;
+      this._scheduleListeningResume(generation);
+    }, this.options.errorRecoveryDelayMs ?? 1400);
   }
 
   whenSettled() {
     return this._inFlight;
   }
+}
+
+
+export function voiceInputConstraints() {
+  return {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  };
 }
 
 

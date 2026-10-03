@@ -166,11 +166,13 @@ def _service(
 
 @router.get("/web/assistente", name="web_assistant")
 def assistant_page(request: Request) -> object:
-    return render_template(
+    response = render_template(
         request,
         "assistant.html",
         {"title": "Assistente operacional", "full_width": True},
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.get("/api/assistant/capabilities")
@@ -344,6 +346,7 @@ def assistant_message(
             request_id=payload.request_id,
             conversation_id=payload.conversation_id,
             retry=payload.retry,
+            source=payload.source,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
