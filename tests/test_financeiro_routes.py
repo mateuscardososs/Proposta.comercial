@@ -212,7 +212,7 @@ def test_boards_filter_type_and_mark_only_pending_overdue(db):
     db.commit()
 
     with TestClient(app) as client:
-        response = client.get("/web/contas-a-receber")
+        response = client.get("/web/contas-a-receber?grupo=atrasadas")
 
     assert response.status_code == 200
     assert "Receber atrasado" in response.text
@@ -236,6 +236,56 @@ def test_shared_drag_script_has_rollback_and_error_region():
     assert "originNextSibling" in response.text
     assert 'role="alert"' in response.text
     assert "/api/lancamentos/{id}/move" in response.text
+
+
+def test_financial_board_separates_open_overdue_paid_and_archived_groups(db):
+    from datetime import datetime, timedelta
+
+    from app.models import Lancamento
+
+    today = date.today()
+    db.add_all(
+        [
+            Lancamento(
+                tipo="receber", descricao="Aberta futura", valor=10,
+                data_vencimento=today + timedelta(days=5), status="pendente",
+            ),
+            Lancamento(
+                tipo="receber", descricao="Atrasada vencida", valor=20,
+                data_vencimento=today - timedelta(days=1), status="pendente",
+            ),
+            Lancamento(
+                tipo="receber", descricao="Recebida ativa", valor=30,
+                data_vencimento=today, status="pago", data_pagamento=today,
+            ),
+            Lancamento(
+                tipo="receber", descricao="Recebida arquivada", valor=40,
+                data_vencimento=today - timedelta(days=40), status="pago",
+                data_pagamento=today - timedelta(days=35),
+                arquivado_em=datetime.now(),
+            ),
+        ]
+    )
+    db.commit()
+
+    with TestClient(app) as client:
+        opened = client.get("/web/contas-a-receber?grupo=abertas")
+        overdue = client.get("/web/contas-a-receber?grupo=atrasadas")
+        paid = client.get("/web/contas-a-receber?grupo=pagas")
+        archived = client.get("/web/contas-a-receber?grupo=arquivadas")
+
+    assert "Aberta futura" in opened.text
+    assert "Atrasada vencida" not in opened.text
+    assert "Atrasada vencida" in overdue.text
+    assert "Aberta futura" not in overdue.text
+    assert "Recebida ativa" in paid.text
+    assert "Recebida arquivada" not in paid.text
+    assert "Recebida arquivada" in archived.text
+    assert "Recebida ativa" not in archived.text
+    assert "Em aberto" in opened.text
+    assert "Atrasadas" in overdue.text
+    assert "Pagas/recebidas" in paid.text
+    assert "Arquivadas" in archived.text
 
 
 def test_existing_task_board_uses_shared_ordered_drag_contract():

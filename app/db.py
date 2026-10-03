@@ -81,6 +81,25 @@ def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
             timestamp_type = "TIMESTAMP" if target_engine.dialect.name == "postgresql" else "DATETIME"
             with target_engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE email_sync_states ADD COLUMN activation_at {timestamp_type}"))
+    if "lancamentos" in table_names:
+        lancamento_columns = {
+            str(column["name"]) for column in inspector.get_columns("lancamentos")
+        }
+        if "arquivado_em" not in lancamento_columns:
+            statement = (
+                "ALTER TABLE lancamentos ADD COLUMN IF NOT EXISTS arquivado_em DATE"
+                if target_engine.dialect.name == "postgresql"
+                else "ALTER TABLE lancamentos ADD COLUMN arquivado_em DATE"
+            )
+            with target_engine.begin() as conn:
+                conn.execute(text(statement))
+        with target_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_lancamentos_arquivado_em "
+                    "ON lancamentos (arquivado_em)"
+                )
+            )
     if "proposals" not in inspector.get_table_names():
         return
 
@@ -105,15 +124,20 @@ def ensure_schema_compatibility() -> None:
 
 def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
     tables = set(inspect(target_engine).get_table_names())
-    if not {"service_events", "service_workflow_transitions"}.issubset(tables):
+    service_tables = {"service_events", "service_workflow_transitions"}.intersection(tables)
+    finance_tables = {"lancamento_historicos"}.intersection(tables)
+    if not service_tables and not finance_tables:
         return
 
     if target_engine.dialect.name == "sqlite":
         with target_engine.begin() as conn:
-            for table in ("service_events", "service_workflow_transitions"):
+            for table in service_tables:
                 for operation in ("UPDATE", "DELETE"):
                     trigger = f"{table}_reject_{operation.lower()}"
                     conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'service history is immutable'); END"))
+            for operation in ("UPDATE", "DELETE"):
+                trigger = f"lancamento_historicos_reject_{operation.lower()}"
+                conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON lancamento_historicos BEGIN SELECT RAISE(ABORT, 'financial history is immutable'); END"))
     elif target_engine.dialect.name == "postgresql":
         with target_engine.begin() as conn:
             conn.execute(
@@ -126,22 +150,42 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
                 $$
             """)
             )
-            for table in ("service_events", "service_workflow_transitions"):
+            for table in service_tables:
                 trigger = f"{table}_reject_mutation"
                 conn.execute(text(f"DROP TRIGGER IF EXISTS {trigger} ON {table}"))
                 conn.execute(text(f"CREATE TRIGGER {trigger} BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION reject_service_history_mutation()"))
+            if finance_tables:
+                conn.execute(
+                    text("""
+                    CREATE OR REPLACE FUNCTION reject_financial_history_mutation()
+                    RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RAISE EXCEPTION 'financial history is immutable';
+                    END;
+                    $$
+                """)
+                )
+                conn.execute(text("DROP TRIGGER IF EXISTS lancamento_historicos_reject_mutation ON lancamento_historicos"))
+                conn.execute(text("CREATE TRIGGER lancamento_historicos_reject_mutation BEFORE UPDATE OR DELETE ON lancamento_historicos FOR EACH ROW EXECUTE FUNCTION reject_financial_history_mutation()"))
 
 
 @event.listens_for(Session, "before_flush")
 def _reject_service_history_mutation(session: Session, flush_context, instances) -> None:
-    from .models import ServiceEvent, ServiceWorkflowTransition
+    from .models import LancamentoHistorico, ServiceEvent, ServiceWorkflowTransition
 
     del flush_context, instances
     historical = (ServiceEvent, ServiceWorkflowTransition)
+    if any(isinstance(obj, LancamentoHistorico) for obj in session.deleted):
+        raise ValueError("Histórico financeiro imutável: exclusão não permitida.")
     if any(isinstance(obj, historical) for obj in session.deleted):
         raise ValueError("Historico de servico imutavel: exclusao nao permitida.")
     for obj in session.dirty:
         state = inspect(obj)
+        if isinstance(obj, LancamentoHistorico) and state.persistent and any(
+            state.attrs[column.key].history.has_changes()
+            for column in state.mapper.column_attrs
+        ):
+            raise ValueError("Histórico financeiro imutável: alteração não permitida.")
         if isinstance(obj, historical) and state.persistent and any(state.attrs[column.key].history.has_changes() for column in state.mapper.column_attrs):
             raise ValueError("Historico de servico imutavel: alteracao nao permitida.")
 
