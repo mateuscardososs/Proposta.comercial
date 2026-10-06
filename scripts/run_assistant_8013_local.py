@@ -44,8 +44,18 @@ def _load_local_configuration() -> dict[str, str]:
     return {key: value for key, value in base_values.items() if value is not None}
 
 
-def _select_installed_model(base_values: dict[str, str]) -> str:
+def _select_installed_model(
+    base_values: dict[str, str], provider: str | None = None
+) -> str:
     configured = os.getenv("OLLAMA_MODEL") or base_values.get("OLLAMA_MODEL", "")
+    selected_provider = (
+        provider
+        or os.getenv("LLM_PROVIDER")
+        or base_values.get("LLM_PROVIDER", "gemini")
+    ).strip().casefold()
+    if selected_provider != "ollama":
+        return configured or DEFAULT_OLLAMA_MODEL
+
     installed = installed_ollama_models()
     if configured:
         if configured not in installed:
@@ -78,7 +88,7 @@ def _verify_voice_assets(environment: dict[str, str]) -> None:
 def run() -> None:
     base_values = _load_local_configuration()
     database_url = read_private_database_url(DATABASE_URL_FILE)
-    model = _select_installed_model(base_values)
+    model = _select_installed_model(base_values, provider=os.getenv("LLM_PROVIDER"))
     environment = runtime_environment(
         database_url,
         repository_root=PROJECT_ROOT,

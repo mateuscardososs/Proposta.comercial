@@ -383,6 +383,7 @@ class InboxEmail(Base, TimestampMixin):
     classification_reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
     priority: Mapped[str] = mapped_column(String(20), default="normal", nullable=False)
     explicit_deadline: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    extracted_fields: Mapped[dict[str, object] | None] = mapped_column(JSON, default=dict, nullable=True)
     review_status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -406,6 +407,38 @@ class EmailTaskLink(Base, TimestampMixin):
     action_type: Mapped[str] = mapped_column(String(40), nullable=False)
     task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True)
     task_title_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class EmailActionDraft(Base, TimestampMixin):
+    """Reviewable email-origin proposal; never an operational record by itself."""
+
+    __tablename__ = "email_action_drafts"
+    __table_args__ = (
+        UniqueConstraint("inbox_email_id", "action_type", name="uq_email_action_draft_origin"),
+        CheckConstraint(
+            "action_type IN ('task_customer_quote', 'task_purchase_order', 'task_service_request', 'task_pending_reply', 'payable_entry')",
+            name="ck_email_action_draft_action_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'cancelled', 'linked', 'linked_deleted')",
+            name="ck_email_action_draft_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    inbox_email_id: Mapped[int] = mapped_column(
+        ForeignKey("inbox_emails.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    lancamento_id: Mapped[int | None] = mapped_column(
+        ForeignKey("lancamentos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class EmailSyncState(Base, TimestampMixin):

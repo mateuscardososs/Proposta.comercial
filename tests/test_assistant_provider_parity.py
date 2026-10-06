@@ -133,6 +133,13 @@ def test_gemini_and_ollama_expose_identical_complete_tool_contracts():
     assert set(ollama_tools) == set(gemini_tools) == expected_names
     assert len(expected_names) == 12
     assert all(isinstance(schema, dict) and schema.get("type") == "object" for schema in gemini_tools.values())
+    service_fields = {
+        "equipment", "reported_problem", "analysis", "work_performed", "return_on",
+        "return_task_id", "return_result",
+    }
+    for provider_contract in (ollama_tools, gemini_tools):
+        assert service_fields <= set(provider_contract["registrar_evento_servico"]["properties"])
+        assert "return_tasks_only" in provider_contract["consultar_servicos"]["properties"]
 
 
 @pytest.mark.parametrize("provider_name", PROVIDERS)

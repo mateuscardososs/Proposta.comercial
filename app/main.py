@@ -17,6 +17,7 @@ from app.routers import (
     assistant,
     board,
     clients,
+    email_review,
     financeiro,
     imports,
     pages,
@@ -25,6 +26,7 @@ from app.routers import (
     services,
     users,
 )
+from app.services.email_review_service import backfill_existing_email_drafts
 from app.services.finance_archive_worker import finance_archive_loop
 from app.services.storage_service import ensure_directory
 
@@ -47,6 +49,8 @@ async def on_startup() -> None:
     global _email_sync_task, _finance_archive_task
     Base.metadata.create_all(bind=engine)
     ensure_schema_compatibility()
+    with SessionLocal() as db:
+        backfill_existing_email_drafts(db)
     ensure_directory(settings.output_dir)
     ensure_directory(settings.template_doc_path.parent)
     _ensure_default_user()
@@ -108,4 +112,5 @@ app.include_router(imports.router)
 app.include_router(board.router)
 app.include_router(services.router)
 app.include_router(financeiro.router)
+app.include_router(email_review.router)
 app.include_router(assistant.router)

@@ -174,7 +174,8 @@ test("service and reminder links returned after confirmation are rendered in his
     location: { href: "http://127.0.0.1:8011/web/assistant" },
     history: { replaceState() {} }, crypto: { randomUUID: () => "ui-test" },
     fetch: async () => response({ conversation_id: 8, kind: "success", message: "Pronto.",
-      service_call_id: 7, service_url: "/web/services/7", task_urls: ["/web/board/21/edit", "/web/board/22/edit"] }),
+      service_call_id: 7, service_url: "/web/services/7", proposal_url: "/web/proposals/new?client_id=3",
+      task_urls: ["/web/board/21/edit", "/web/board/22/edit"] }),
   };
   globalThis.document = { createElement: makeElement };
   try {
@@ -188,6 +189,7 @@ test("service and reminder links returned after confirmation are rendered in his
     walk(elements.get("assistant-history"));
     assert.deepEqual(anchors, [
       ["Abrir chamado", "/web/services/7"],
+      ["Preparar proposta", "/web/proposals/new?client_id=3"],
       ["Abrir lembrete 1", "/web/board/21/edit"],
       ["Abrir lembrete 2", "/web/board/22/edit"],
     ]);

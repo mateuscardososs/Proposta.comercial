@@ -4,25 +4,37 @@ from __future__ import annotations
 
 import re
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Callable
 
 from sqlalchemy.orm import Session
 
 from app.assistant.contracts import (
-    AssistantReply, ServiceDraftCorrectionCommand, ServiceEventDraftCommand,
-    ServiceQueryCommand, ServiceReminderDraftCommand,
+    AssistantReply,
+    ServiceDraftCorrectionCommand,
+    ServiceEventDraftCommand,
+    ServiceQueryCommand,
+    ServiceReminderDraftCommand,
 )
 from app.assistant.dates import normalize_text, resolve_date_expression
 from app.assistant.provider import ProviderToolResult
-from app.models import AssistantAction, AssistantMessage, Client, ServiceCall, ServiceEvent
+from app.models import (
+    AssistantAction,
+    AssistantMessage,
+    Client,
+    ServiceCall,
+    ServiceEvent,
+    ServiceTaskLink,
+)
 from app.schemas import (
-    ServiceCallQuery, ServiceEventCorrectionCreate, ServiceEventCreate,
-    ServiceReminderCreate, ServiceStepChange,
+    ServiceCallQuery,
+    ServiceEventCorrectionCreate,
+    ServiceEventCreate,
+    ServiceReminderCreate,
+    ServiceStepChange,
 )
 from app.services import service_record_service
-
 
 EVENT_LABELS = {
     "call_received": "Chamado recebido", "visit_started": "Visita iniciada",
@@ -83,7 +95,8 @@ class AssistantServiceRecordAdapter:
             execution_status=command.execution_status,
             administrative_status=command.administrative_status,
             pending_only=command.pending_only,
-            limit=min(command.limit, 10),
+            return_tasks_only=command.return_tasks_only,
+            limit=command.limit,
         ))
         items = []
         for call in calls:
@@ -98,6 +111,20 @@ class AssistantServiceRecordAdapter:
             ]
             pending = next((step.step_type for step in call.workflow_steps
                             if step.status in {"pending", "waiting_customer", "unknown"}), None)
+            return_tasks = []
+            if command.return_tasks_only:
+                return_tasks = [
+                    {
+                        "task_id": link.task.id,
+                        "title": link.task.titulo,
+                        "due_date": link.task.prazo.isoformat() if link.task.prazo else None,
+                        "status": link.task.status,
+                        "source_event_id": link.service_event_id,
+                    }
+                    for link in call.task_links
+                    if link.task is not None and link.step_type is None
+                    and link.service_event_id is not None and link.task.status != "concluido"
+                ]
             items.append({
                 "id": call.id, "client": call.client.razao_social,
                 "summary": call.summary, "execution_status": call.execution_status,
@@ -112,6 +139,7 @@ class AssistantServiceRecordAdapter:
                 "event_types": sorted({item.event_type for item in effective_events}),
                 "effective_event_count": len(effective_events),
                 "recent_events": recent_events,
+                "return_tasks": return_tasks,
             })
         result = ProviderToolResult(
             tool="consultar_servicos", evidence_id=secrets.token_urlsafe(16),
@@ -119,7 +147,15 @@ class AssistantServiceRecordAdapter:
             payload={"count": len(items), "service_calls": items},
         )
         message = (
-            "; ".join(f"#{item['id']} {item['client']}: {item['summary']}" for item in items)
+            "; ".join(
+                f"#{item['id']} {item['client']}: {item['summary']}" + (
+                    "; retornos: " + ", ".join(
+                        f"tarefa #{return_item['task_id']} {return_item['title']} "
+                        f"(prazo {return_item['due_date'] or 'sem prazo'})"
+                        for return_item in item["return_tasks"]
+                    ) if item["return_tasks"] else ""
+                ) for item in items
+            )
             if items else "Nenhum chamado encontrado para os filtros informados."
         )
         return ServiceQueryExecution(AssistantReply(
@@ -150,6 +186,13 @@ class AssistantServiceRecordAdapter:
                 "event_type": command.event_type or old.event_type,
                 "occurred_on": command.occurred_on or old.occurred_on,
                 "description": command.description or old.description,
+                "equipment": command.equipment or old.equipment,
+                "reported_problem": command.reported_problem or old.reported_problem,
+                "analysis": command.analysis or old.analysis,
+                "work_performed": command.work_performed or old.work_performed,
+                "return_on": command.return_on or old.return_on,
+                "return_task_id": command.return_task_id or old.return_task_id,
+                "return_result": command.return_result or old.return_result,
                 "execution_completed_explicitly": (
                     command.execution_completed_explicitly or old.execution_completed_explicitly
                 ),
@@ -159,6 +202,39 @@ class AssistantServiceRecordAdapter:
         grounded_source = f"{prior_source} {source_message}".strip()
         source = normalize_text(grounded_source)
         event_type = command.event_type
+        return_task_link = None
+        return_result = command.return_result
+        if command.return_task_id is not None or return_result is not None:
+            if command.return_task_id is None or return_result is None:
+                return self._ask(conversation_id, request_id, command, source_message,
+                                 "Qual retorno você verificou e qual foi o resultado?")
+            if command.return_task_id not in self._presented_return_task_ids(conversation_id):
+                return self._ask(conversation_id, request_id, command, source_message,
+                                 "Consulte primeiro os retornos pendentes apresentados nesta conversa.")
+            return_task_link = self.db.query(ServiceTaskLink).filter(
+                ServiceTaskLink.task_id == command.return_task_id,
+                ServiceTaskLink.service_event_id.is_not(None),
+                ServiceTaskLink.step_type.is_(None),
+            ).first()
+            if return_task_link is None or return_task_link.task is None or return_task_link.task.status == "concluido":
+                return self._ask(conversation_id, request_id, command, source_message,
+                                 "Esse retorno já foi encerrado ou não está mais pendente.")
+            if not self._return_result_is_grounded(return_result, source):
+                return self._ask(conversation_id, request_id, command, source_message,
+                                 "A verificação resolveu o problema ou ele continua pendente?")
+            event_type = "note"
+        if event_type == "note" and return_task_link is not None:
+            call = self.db.get(ServiceCall, return_task_link.service_call_id)
+            client = self.db.get(Client, call.client_id) if call is not None else None
+            if client is None:
+                return self._ask(conversation_id, request_id, command, source_message,
+                                 "Não encontrei o cliente vinculado ao retorno.")
+            command = command.model_copy(update={
+                "service_call_id": return_task_link.service_call_id,
+                "client": client.razao_social,
+            })
+        else:
+            client = None
         inspection_only = bool(re.search(r"\b(?:so|somente|apenas)\b.{0,30}\binspec|\bnao\b.{0,20}\bconser", source))
         if inspection_only and "inspec" in source:
             event_type = "inspection"
@@ -175,17 +251,21 @@ class AssistantServiceRecordAdapter:
             event_type = None
         elif event_type == "call_received" and not re.search(r"\b(?:ligou|ligacao|chamado|telefon\w*)\b", source):
             event_type = None
-        elif event_type == "note" and not re.search(r"\b(?:nota|anot\w*|observ\w*|inform\w*)\b", source):
+        elif (event_type == "note" and return_task_link is None
+              and not re.search(r"\b(?:nota|anot\w*|observ\w*|inform\w*)\b", source)):
             event_type = None
         if event_type is None:
             return self._ask(conversation_id, request_id, command, source_message,
                              "A execução terminou, ou foi apenas uma inspeção?")
 
-        client, question = self.resolve_client(command.client)
+        if return_task_link is None:
+            client, question = self.resolve_client(command.client)
+        else:
+            question = None
         if client is None:
             return self._ask(conversation_id, request_id, command, source_message,
                              question or "Qual cliente devo vincular ao atendimento?")
-        if command.client and normalize_text(command.client) not in source:
+        if command.client and return_task_link is None and normalize_text(command.client) not in source:
             return self._ask(conversation_id, request_id, command, source_message,
                              "Qual cliente devo vincular ao atendimento?")
 
@@ -198,7 +278,7 @@ class AssistantServiceRecordAdapter:
             if call is None or call.client_id != client.id or not self._was_presented(conversation_id, call_id, source_message):
                 return self._ask(conversation_id, request_id, command, source_message,
                                  "Qual chamado apresentado nesta conversa devo usar?")
-            if call.administrative_status == "closed":
+            if call.administrative_status == "closed" and return_task_link is None:
                 return self._ask(conversation_id, request_id, command, source_message,
                                  "Esse chamado está encerrado. Você quer registrar uma correção ou abrir outro chamado?")
         elif len(open_calls) == 1:
@@ -227,6 +307,18 @@ class AssistantServiceRecordAdapter:
         description = (command.description or "").strip()
         if not description or normalize_text(description) not in source:
             description = grounded_source
+        work_performed = (
+            command.work_performed
+            if command.work_performed and normalize_text(command.work_performed) in source
+            else None
+        )
+        if (work_performed is None and command.description
+                and normalize_text(command.description) in source
+                and re.search(r"\b(?:consertei|reparei|troquei|substitui|ajustei|limpei|corrigi|reconectei|instalei)\b", source)):
+            work_performed = command.description
+        if event_type == "execution_completed" and work_performed is None:
+            return self._ask(conversation_id, request_id, command, source_message,
+                             "O que foi executado no serviço? Ainda não vou registrar sem esse detalhe.")
         summary = (command.summary or "").strip()
         if call_id is not None:
             summary = self.db.get(ServiceCall, call_id).summary
@@ -243,11 +335,30 @@ class AssistantServiceRecordAdapter:
                     step_type=change.step_type, status=change.status,
                     note=change.note if change.note and normalize_text(change.note) in source else "",
                 ))
+        return_on = None
+        if command.return_on:
+            if normalize_text(command.return_on) not in source:
+                return self._ask(conversation_id, request_id, command, source_message,
+                                 "Qual é a data combinada para o retorno?")
+            try:
+                return_on = resolve_date_expression(command.return_on, today=self.today())
+            except ValueError as exc:
+                return self._ask(conversation_id, request_id, command, source_message, str(exc))
+        elif return_task_link is None and re.search(r"\b(?:preciso|devo|vou|precisamos)\s+(?:voltar|retornar)\b|\b(?:marcar|agendar)\s+retorno\b|\b(?:volto|voltar|retorno|retornar)\b", source):
+            return self._ask(conversation_id, request_id, command, source_message,
+                             "Qual data devo registrar para o retorno?")
         arguments = ServiceEventCreate(
             client_id=client.id, service_call_id=call_id,
             force_new_call=command.force_new_call or "novo chamado" in source or "outro chamado" in source,
             summary=summary, event_type=event_type, occurred_on=occurred_on,
             description=description, step_changes=grounded_changes,
+            equipment=(command.equipment if command.equipment and normalize_text(command.equipment) in source else None),
+            reported_problem=(command.reported_problem if command.reported_problem and normalize_text(command.reported_problem) in source else None),
+            analysis=(command.analysis if command.analysis and normalize_text(command.analysis) in source else None),
+            work_performed=work_performed,
+            return_on=return_on,
+            return_task_id=command.return_task_id if return_task_link is not None else None,
+            return_result=return_result if return_task_link is not None else None,
         ).model_dump(mode="json")
         if previous is not None:
             previous.status = "cancelled"
@@ -269,6 +380,11 @@ class AssistantServiceRecordAdapter:
                                         "in_progress" if event_type == "execution_started" else
                                         self.db.get(ServiceCall, call_id).execution_status if call_id else "not_started"],
             "descricao": description,
+            "equipamento": command.equipment if command.equipment and normalize_text(command.equipment) in source else "Não informado",
+            "problema": command.reported_problem if command.reported_problem and normalize_text(command.reported_problem) in source else "Não informado",
+            "analise": command.analysis if command.analysis and normalize_text(command.analysis) in source else "Não informada",
+            "servico_executado": work_performed or "Não informado",
+            "retorno": return_on.strftime("%d/%m/%Y") if return_on else "Não agendado",
             "etapas": "; ".join(f"{STEP_LABELS[change.step_type]}: {STEP_STATUS_LABELS[change.status]}"
                                  for change in grounded_changes) or "Não informadas",
         }
@@ -277,7 +393,9 @@ class AssistantServiceRecordAdapter:
             confirmation_token=token, fields=fields,
             message=(f"Revise antes de registrar: {fields['evento']} em {fields['data']}; "
                      f"cliente {fields['cliente']}; chamado {fields['chamado']}; "
-                     f"execução {fields['execucao']}."),
+                     f"execução {fields['execucao']}; equipamento {fields['equipamento']}; "
+                     f"problema {fields['problema']}; análise {fields['analise']}; "
+                     f"serviço executado {fields['servico_executado']}; retorno {fields['retorno']}."),
         )
 
     def confirm(self, action: AssistantAction) -> AssistantReply:
@@ -318,14 +436,18 @@ class AssistantServiceRecordAdapter:
             assistant_action_id=action.id, commit=False,
         )
         action.status = "executed"
+        return_task_ids = [int(link.task_id) for link in self.db.query(ServiceTaskLink).filter(
+            ServiceTaskLink.assistant_action_id == action.id,
+            ServiceTaskLink.task_id.is_not(None),
+        ).order_by(ServiceTaskLink.id).all()]
         action.result_json = {
             "service_call_id": result.service_call.id,
             "service_event_id": result.event.id,
+            "return_task_ids": return_task_ids,
         }
         return self.success(action)
 
-    @staticmethod
-    def success(action: AssistantAction, *, correction: bool = False) -> AssistantReply:
+    def success(self, action: AssistantAction, *, correction: bool = False) -> AssistantReply:
         call_id = int(action.result_json.get("service_call_id") or action.arguments_json["service_call_id"])
         if action.action_type == "create_service_reminders":
             task_ids = [int(item) for item in action.result_json.get("task_ids", [])]
@@ -336,12 +458,31 @@ class AssistantServiceRecordAdapter:
                 message=f"Criei {len(task_ids)} lembrete(s) no quadro para o chamado #{call_id}.",
             )
         event_id = int(action.result_json.get("service_event_id") or action.id)
+        return_task_ids = [int(item) for item in action.result_json.get("return_task_ids", [])]
+        completed = action.arguments_json.get("event_type") == "execution_completed"
+        client_id = int(action.arguments_json.get("client_id") or 0)
+        message = (
+            f"Correção registrada como evento #{event_id} no chamado #{call_id}."
+            if correction or action.action_type == "correct_service_event"
+            else f"Evento #{event_id} registrado no chamado #{call_id}."
+        )
+        proposal_url = None
+        if completed:
+            message += (
+                " A execução técnica está concluída; relatório e proposta continuam sendo etapas "
+                "administrativas separadas. Posso ajudar a preparar a proposta no fluxo existente; "
+                "não gerei nem enviei documentos."
+            )
+            if client_id:
+                proposal_url = f"/web/proposals/new?client_id={client_id}"
+        elif action.arguments_json.get("event_type") == "execution_started":
+            message += " A execução segue em andamento; posso preparar um lembrete para verificar depois se foi concluída."
         return AssistantReply(
             conversation_id=action.conversation_id, kind="success", action_id=action.id,
-            message=(f"Correção registrada como evento #{event_id} no chamado #{call_id}."
-                     if correction or action.action_type == "correct_service_event"
-                     else f"Evento #{event_id} registrado no chamado #{call_id}."),
+            message=message,
             service_call_id=call_id, service_url=f"/web/services/{call_id}",
+            task_urls=[f"/web/board/{task_id}/edit" for task_id in return_task_ids],
+            proposal_url=proposal_url,
             fields={"chamado": str(call_id), "evento": str(event_id)},
         )
 
@@ -446,9 +587,19 @@ class AssistantServiceRecordAdapter:
             if resolved is not None:
                 changes["occurred_on"] = resolved.isoformat()
                 changed = True
+        if command.return_on and normalize_text(command.return_on) in normalized:
+            resolved_return = resolve_date_expression(command.return_on, today=self.today())
+            if resolved_return is not None:
+                changes["return_on"] = resolved_return.isoformat()
+                changed = True
         if command.description and normalize_text(command.description) in normalized:
             changes["description"] = command.description
             changed = True
+        for field in ("equipment", "reported_problem", "analysis", "work_performed"):
+            value = getattr(command, field)
+            if value and normalize_text(value) in normalized:
+                changes[field] = value
+                changed = True
         if command.client:
             client, question = self.resolve_client(command.client)
             if question:
@@ -480,7 +631,13 @@ class AssistantServiceRecordAdapter:
                 "completed" if updated.event_type == "execution_completed" else
                 "in_progress" if updated.event_type == "execution_started" else "not_started"
             ],
-            "descricao": updated.description, "etapas": "Mantidas do rascunho anterior",
+            "descricao": updated.description,
+            "equipamento": updated.equipment or "Não informado",
+            "problema": updated.reported_problem or "Não informado",
+            "analise": updated.analysis or "Não informada",
+            "servico_executado": updated.work_performed or "Não informado",
+            "retorno": updated.return_on.strftime("%d/%m/%Y") if updated.return_on else "Não agendado",
+            "etapas": "Mantidas do rascunho anterior",
         }
         return AssistantReply(
             conversation_id=action.conversation_id, kind="confirmation", action_id=replacement.id,
@@ -563,8 +720,35 @@ class AssistantServiceRecordAdapter:
                        if isinstance(item, dict) and isinstance(item.get("id"), int))
         return ids
 
+    def _presented_return_task_ids(self, conversation_id: int) -> set[int]:
+        rows = self.db.query(AssistantMessage).filter(
+            AssistantMessage.conversation_id == conversation_id,
+            AssistantMessage.role == "assistant",
+        ).order_by(AssistantMessage.id.desc()).limit(30).all()
+        ids = set()
+        for row in rows:
+            for call in row.details_json.get("service_calls", []):
+                if not isinstance(call, dict):
+                    continue
+                for task in call.get("return_tasks", []):
+                    if isinstance(task, dict) and isinstance(task.get("task_id"), int):
+                        ids.add(task["task_id"])
+        return ids
+
+    @staticmethod
+    def _return_result_is_grounded(result: str, source: str) -> bool:
+        resolved = re.search(
+            r"\b(?:resolvid\w*|funcionou|normaliz\w*|voltou ao normal|funcionando)\b", source,
+        )
+        pending = re.search(
+            r"\b(?:continua|ainda|nao resolveu|nao funcionou|pendente|precisa voltar)\b", source,
+        )
+        return bool(resolved if result == "resolved" else pending)
+
     def _ask(self, conversation_id, request_id, command, source_message, question, *, call_options=None):
         old = self._clarification(conversation_id)
+        prior_source = str(old.arguments_json.get("source_message", "")) if old else ""
+        retained_source = f"{prior_source} {source_message}".strip()
         if old is not None:
             old.status = "cancelled"
         self.db.add(AssistantAction(
@@ -572,7 +756,7 @@ class AssistantServiceRecordAdapter:
             confirmation_token_hash=self.token_hash(secrets.token_urlsafe(32)),
             action_type="register_service_event", status="needs_clarification",
             arguments_json={"command": command.model_dump(mode="json"),
-                            "source_message": source_message, "call_options": call_options or []},
+                            "source_message": retained_source, "call_options": call_options or []},
             result_json={},
         ))
         self.db.flush()

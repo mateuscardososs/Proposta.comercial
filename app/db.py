@@ -67,13 +67,20 @@ def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
         for column_name, column_type, sqlite_default, postgres_default in (
             ("awaiting_reply", "VARCHAR(20)", "'unknown'", "'unknown'"),
             ("sent_coverage", "BOOLEAN", "0", "FALSE"),
+            ("extracted_fields", "JSON", None, None),
         ):
             if column_name in email_columns:
                 continue
             if target_engine.dialect.name == "postgresql":
-                statement = f"ALTER TABLE inbox_emails ADD COLUMN IF NOT EXISTS {column_name} {column_type} NOT NULL DEFAULT {postgres_default}"
+                if postgres_default is None:
+                    statement = f"ALTER TABLE inbox_emails ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+                else:
+                    statement = f"ALTER TABLE inbox_emails ADD COLUMN IF NOT EXISTS {column_name} {column_type} NOT NULL DEFAULT {postgres_default}"
             else:
-                statement = f"ALTER TABLE inbox_emails ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {sqlite_default}"
+                if sqlite_default is None:
+                    statement = f"ALTER TABLE inbox_emails ADD COLUMN {column_name} {column_type}"
+                else:
+                    statement = f"ALTER TABLE inbox_emails ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {sqlite_default}"
             with target_engine.begin() as conn:
                 conn.execute(text(statement))
     if "email_sync_states" in table_names:

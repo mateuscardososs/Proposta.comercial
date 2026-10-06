@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from app.assistant.dates import normalize_text
 from app.assistant.email.contracts import EmailQuery, EmailQueryResult
 from app.assistant.email.provider import EmailReader
-from app.models import Client, EmailSyncState, EmailTaskLink, InboxEmail
-from app.schemas import TaskCreate
-from app.services.board_service import create_task
+from app.models import EmailSyncState, InboxEmail
+from app.services.email_review_service import ensure_email_action_draft
 
 
 @dataclass(frozen=True)
@@ -46,6 +43,8 @@ class EmailSyncService:
         self.lookback_days = max(1, min(90, lookback_days))
         self.batch_size = max(1, min(100, batch_size))
         self.provider_name = provider_name
+        # Kept for constructor compatibility. Email sync now creates only review drafts;
+        # operational records always require a separate human confirmation.
         self.auto_task_creation_enabled = auto_task_creation_enabled
 
     def sync_once(self, *, now: datetime | None = None) -> SyncSummary:
@@ -106,17 +105,19 @@ class EmailSyncService:
                     stored.classification_reason
                     + "; resposta possivelmente pendente: Entrada e Enviados consultados sem resposta posterior"
                 )[:2000]
+            draft = ensure_email_action_draft(self.db, stored)
+            if draft is not None:
+                if draft.status == "pending":
+                    stored.review_status = "pending"
+                review += 1
+                continue
             if message.destination == "review" or (
                 message.confidence_band != "high" and not waiting_for_reply
             ):
                 stored.review_status = "pending"
                 review += 1
                 continue
-            eligible = message.auto_task_eligible or waiting_for_reply
-            if not eligible:
-                stored.review_status = "classified"
-                continue
-            created += self._ensure_task(result.provider, stored, message)
+            stored.review_status = "classified"
 
         incomplete = (
             result.partial or result.stale or result.state in {"partial", "stale"}
@@ -196,6 +197,7 @@ class EmailSyncService:
             "classification_reason": message.classification_reason[:2000],
             "priority": message.priority,
             "explicit_deadline": message.explicit_deadline,
+            "extracted_fields": message.extracted_fields,
             "last_seen_at": observed_at,
         }
         # Keep thread identifiers opaque; query contracts intentionally expose only references.
@@ -217,154 +219,9 @@ class EmailSyncService:
                     "classification_reason",
                     "priority",
                     "explicit_deadline",
+                    "extracted_fields",
                 ):
                     values.pop(key, None)
             for key, value in values.items():
                 setattr(stored, key, value)
         return stored
-
-    def _ensure_task(self, provider: str, message: InboxEmail, result) -> int:
-        action_type = f"email:{result.category}"
-        existing = (
-            self.db.query(EmailTaskLink)
-            .filter_by(
-                provider=provider,
-                mailbox_key=self.mailbox_key,
-                reference=message.reference,
-                action_type=action_type,
-            )
-            .one_or_none()
-        )
-        if existing:
-            if existing.task_id is None:
-                message.review_status = "task_created_deleted"
-            elif message.review_status != "pending":
-                message.review_status = "task_created"
-            return 0
-        if not self.auto_task_creation_enabled:
-            message.review_status = "pending"
-            return 0
-        if result.category in {
-            "invoice_request", "invoice_received", "accounts_payable",
-            "accounts_receivable", "payment_proof",
-        }:
-            message.review_status = "pending"
-            return 0
-
-        searchable = normalize_text(
-            f"{message.sender}\n{message.subject}\n{message.summary}"
-        )
-        raw_searchable = f"{message.sender}\n{message.subject}\n{message.summary}"
-        generic_name_tokens = {
-            "empresa",
-            "industria",
-            "servicos",
-            "comercio",
-            "ltda",
-            "eireli",
-            "epp",
-            "me",
-            "companhia",
-            "grupo",
-        }
-        clients = self.db.query(Client).order_by(Client.id.asc()).all()
-        exact_matches = [
-            client
-            for client in clients
-            if normalize_text(client.razao_social) in searchable
-        ]
-        matches = exact_matches
-        for client in clients if not exact_matches else []:
-            tokens = {
-                token
-                for token in re.findall(
-                    r"[a-z0-9]+", normalize_text(client.razao_social)
-                )
-                if len(token) >= 3 and token not in generic_name_tokens
-            }
-            if tokens and any(
-                re.search(rf"\b{re.escape(token)}\b", searchable) for token in tokens
-            ):
-                matches.append(client)
-        named_client = re.search(
-            r"\b(?:empresa|cliente)\s+([A-ZÀ-ÿ0-9][A-ZÀ-ÿa-z0-9.-]{1,40})\b",
-            raw_searchable,
-            re.IGNORECASE,
-        )
-        explicit_client_name = bool(
-            named_client
-            and named_client.group(1)
-            not in {
-                "pede",
-                "solicita",
-                "solicitou",
-                "solicitamos",
-                "informa",
-                "informou",
-                "autoriza",
-            }
-        )
-        if len(matches) > 1:
-            message.classification_reason = (
-                message.classification_reason
-                + "; nome de cliente corresponde a mais de um cadastro"
-            )[:2000]
-        client_id = matches[0].id if len(matches) == 1 else None
-        explicit_name = named_client.group(1).strip()[:255] if explicit_client_name and named_client else None
-        if client_id is not None:
-            client_name = matches[0].razao_social
-            link_status = "linked"
-        elif len(matches) > 1:
-            client_name = explicit_name or "Cliente a identificar"
-            link_status = "needs_confirmation"
-        elif explicit_name:
-            client_name = explicit_name
-            link_status = "pending_review"
-            message.classification_reason = (
-                message.classification_reason + "; cliente citado não encontrado no cadastro"
-            )[:2000]
-        else:
-            client_name = "Cliente a identificar"
-            link_status = "pending_review"
-
-        title = f"{client_name}: {result.action_suggested or 'Revisar e-mail'}: {message.subject}"[:255]
-        deadline: date | None = None
-        if result.explicit_deadline:
-            try:
-                day, month, year = (
-                    int(part) for part in result.explicit_deadline.split("/")
-                )
-                deadline = date(year, month, day)
-            except ValueError:
-                deadline = None
-        task = create_task(
-            self.db,
-            TaskCreate(
-                titulo=title,
-                descricao=(
-                    f"Origem: e-mail {provider}, referência {message.reference}. "
-                    f"Classificação: {result.category}. Motivo: {result.classification_reason}"
-                )[:4000],
-                status="a_fazer",
-                client_id=client_id,
-                client_name=client_name,
-                client_link_status=link_status,
-                prazo=deadline,
-            ),
-            commit=False,
-        )
-        self.db.flush()
-        self.db.add(
-            EmailTaskLink(
-                provider=provider,
-                mailbox_key=self.mailbox_key,
-                reference=message.reference,
-                action_type=action_type,
-                task_id=task.id,
-                task_title_snapshot=title,
-            )
-        )
-        message.review_status = "task_created"
-        if link_status in {"pending_review", "needs_confirmation"}:
-            message.review_status = "pending"
-        return 1

@@ -177,7 +177,7 @@ export function bootstrapAssistantChat(root = document) {
       controls.appendChild(link);
       article.appendChild(controls);
     }
-    if (details.service_url || (Array.isArray(details.task_urls) && details.task_urls.length)) {
+    if (details.service_url || details.proposal_url || (Array.isArray(details.task_urls) && details.task_urls.length)) {
       const controls = document.createElement("div");
       controls.className = "assistant-confirm-actions";
       if (details.service_url) {
@@ -185,6 +185,13 @@ export function bootstrapAssistantChat(root = document) {
         link.className = "btn btn-ghost";
         link.href = details.service_url;
         link.textContent = "Abrir chamado";
+        controls.appendChild(link);
+      }
+      if (details.proposal_url) {
+        const link = document.createElement("a");
+        link.className = "btn btn-ghost";
+        link.href = details.proposal_url;
+        link.textContent = "Preparar proposta";
         controls.appendChild(link);
       }
       for (const [index, url] of details.task_urls.entries()) {
