@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     email_sync_batch_size: int = Field(default=30, ge=1, le=100)
     email_sync_mailbox_key: str = "primary"
     today_lookahead_days: int = Field(default=7, ge=1, le=31)
-    llm_provider: Literal["ollama", "gemini"] = "ollama"
+    llm_provider: Literal["ollama", "gemini"] = "gemini"
     gemini_api_key: SecretStr = SecretStr("")
     gemini_model: str = "gemini-3.1-flash-lite"
     gemini_connect_timeout: float = 3.0

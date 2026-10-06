@@ -1,8 +1,8 @@
-# Piloto opcional do provedor Gemini
+# Provedor Gemini e alternativa Ollama
 
 ## Estado e escopo
 
-O assistente mantém Ollama como padrão. `LLM_PROVIDER=gemini` seleciona o adaptador remoto; não há fallback automático. A chamada é feita somente pelo FastAPI em HTTPS para a API Gemini. O adaptador recebe a declaração das ferramentas já autorizadas no aplicativo e devolve uma chamada estruturada, validada pelos mesmos contratos Pydantic e verificações de escopo/grounding usados no fluxo existente. Ele não recebe conexão ao banco nem acesso a shell ou arquivos. Confirmações antes de gravações permanecem obrigatórias. STT (faster-whisper) e TTS (Piper) não dependem do provedor de texto.
+Gemini é o provedor de texto padrão do projeto; Ollama continua disponível por `LLM_PROVIDER=ollama`. O adaptador remoto é chamado somente pelo FastAPI em HTTPS. Recebe as ferramentas já autorizadas pelo aplicativo e retorna chamadas estruturadas validadas pelos mesmos contratos Pydantic e verificações de escopo/grounding do fluxo existente. Não recebe conexão ao banco nem acesso a shell ou arquivos. Confirmações antes de gravações permanecem obrigatórias. STT (faster-whisper) e TTS (Piper) não dependem do provedor de texto.
 
 O modelo padrão configurável no piloto é `gemini-3.1-flash-lite`; em 6 de outubro de 2026 a documentação oficial o listava como opção estável. Confira [a lista de modelos](https://ai.google.dev/gemini-api/docs/models) e [a página oficial de preços e tratamento de dados](https://ai.google.dev/gemini-api/docs/pricing) antes de usar: disponibilidade, preço, quotas e termos mudam. Não interprete essa escolha como aprovação para enviar dados da AD Balanças.
 
@@ -24,10 +24,10 @@ O marcador acima é ilustrativo, não uma chave válida. `.env.example` mantém 
 
 ```bash
 TEST_DIR="$(mktemp -d /tmp/ad-balancas-gemini.XXXXXX)"
-APP_ENV_FILE=.env.gemini.local \\
-DATABASE_URL="sqlite:///$TEST_DIR/assistant.db" \\
-OUTPUT_DIR="$TEST_DIR/output" \\
-APP_HOST=127.0.0.1 APP_PORT=8014 APP_RELOAD=false \\
+APP_ENV_FILE=.env.gemini.local \
+DATABASE_URL="sqlite:///$TEST_DIR/assistant.db" \
+OUTPUT_DIR="$TEST_DIR/output" \
+APP_HOST=127.0.0.1 APP_PORT=8014 APP_RELOAD=false \
 .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8014
 ```
 
@@ -39,9 +39,9 @@ Consulte também [as práticas oficiais de segurança de chaves](https://ai.goog
 
 ## Seleção e retorno ao local
 
-Com uma chave aprovada disponível apenas no ambiente local, selecione `LLM_PROVIDER=gemini` e reinicie somente o processo/instância de teste. O nome é configurado por `GEMINI_MODEL`; limites por `GEMINI_CONNECT_TIMEOUT` e `GEMINI_READ_TIMEOUT`. O identificador inicial é mantido em um único padrão `Settings`, não espalhado pela lógica.
+Com uma chave aprovada disponível apenas no ambiente local, `LLM_PROVIDER=gemini` é o padrão; configure o nome em `GEMINI_MODEL`, e os limites em `GEMINI_CONNECT_TIMEOUT` e `GEMINI_READ_TIMEOUT`.
 
-Para retornar ao comportamento local, defina `LLM_PROVIDER=ollama` (ou remova a variável, pois Ollama é o padrão) e configure `OLLAMA_BASE_URL` e `OLLAMA_MODEL`. O adaptador Gemini não faz fallback se a chave estiver ausente, quota acabar ou API falhar.
+Para retornar ao comportamento local, defina explicitamente `LLM_PROVIDER=ollama` e configure `OLLAMA_BASE_URL` e `OLLAMA_MODEL`. Não remova a variável esperando Ollama: Gemini é o padrão. O adaptador Gemini não faz fallback se a chave estiver ausente, a quota acabar ou a API falhar.
 
 ## Testes
 
