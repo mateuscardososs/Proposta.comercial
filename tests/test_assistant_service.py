@@ -368,7 +368,7 @@ def test_known_task_recommendation_returns_a_grounded_complete_order_without_mod
 
     assert "Enviar relatorio Alfa" in reply.message
     assert "Prazo: 30/09/2026" in reply.message
-    assert "Prioridade sugerida: Alta" in reply.message
+    assert "Prioridade sugerida: Não definida" in reply.message
     assert provider.calls == []
 
 
@@ -483,8 +483,9 @@ def test_agenda_includes_all_open_task_states_and_never_truncates_at_fifty(db):
     assert "sem prazo" in normalize_text(reply.message)
     assert "atrasada" in normalize_text(reply.message)
     assert "Prioridade sugerida" in reply.message
-    assert reply.message.index("Urgência explícita") < reply.message.index("Tarefa atrasada sintética")
     assert reply.message.index("Tarefa atrasada sintética") < reply.message.index("Tarefa para hoje sintética")
+    assert reply.message.index("Tarefa para hoje sintética") < reply.message.index("Tarefa próxima sintética")
+    assert "dependências formais" in reply.message
     assert db.query(Task).count() == original_task_count
 
 

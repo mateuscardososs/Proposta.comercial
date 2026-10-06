@@ -63,22 +63,16 @@ from app.models import (
     AssistantRequest,
     Client,
     Proposal,
-    Task,
     User,
 )
 from app.schemas import TaskCreate
 from app.services import board_service
+from app.services.today_service import TASK_STATUS_LABELS, get_task_day_plan
 
 logger = logging.getLogger(__name__)
 ModelT = TypeVar("ModelT", Client, User)
 
-STATUS_LABELS = {
-    "a_fazer": "A fazer",
-    "em_andamento": "Em andamento",
-    "servico_feito_falta_nota_pedido": "Servico feito — falta nota/pedido",
-    "aguardando_cliente": "Aguardando cliente",
-    "concluido": "Concluido",
-}
+STATUS_LABELS = TASK_STATUS_LABELS
 
 FOLLOW_UP_TOOLS = {
     "responder_conversa",
@@ -873,62 +867,33 @@ class AssistantService:
         conversation_id: int,
         today: date,
     ) -> tuple[AssistantReply, ProviderToolResult]:
-        # Read every board task. The task query tool's normal UI limit is intentionally
-        # not used here: a long-running open task must not disappear from the agenda.
-        tasks = [task for task in board_service.get_tasks(self.db) if task.status != "concluido"]
-        urgency_markers = (
-            "urgente",
-            "prioridade alta",
-            "alta prioridade",
-            "critico",
-            "critica",
-        )
-
-        def priority(task: Task) -> tuple[int, date, int, int, str, str]:
-            due = task.prazo
-            text = normalize_text(f"{task.titulo} {task.descricao}")
-            explicit_urgency = any(marker in text for marker in urgency_markers)
-            if explicit_urgency:
-                return (0, due or date.max, task.ordem, task.id, "Alta", "Marcada como urgente no texto da tarefa.")
-            if due is not None and due < today:
-                return (1, due, task.ordem, task.id, "Alta", f"Prazo vencido em {due:%d/%m/%Y}.")
-            if due == today:
-                return (2, due, task.ordem, task.id, "Alta", "Prazo informado para hoje.")
-            if task.status == "servico_feito_falta_nota_pedido":
-                return (3, due or date.max, task.ordem, task.id, "Alta", "O status indica serviço concluído com etapa documental pendente.")
-            if task.status == "em_andamento":
-                return (4, due or date.max, task.ordem, task.id, "Média", "Execução já iniciada; concluir ou atualizar esta tarefa.")
-            if task.status == "aguardando_cliente":
-                return (7, due or date.max, task.ordem, task.id, "Normal", "A tarefa está aguardando retorno do cliente.")
-            if due is not None:
-                return (5, due, task.ordem, task.id, "Normal", f"Próximo prazo registrado: {due:%d/%m/%Y}.")
-            return (6, date.max, task.ordem, task.id, "Normal", "Tarefa aberta sem prazo registrado.")
-
-        ranked = [(priority(task), task) for task in tasks]
-        ranked.sort(key=lambda item: item[0][:4])
-        due_today_count = sum(task.prazo == today for _, task in ranked)
-        if not ranked:
+        plan = get_task_day_plan(self.db, today=today)
+        if not plan.items:
             message = "Consultei o quadro: não há tarefas abertas."
         else:
             lines = [
-                "Consultei todas as tarefas abertas do quadro.",
-                "Prioridade sugerida, calculada por urgência explícita, status e prazo; não é um campo salvo.",
+                f"Consultei todas as tarefas abertas do quadro e montei um plano para {today:%d/%m/%Y}.",
+                "Sequência e prioridade sugeridas por prazo, urgência explicitamente registrada e situação; prioridade não é um campo salvo.",
             ]
-            if due_today_count == 0:
+            if plan.due_today_count == 0:
                 lines.append("Não há tarefa com prazo hoje; seguem as próximas pendências abertas relevantes.")
-            lines.append("Ordem sugerida, sem inventar horários ou duração:")
-            for position, (rank, task) in enumerate(ranked, start=1):
-                due_label = task.prazo.strftime("%d/%m/%Y") if task.prazo else "sem prazo"
+            lines.append("Ordem sugerida, sem horários ou duração cadastrados:")
+            for position, item in enumerate(plan.items, start=1):
+                due_label = item.due_date.strftime("%d/%m/%Y") if item.due_date else "sem prazo"
                 parts = [
-                    f"{position}. {task.titulo}",
-                    f"Status: {STATUS_LABELS.get(task.status, task.status)}",
-                    f"Prioridade sugerida: {rank[4]} ({rank[5]})",
+                    f"{position}. {item.title}",
+                    f"Status: {item.status_label}",
+                    f"Prioridade sugerida: {item.priority_label}",
                     f"Prazo: {due_label}",
+                    f"Motivo: {item.reason}",
                 ]
-                client_name = task.client.razao_social if task.client else task.client_name
-                if client_name:
-                    parts.append(f"Cliente: {client_name}")
+                if item.client_name:
+                    client = item.client_name
+                    if item.client_link_status == "pending_review":
+                        client += " (vínculo pendente de revisão)"
+                    parts.append(f"Cliente: {client}")
                 lines.append(" — ".join(parts))
+            lines.append("O sistema não registra dependências formais entre tarefas; usei apenas status e etapas representadas no quadro.")
             message = "\n".join(lines)
 
         result = ProviderToolResult(
@@ -942,15 +907,18 @@ class AssistantService:
                 },
                 "tasks": [
                     {
-                        "id": task.id,
-                        "title": task.titulo,
-                        "status": STATUS_LABELS.get(task.status, task.status),
-                        "priority_suggested": rank[4],
-                        "priority_reason": rank[5],
-                        "due_date": task.prazo.isoformat() if task.prazo else None,
-                        "client": task.client.razao_social if task.client else task.client_name,
+                        "id": item.task_id,
+                        "title": item.title,
+                        "status": item.status_label,
+                        "priority_suggested": item.priority_label,
+                        "priority_reason": item.reason,
+                        "due_date": item.due_date.isoformat() if item.due_date else None,
+                        "client": item.client_name,
+                        "client_link_status": item.client_link_status,
+                        "section": item.section_key,
+                        "href": item.href,
                     }
-                    for rank, task in ranked
+                    for item in plan.items
                 ],
             },
         )
