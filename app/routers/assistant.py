@@ -34,6 +34,7 @@ from app.assistant.contracts import (
 from app.assistant.email.imap import YahooImapEmailReader
 from app.assistant.email.provider import EmailReader
 from app.assistant.email.synthetic import SyntheticEmailReader, synthetic_messages
+from app.assistant.gemini import GeminiProvider
 from app.assistant.ollama import OllamaProvider
 from app.assistant.provider import AssistantProvider
 from app.assistant.service import AssistantService
@@ -67,6 +68,15 @@ _synthesis_executor = BoundedVoiceExecutor(name="voice-tts", max_pending=1)
 def get_assistant_provider() -> AssistantProvider:
     settings = get_settings()
     capabilities = _capability_registry(settings)
+    if settings.llm_provider == "gemini":
+        return GeminiProvider(
+            api_key=settings.gemini_api_key.get_secret_value(),
+            model=settings.gemini_model,
+            connect_timeout=settings.gemini_connect_timeout,
+            read_timeout=settings.gemini_read_timeout,
+            max_output_tokens=settings.ollama_max_output_tokens,
+            capabilities=capabilities.provider_context(),
+        )
     return OllamaProvider(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,

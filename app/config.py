@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 VOICE_MODEL_DIR = BASE_DIR / ".models" / "assistant_voice"
@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     email_sync_batch_size: int = Field(default=30, ge=1, le=100)
     email_sync_mailbox_key: str = "primary"
     today_lookahead_days: int = Field(default=7, ge=1, le=31)
+    llm_provider: Literal["ollama", "gemini"] = "ollama"
+    gemini_api_key: SecretStr = SecretStr("")
+    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_connect_timeout: float = 3.0
+    gemini_read_timeout: float = 60.0
     voice_enabled: bool = True
     voice_model_dir: Path = VOICE_MODEL_DIR
     voice_whisper_model: str = "small"
