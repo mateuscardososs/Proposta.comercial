@@ -193,14 +193,15 @@ def test_task_client_text_fields_are_added_without_losing_existing_tasks(tmp_pat
     ensure_schema_compatibility_for_engine(engine)
 
     columns = {column["name"] for column in inspect(engine).get_columns("tasks")}
-    assert {"client_name", "client_link_status"}.issubset(columns)
+    assert {"client_name", "client_link_status", "estimated_duration_minutes"}.issubset(columns)
     with engine.connect() as connection:
         task = connection.execute(text(
-            "SELECT titulo, client_name, client_link_status FROM tasks WHERE id=7"
+            "SELECT titulo, client_name, client_link_status, estimated_duration_minutes FROM tasks WHERE id=7"
         )).one()
     assert task.titulo == "Tarefa preservada"
     assert task.client_name is None
     assert task.client_link_status == "unlinked"
+    assert task.estimated_duration_minutes is None
 
 
 def test_email_sync_activation_boundary_is_added_to_existing_state_table(tmp_path):

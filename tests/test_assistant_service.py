@@ -29,9 +29,11 @@ from app.models import (
     AssistantMessage,
     AssistantRequest,
     Client,
+    DailyScheduleSnapshot,
     Task,
     User,
 )
+from app.models import WorkAvailabilityWindow
 
 
 class QueueProvider:
@@ -442,6 +444,113 @@ def test_known_agenda_intent_queries_the_board_without_model_tool_choice(db, phr
     assert "Pendência sintética" in reply.message
     assert "consultei" in normalize_text(reply.message)
     assert "quadro" in normalize_text(reply.message)
+
+
+def test_voice_daily_plan_uses_schedule_rules_and_does_not_persist_or_change_tasks(db):
+    task = Task(titulo="Visita sintética", status="a_fazer", estimated_duration_minutes=45)
+    db.add(task)
+    db.add(WorkAvailabilityWindow(
+        weekday=2,
+        start_time=datetime.min.time().replace(hour=23),
+        end_time=datetime.min.time().replace(hour=23, minute=59),
+    ))
+    db.commit()
+    before = (task.status, task.prazo, task.updated_at)
+    service = AssistantService(db, provider=None, now=_now)
+
+    reply = service.handle_message(
+        message="Organize minha agenda de hoje",
+        request_id="agenda-timeblocks-voice",
+        source="voice",
+    )
+
+    assert "Visita sintética" in reply.message
+    assert "23:00–23:45" in reply.message
+    assert "45 min (duração estimada informada na tarefa)" in reply.message
+    assert "não salva a agenda" in reply.message
+    assert (task.status, task.prazo, task.updated_at) == before
+    assert db.query(DailyScheduleSnapshot).count() == 0
+
+
+def test_daily_snapshot_requires_confirmation_and_replacement_keeps_history(db):
+    task = Task(titulo="Tarefa sintética", status="a_fazer")
+    db.add(task)
+    service = AssistantService(db, provider=None, now=_now)
+
+    preview = service.handle_message(
+        message="Salve a agenda de hoje",
+        request_id="daily-snapshot-first",
+    )
+    assert preview.kind == "confirmation"
+    assert "Nada será salvo até a confirmação" in preview.message
+    assert db.query(DailyScheduleSnapshot).count() == 0
+    assert db.query(Task).one().status == "a_fazer"
+
+    saved = service.confirm_action(preview.action_id, preview.confirmation_token)
+    repeated = service.confirm_action(preview.action_id, preview.confirmation_token)
+    first = db.query(DailyScheduleSnapshot).one()
+    assert saved.kind == "success"
+    assert repeated.kind == "success"
+    assert "tarefas não foram alteradas" in saved.message
+    assert first.version == 1
+    assert first.snapshot_json["date"] == "2026-09-30"
+    assert db.query(DailyScheduleSnapshot).count() == 1
+
+    replacement = service.handle_message(
+        message="Salve novamente a agenda de hoje",
+        request_id="daily-snapshot-replacement",
+    )
+    assert replacement.kind == "confirmation"
+    assert "versão 2" in replacement.message
+    assert "versão anterior continuará no histórico" in replacement.message
+    assert db.query(DailyScheduleSnapshot).count() == 1
+    service.confirm_action(replacement.action_id, replacement.confirmation_token)
+    snapshots = db.query(DailyScheduleSnapshot).order_by(DailyScheduleSnapshot.version).all()
+    assert [item.version for item in snapshots] == [1, 2]
+    assert db.query(Task).one().status == "a_fazer"
+
+
+def test_cancelled_daily_snapshot_is_not_written(db):
+    service = AssistantService(db, provider=None, now=_now)
+    preview = service.handle_message(message="Salve minha agenda", request_id="daily-snapshot-cancel")
+    cancelled = service.cancel_action(preview.action_id, preview.confirmation_token)
+
+    assert "Nenhum snapshot foi gravado" in cancelled.message
+    assert db.query(DailyScheduleSnapshot).count() == 0
+
+
+def test_new_save_request_does_not_create_a_second_pending_snapshot_action(db):
+    service = AssistantService(db, provider=None, now=_now)
+    preview = service.handle_message(message="Salve a agenda", request_id="daily-pending-one")
+    repeated = service.handle_message(
+        message="Gere e salve novamente a agenda",
+        request_id="daily-pending-two",
+        conversation_id=preview.conversation_id,
+    )
+
+    assert repeated.kind == "clarification"
+    assert "já existe uma prévia" in repeated.message.casefold()
+    assert db.query(AssistantAction).filter_by(action_type="save_daily_schedule").count() == 1
+    assert db.query(DailyScheduleSnapshot).count() == 0
+
+
+def test_assistant_task_duration_is_confirmed_and_saved_as_estimate(db):
+    provider = QueueProvider(
+        TaskCreateCommand(title="Revisar relatório", estimated_duration_minutes=90)
+    )
+    service = AssistantService(db, provider=provider, now=_now)
+    preview = service.handle_message(
+        message="Preciso que preparem uma atividade de revisar relatório",
+        request_id="task-duration-confirmation",
+    )
+
+    assert preview.kind == "confirmation"
+    assert preview.fields["duracao_estimada"] == "90 minutos (estimativa)"
+    assert db.query(Task).count() == 0
+    result = service.confirm_action(preview.action_id, preview.confirmation_token)
+
+    assert result.kind == "success"
+    assert db.query(Task).one().estimated_duration_minutes == 90
 
 
 def test_agenda_includes_all_open_task_states_and_never_truncates_at_fifty(db):
@@ -1334,6 +1443,7 @@ def test_draft_correction_updates_fields_and_invalidates_old_confirmation(db):
         "prazo": "02/10/2026",
         "cliente": "Alfa Industria",
         "responsavel": "Carlos",
+        "duracao_estimada": "Não informada; a agenda usará a estimativa padrão configurada.",
     }
     with pytest.raises(ValueError, match="Token"):
         service.confirm_action(original.action_id, original.confirmation_token)

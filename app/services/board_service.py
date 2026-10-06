@@ -84,6 +84,7 @@ def create_task(db: Session, payload: TaskCreate, *, commit: bool = True) -> Tas
         proposal_id=proposal_id,
         user_id=user_id,
         prazo=payload.prazo,
+        estimated_duration_minutes=payload.estimated_duration_minutes,
         ordem=max_ordem,
     )
     db.add(task)

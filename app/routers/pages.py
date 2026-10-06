@@ -22,6 +22,7 @@ from app.models import (
     User,
 )
 from app.routers.users import hash_password
+from app.services.daily_schedule_service import build_daily_schedule
 from app.schemas import (
     ProposalCreate,
     ProposalItemCreate,
@@ -204,6 +205,13 @@ def index(request: Request, db: Session = Depends(get_db)) -> object:
         lookahead_days=settings.today_lookahead_days,
         timezone=settings.assistant_timezone,
     )
+    suggested_schedule = build_daily_schedule(
+        db,
+        today=today,
+        now=datetime.now(ZoneInfo(settings.assistant_timezone)),
+        timezone=settings.assistant_timezone,
+        task_plan=agenda.task_plan,
+    )
     today_sections = {
         "attention": [item for item in agenda.items if item.rank <= 1][:6],
         "agenda": [item for item in agenda.items if item.source_type == "task"],
@@ -216,6 +224,7 @@ def index(request: Request, db: Session = Depends(get_db)) -> object:
         {
             "summary": summary,
             "agenda": agenda,
+            "suggested_schedule": suggested_schedule,
             "today_sections": today_sections,
             "full_width": True,
             "title": "Hoje",

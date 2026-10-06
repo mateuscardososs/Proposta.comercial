@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -15,6 +15,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -181,11 +182,73 @@ class Task(Base, TimestampMixin):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
 
     prazo: Mapped[date | None] = mapped_column(Date, nullable=True)
+    estimated_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ordem: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     client: Mapped[Client | None] = relationship(back_populates="tasks")
     proposal: Mapped[Proposal | None] = relationship(back_populates="tasks")
     user: Mapped[User | None] = relationship(back_populates="tasks")
+
+
+class DailySchedulePreference(Base, TimestampMixin):
+    __tablename__ = "daily_schedule_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    default_task_duration_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+
+
+class WorkAvailabilityWindow(Base, TimestampMixin):
+    __tablename__ = "work_availability_windows"
+    __table_args__ = (
+        CheckConstraint("weekday >= 0 AND weekday <= 6", name="ck_work_window_weekday"),
+        CheckConstraint("start_time < end_time", name="ck_work_window_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+    label: Mapped[str] = mapped_column(String(120), default="Expediente", nullable=False)
+
+
+class FixedCommitment(Base, TimestampMixin):
+    __tablename__ = "fixed_commitments"
+    __table_args__ = (
+        CheckConstraint(
+            "(occurrence_type = 'weekly' AND weekday IS NOT NULL AND commitment_date IS NULL) OR "
+            "(occurrence_type = 'dated' AND weekday IS NULL AND commitment_date IS NOT NULL)",
+            name="ck_commitment_occurrence_target",
+        ),
+        CheckConstraint("start_time < end_time", name="ck_commitment_positive"),
+        CheckConstraint("weekday IS NULL OR (weekday >= 0 AND weekday <= 6)", name="ck_commitment_weekday"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    occurrence_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    commitment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+
+
+class DailyScheduleSnapshot(Base):
+    __tablename__ = "daily_schedule_snapshots"
+    __table_args__ = (
+        UniqueConstraint("assistant_action_id", name="uq_daily_schedule_action"),
+        UniqueConstraint("idempotency_key", name="uq_daily_schedule_idempotency_key"),
+        UniqueConstraint("schedule_date", "version", name="uq_daily_schedule_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    schedule_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    assistant_action_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_actions.id", ondelete="RESTRICT"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    snapshot_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class AssistantConversation(Base, TimestampMixin):
