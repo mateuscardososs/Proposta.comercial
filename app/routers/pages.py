@@ -10,10 +10,13 @@ from sqlalchemy import and_, func, not_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.assistant.email.classification import OPERATIONAL_CATEGORIES
+from app.assistant.email.contracts import EmailMessageRecord
+from app.assistant.email.extraction import extract_operational_fields
 from app.config import get_settings
 from app.db import get_db
 from app.models import (
     Client,
+    EmailActionDraft,
     EmailSyncState,
     EmailTaskLink,
     InboxEmail,
@@ -22,7 +25,6 @@ from app.models import (
     User,
 )
 from app.routers.users import hash_password
-from app.services.daily_schedule_service import build_daily_schedule
 from app.schemas import (
     ProposalCreate,
     ProposalItemCreate,
@@ -36,6 +38,8 @@ from app.services import (
     proposal_service,
     suggestion_service,
 )
+from app.services.daily_schedule_service import build_daily_schedule
+from app.services.email_review_service import ensure_email_action_draft
 from app.services.today_service import get_today_agenda
 from app.utils.currency import format_brl
 from app.utils.dates import format_date_br
@@ -279,6 +283,19 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
     task_ids_by_reference = {link.reference: link.task_id for link in task_links}
     for message in messages:
         message.task_id = task_ids_by_reference.get(message.reference)
+    action_drafts = (
+        db.query(EmailActionDraft)
+        .filter(EmailActionDraft.inbox_email_id.in_([message.id for message in messages]))
+        .order_by(EmailActionDraft.id.asc())
+        .all()
+        if messages
+        else []
+    )
+    action_drafts_by_email = {
+        draft.inbox_email_id: draft
+        for draft in action_drafts
+        if draft.status in {"pending", "confirmed", "cancelled", "linked", "linked_deleted"}
+    }
     message_summary = {
         "new": base_query.filter(InboxEmail.seen.is_(False)).count(),
         "priority": base_query.filter(InboxEmail.priority.in_(("high", "critical"))).count(),
@@ -340,6 +357,19 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
                 "informational": "Informativo/outros",
                 "other_review": "Revisar classificação",
             },
+            "action_suggestions": {
+                "customer_quote_request": "Preparar tarefa para avaliar o pedido de orçamento, mediante confirmação.",
+                "vendor_quotation": "Conferir a cotação recebida do fornecedor; não cria tarefa automaticamente.",
+                "purchase_order": "Conferir o pedido/ordem de compra e confirmar antes de criar tarefa.",
+                "invoice_request": "Conferir a solicitação; emissão/envio de nota não está disponível.",
+                "invoice_received": "Conferir a nota e validar se corresponde a uma conta a pagar.",
+                "accounts_payable": "Revisar os dados e confirmar antes de criar lançamento a pagar.",
+                "accounts_receivable": "Classificação para revisão; não cria lançamento financeiro.",
+                "payment_proof": "Conferir comprovante; não baixa nem altera pagamento.",
+                "service_request": "Conferir o chamado; criar tarefa somente após confirmação.",
+                "pending_reply": "Verificar manualmente se é necessária uma resposta.",
+            },
+            "action_drafts_by_email": action_drafts_by_email,
             "message_summary": message_summary,
             "sync_state": state,
             "sync_enabled": settings.email_sync_enabled,
@@ -398,9 +428,53 @@ async def message_review(message_id: int, request: Request, db: Session = Depend
         raise HTTPException(status_code=404, detail="Mensagem não encontrada.")
     if category not in allowed:
         raise HTTPException(status_code=400, detail="Categoria inválida.")
+    active_draft = (
+        db.query(EmailActionDraft)
+        .filter(
+            EmailActionDraft.inbox_email_id == message.id,
+            EmailActionDraft.status.in_(("confirmed", "linked")),
+        )
+        .first()
+    )
+    if active_draft:
+        raise HTTPException(status_code=409, detail="A categoria não pode mudar após a ação vinculada.")
+    for draft in (
+        db.query(EmailActionDraft)
+        .filter_by(inbox_email_id=message.id, status="pending")
+        .all()
+    ):
+        draft.status = "cancelled"
     message.category = category
-    message.review_status = "reviewed"
+    message.confidence_band = "high"
+    message.destination = (
+        "task"
+        if category in {"customer_quote_request", "purchase_order", "service_request"}
+        else "classification_only" if category == "informational" else "review"
+    )
+    record = EmailMessageRecord(
+        reference=message.reference,
+        thread_reference=message.thread_reference,
+        folder_role="inbox",
+        sender=message.sender,
+        recipients=(),
+        subject=message.subject,
+        received_at=message.received_at.replace(tzinfo=ZoneInfo(settings.assistant_timezone)),
+        seen=message.seen,
+        text=message.summary,
+    )
+    fields = extract_operational_fields(record, category)
+    if message.extracted_fields is None:
+        fields["uncertainty"] = [
+            *list(fields.get("uncertainty", [])),
+            "O corpo completo não está retido; a prévia usa apenas o resumo já armazenado.",
+        ]
+    # Re-extract against the stored summary only; the full email body is never persisted.
+    message.extracted_fields = fields
     message.classification_reason = (message.classification_reason + "; categoria revisada manualmente")[:2000]
+    message.review_status = "reviewed"
+    draft = ensure_email_action_draft(db, message, reopen_cancelled=True)
+    if draft is not None and draft.status == "pending":
+        message.review_status = "pending"
     db.commit()
     return RedirectResponse(url=request.url_for("web_messages"), status_code=status.HTTP_303_SEE_OTHER)
 

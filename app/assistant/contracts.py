@@ -170,6 +170,7 @@ class ServiceQueryCommand(BaseModel):
     execution_status: ServiceExecutionStatus | None = None
     administrative_status: ServiceAdministrativeStatus | None = None
     pending_only: bool = False
+    return_tasks_only: bool = False
     limit: int = Field(default=20, ge=1, le=50)
 
 
@@ -192,6 +193,13 @@ class ServiceEventDraftCommand(BaseModel):
     event_type: ServiceEventType | None = None
     occurred_on: str | None = Field(default=None, max_length=80)
     description: str | None = Field(default=None, max_length=4000)
+    equipment: str | None = Field(default=None, max_length=255)
+    reported_problem: str | None = Field(default=None, max_length=1000)
+    analysis: str | None = Field(default=None, max_length=1000)
+    work_performed: str | None = Field(default=None, max_length=1000)
+    return_on: str | None = Field(default=None, max_length=80)
+    return_task_id: int | None = Field(default=None, ge=1)
+    return_result: Literal["resolved", "still_pending"] | None = None
     execution_completed_explicitly: bool = False
     step_changes: list[ServiceStepChangeCommand] = Field(default_factory=list, max_length=5)
 
@@ -203,6 +211,11 @@ class ServiceDraftCorrectionCommand(BaseModel):
     event_id: int | None = Field(default=None, ge=1)
     occurred_on: str | None = Field(default=None, max_length=80)
     description: str | None = Field(default=None, max_length=4000)
+    equipment: str | None = Field(default=None, max_length=255)
+    reported_problem: str | None = Field(default=None, max_length=1000)
+    analysis: str | None = Field(default=None, max_length=1000)
+    work_performed: str | None = Field(default=None, max_length=1000)
+    return_on: str | None = Field(default=None, max_length=80)
     event_type: ServiceEventType | None = None
     client: str | None = Field(default=None, max_length=255)
     cancel_step_changes: bool = False
@@ -257,6 +270,7 @@ class AssistantReply(BaseModel):
     task_urls: list[str] = Field(default_factory=list)
     service_call_id: int | None = None
     service_url: str | None = None
+    proposal_url: str | None = None
     fields: dict[str, str] = Field(default_factory=dict)
     email_items: list[dict[str, object]] = Field(default_factory=list)
     consulted_interval: str | None = None

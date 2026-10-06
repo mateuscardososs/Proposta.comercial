@@ -47,6 +47,13 @@ class ServiceEventCreate(BaseModel):
     event_type: ServiceEventType
     occurred_on: date
     description: str = Field(min_length=1, max_length=4000)
+    equipment: str | None = Field(default=None, max_length=255)
+    reported_problem: str | None = Field(default=None, max_length=1000)
+    analysis: str | None = Field(default=None, max_length=1000)
+    work_performed: str | None = Field(default=None, max_length=1000)
+    return_on: date | None = None
+    return_task_id: int | None = Field(default=None, ge=1)
+    return_result: Literal["resolved", "still_pending"] | None = None
     step_changes: list[ServiceStepChange] = Field(default_factory=list, max_length=5)
 
 
@@ -71,6 +78,7 @@ class ServiceCallQuery(BaseModel):
     execution_status: ServiceExecutionStatus | None = None
     administrative_status: ServiceAdministrativeStatus | None = None
     pending_only: bool = False
+    return_tasks_only: bool = False
     limit: int = Field(default=20, ge=1, le=50)
 
 

@@ -22,7 +22,7 @@ Aplicação web interna para organizar o trabalho comercial e operacional da AD 
 
 ### Acompanhamento de serviços
 
-- Registro de um chamado por atendimento, com eventos separados para visita/inspeção, início de execução, conclusão ou correção de informação.
+- Registro de um chamado por atendimento, com eventos append-only separados para visita/inspeção, início de execução, conclusão, verificação de retorno ou correção de informação.
 - Inspeção não equivale a reparo: a execução técnica só fica concluída com evento explícito de conclusão.
 - O histórico de eventos é preservado; correções são acrescentadas ao histórico e a projeção do estado atual é reconstruída de forma determinística.
 - As etapas administrativas têm estados próprios: relatório, proposta, envio da proposta, nota fiscal e recebimento. Assim, serviço tecnicamente concluído pode continuar administrativamente aberto.
@@ -39,14 +39,17 @@ Aplicação web interna para organizar o trabalho comercial e operacional da AD 
 
 - A página **E-mails e mensagens** mostra mensagens consultadas/sincronizadas, separando fila operacional, revisão e informativos, com categoria, evidências resumidas, prioridade sugerida e estado de sincronização.
 - Existe provedor sintético para desenvolvimento e adaptador Yahoo via IMAP, configurável e desativado por padrão. O acesso Yahoo é somente leitura: seleciona pastas em modo read-only e usa leitura que não altera flags; não envia, move nem exclui mensagens.
-- O sincronizador periódico é opcional e tem intervalo configurável. A sincronização inicia em um marco de ativação e usa identificadores estáveis para que releituras/retries não dupliquem mensagens ou tarefas; não é uma importação irrestrita do histórico antigo.
+- O sincronizador periódico é opcional e tem intervalo configurável. A sincronização inicia em um marco de ativação e usa identificadores estáveis para evitar duplicar mensagens e rascunhos em releituras/retries; não é uma importação irrestrita do histórico antigo.
 - A classificação usa evidência do assunto/corpo para distinguir, entre outras categorias, solicitação de orçamento de cliente, cotação de fornecedor, pedido de compra, serviço, cobrança, nota fiscal, comprovante, resposta pendente e informativo. O corpo integral não é persistido no cache da caixa.
-- Somente categorias operacionais elegíveis classificadas com alta confiança podem originar tarefa automática, quando essa opção está habilitada. Tarefas preservam a referência de origem. Contas, pagamentos e notas fiscais ficam para conferência/revisão; não geram baixa, pagamento ou emissão fiscal automática. Mensagens duvidosas são direcionadas à revisão.
+- A sincronização não cria tarefas nem lançamentos financeiros. Pedidos de orçamento (e outras categorias operacionais elegíveis) viram prévias/rascunhos revisáveis; a tarefa só é criada após confirmação explícita e preserva o vínculo idempotente com o e-mail. Cotação comercial enviada por fornecedor não é tratada como pedido de orçamento do cliente.
+- Contas a pagar e notas recebidas podem gerar proposta estruturada de lançamento pendente. Valor, fornecedor, datas e número da nota só são preenchidos com evidência explícita; campos ausentes ou ambíguos ficam destacados, e uma nota recebida exige confirmar que existe obrigação a pagar. Só a confirmação explícita cria o lançamento e seu histórico; nenhuma conta é paga, baixada ou emitida automaticamente. Mensagens incertas permanecem na revisão.
+- A extração determinística guarda apenas campos estruturados e evidências genéricas, não o corpo completo. O Gemini não acessa o banco nem autoriza gravações; ele não é necessário para classificar/extrair esses campos. Ler pelo Yahoo continua somente leitura.
 - O painel não prova cobertura completa de Enviados: a avaliação de resposta pendente depende de essa pasta estar acessível e sincronizada. A marca “lido” é a flag do servidor, não prova que uma pessoa compreendeu a mensagem.
 
 ### Assistente por texto e voz
 
-- A página **Assistente** mantém histórico e entende pedidos em português para consultar o quadro/agenda, consultar serviços e, se o leitor estiver configurado, consultar e-mails. Também prepara tarefas e registros de eventos/lembretes de serviço para confirmação.
+- A página **Assistente** mantém histórico e entende pedidos em português para consultar o quadro/agenda, consultar serviços/retornos e, se o leitor estiver configurado, consultar e-mails. Também prepara tarefas e registros de eventos/lembretes de serviço para confirmação; uma data de retorno confirmada cria uma tarefa vinculada ao evento, sem duplicar em retries.
+- Após conclusão técnica, oferece o fluxo existente para preparar uma proposta em DOCX/PDF. Relatório técnico DOCX ainda não possui modelo/fluxo próprio; documentos nunca são enviados automaticamente.
 - O Gemini é o **interpretador de linguagem padrão** pela API; Ollama local permanece como alternativa selecionável. O provedor transforma fala transcrita ou texto em comando estruturado permitido e ajuda a formular respostas naturais. Nenhum deles acessa o banco diretamente ou grava dados por conta própria.
 - Os pedidos conhecidos de consulta (por exemplo, agenda e algumas intenções de e-mail) também têm roteamento determinístico no backend. Quando necessário, a aplicação consulta os serviços e o banco reais; a resposta fica fundamentada nos resultados dessa solicitação, não em uma afirmação livre do modelo.
 - Existe uma interface `AssistantProvider`, com adaptadores Gemini e Ollama selecionáveis por `LLM_PROVIDER`. Gemini é o padrão; para processamento exclusivamente local, defina `LLM_PROVIDER=ollama`. As regras de domínio e validações ficam na aplicação e não há fallback automático entre provedores. Gemini requer chave, conectividade externa e plano aprovado; o conteúdo enviado à API deixa de ser exclusivamente local.
@@ -238,7 +241,7 @@ Por padrão, o provedor de e-mail e a sincronização ficam desativados. Para us
 APP_ENV_FILE=.env.yahoo.local python run.py
 ```
 
-Habilite a integração apenas quando realmente quiser iniciar consulta/sincronização. Consulte [`docs/assistente/desenho-email.md`](docs/assistente/desenho-email.md) e [`docs/assistente/piloto-email-tarefas.md`](docs/assistente/piloto-email-tarefas.md). O modo deve permanecer somente leitura.
+Habilite a integração apenas quando realmente quiser iniciar consulta/sincronização. Consulte [`docs/assistente/desenho-email.md`](docs/assistente/desenho-email.md), [`docs/assistente/pendencias-revisaveis-email.md`](docs/assistente/pendencias-revisaveis-email.md) e [`docs/assistente/piloto-email-tarefas.md`](docs/assistente/piloto-email-tarefas.md). O modo deve permanecer somente leitura.
 
 ## Execução nativa no Windows
 

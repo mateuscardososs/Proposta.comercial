@@ -201,7 +201,7 @@ def delete_task(db: Session, task_id: int) -> None:
     db.commit()
 
 
-def move_task(db: Session, task_id: int, payload: TaskMove) -> Task:
+def move_task(db: Session, task_id: int, payload: TaskMove, *, commit: bool = True) -> Task:
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
@@ -244,6 +244,7 @@ def move_task(db: Session, task_id: int, payload: TaskMove) -> Task:
 
     task.status = new_status
     task.ordem = new_ordem
-    db.commit()
-    db.refresh(task)
+    if commit:
+        db.commit()
+        db.refresh(task)
     return task

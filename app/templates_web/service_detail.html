@@ -23,6 +23,15 @@
   <p class="card-subtitle">{% if call.execution_status != 'completed' %}A execução ainda está em {{ execution_labels[call.execution_status]|lower }}.{% elif next_step %}Situação atual: {{ status_labels[next_step.status] }}.{% else %}Não há pendências administrativas registradas.{% endif %}</p>
 </section>
 
+{% if call.execution_status == 'completed' and steps['proposal'].status != 'not_applicable' %}
+<section class="card" data-service-document-next-steps>
+  <div class="card-head"><div><span class="eyebrow">Preparação de documentos</span><h2 class="card-title">Execução concluída; etapas administrativas separadas</h2></div></div>
+  <p class="card-subtitle">O relatório técnico e a proposta não foram gerados nem enviados automaticamente. Use o fluxo atual para preparar a proposta em DOCX/PDF; revise os dados antes de salvar.</p>
+  <div class="actions mt-12"><a class="btn btn-primary" href="/web/proposals/new?client_id={{ call.client_id }}">Preparar proposta</a></div>
+  <p class="muted mt-12">Não há neste momento um modelo/fluxo próprio de relatório técnico DOCX no sistema.</p>
+</section>
+{% endif %}
+
 <section class="card" data-service-administration>
   <div class="card-head"><div><h2 class="card-title">Etapas administrativas</h2><p class="card-subtitle">Estado atual de cada etapa.</p></div></div>
   <div class="table-wrap"><table>
@@ -90,12 +99,12 @@
 <section class="card">
   <div class="card-head"><div><h2 class="card-title">Lembretes vinculados</h2></div></div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Lembrete</th><th>Etapa</th><th>Prazo</th></tr></thead>
+    <thead><tr><th>Lembrete</th><th>Vínculo</th><th>Prazo</th><th>Situação</th></tr></thead>
     <tbody>
       {% for link in call.task_links if link.task %}
-      <tr><td><a href="/web/board/{{ link.task.id }}/edit">{{ link.task.titulo }}</a></td><td>{{ step_labels[link.step_type] if link.step_type else '—' }}</td><td>{{ format_date_br(link.task.prazo) if link.task.prazo else '—' }}</td></tr>
+      <tr><td><a href="/web/board/{{ link.task.id }}/edit">{{ link.task.titulo }}</a></td><td>{{ step_labels[link.step_type] if link.step_type else ('Retorno técnico · evento #' ~ link.service_event_id if link.service_event_id else 'Lembrete geral') }}</td><td>{{ format_date_br(link.task.prazo) if link.task.prazo else '—' }}</td><td>{{ link.task.status.replace('_', ' ') }}</td></tr>
       {% else %}
-      <tr><td colspan="3" class="muted">Nenhum lembrete vinculado.</td></tr>
+      <tr><td colspan="4" class="muted">Nenhum lembrete vinculado.</td></tr>
       {% endfor %}
     </tbody>
   </table></div>

@@ -26,7 +26,7 @@ SERVICE_TABLES = {
     "service_workflow_transitions",
     "service_task_links",
 }
-EMAIL_AUTOMATION_TABLES = {"inbox_emails", "email_task_links", "email_sync_states"}
+EMAIL_AUTOMATION_TABLES = {"inbox_emails", "email_task_links", "email_sync_states", "email_action_drafts"}
 
 
 def test_create_all_adds_assistant_tables_without_changing_existing_tasks(tmp_path):
@@ -104,7 +104,7 @@ def test_create_all_adds_email_automation_tables_without_changing_existing_data(
         assert session.scalar(select(Task.titulo)) == "Tarefa operacional preservada"
 
 
-def test_email_projection_adds_reply_coverage_columns_without_losing_rows(tmp_path):
+def test_email_projection_adds_reply_coverage_and_extraction_column_without_losing_rows(tmp_path):
     engine = create_engine(f"sqlite:///{(tmp_path / 'email_projection_old.sqlite3').as_posix()}")
     with engine.begin() as connection:
         connection.execute(
@@ -137,11 +137,14 @@ def test_email_projection_adds_reply_coverage_columns_without_losing_rows(tmp_pa
     ensure_schema_compatibility_for_engine(engine)
 
     columns = {column["name"] for column in inspect(engine).get_columns("inbox_emails")}
-    assert {"awaiting_reply", "sent_coverage"}.issubset(columns)
+    assert {"awaiting_reply", "sent_coverage", "extracted_fields"}.issubset(columns)
     with engine.connect() as connection:
         row = connection.execute(text("SELECT awaiting_reply, sent_coverage FROM inbox_emails WHERE id = 1")).one()
     assert row.awaiting_reply == "unknown"
     assert row.sent_coverage == 0
+
+    ensure_schema_compatibility_for_engine(engine)
+    assert "extracted_fields" in {column["name"] for column in inspect(engine).get_columns("inbox_emails")}
 
 
 def test_financial_archive_column_is_added_to_existing_schema(tmp_path):

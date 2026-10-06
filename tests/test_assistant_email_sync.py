@@ -12,6 +12,7 @@ from app.assistant.email.contracts import (
 from app.assistant.email.sync import EmailSyncService
 from app.models import (
     Client,
+    EmailActionDraft,
     EmailSyncState,
     EmailTaskLink,
     InboxEmail,
@@ -94,21 +95,15 @@ def test_sync_creates_one_linked_task_and_retry_is_idempotent(db):
     first = sync.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
     second = sync.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
 
-    assert first.created_tasks == 1
+    assert first.created_tasks == 0
     assert second.created_tasks == 0
-    assert db.query(Task).count() == 1
-    task = db.query(Task).one()
-    assert task.status == "a_fazer"
+    assert db.query(Task).count() == 0
     assert db.query(InboxEmail).count() == 1
-    assert db.query(EmailTaskLink).count() == 1
-    assert db.query(EmailTaskLink).one().task_id == task.id
-    assert task.client_name == "Cliente a identificar"
-    assert task.client_link_status == "pending_review"
-    assert task.titulo.startswith("Cliente a identificar:")
     assert db.query(InboxEmail).one().review_status == "pending"
+    assert db.query(EmailActionDraft).one().status == "pending"
 
 
-def test_unique_existing_client_is_linked_to_automatic_quote_task(db):
+def test_unique_existing_client_is_retained_in_quote_draft_until_confirmation(db):
     client = Client(razao_social="Cliente Alfa")
     db.add(client)
     db.commit()
@@ -123,11 +118,20 @@ def test_unique_existing_client_is_linked_to_automatic_quote_task(db):
 
     result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
 
-    assert result.created_tasks == 1
+    assert result.created_tasks == 0
+    assert db.query(Task).count() == 0
+    draft = db.query(EmailActionDraft).one()
+    assert draft.payload["client_name"] == client.razao_social
+    from app.services.email_review_service import EmailReviewService
+    task_draft = EmailReviewService(db).confirm_draft(
+        draft.id,
+        {"task_title": "Revisar orçamento Alfa", "client_name": client.razao_social},
+    )
     task = db.query(Task).one()
     assert task.client_id == client.id
     assert task.client_name == client.razao_social
     assert task.client_link_status == "linked"
+    assert task_draft.task_id == task.id
 
 
 @pytest.mark.parametrize(
@@ -137,7 +141,7 @@ def test_unique_existing_client_is_linked_to_automatic_quote_task(db):
         ("Chamado técnico", "Solicitamos atendimento técnico para a balança.", "service_request"),
     ],
 )
-def test_high_confidence_order_and_service_requests_create_review_tasks(
+def test_high_confidence_order_and_service_requests_create_review_drafts(
     db, subject, body, category
 ):
     message = _quote(f"synthetic-{category}").model_copy(
@@ -150,35 +154,49 @@ def test_high_confidence_order_and_service_requests_create_review_tasks(
 
     result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
 
-    assert result.created_tasks == 1
-    assert db.query(Task).one().status == "a_fazer"
-    assert db.query(EmailTaskLink).one().action_type == f"email:{category}"
+    assert result.created_tasks == 0
+    assert db.query(Task).count() == 0
+    draft = db.query(EmailActionDraft).one()
+    assert draft.action_type in {"task_purchase_order", "task_service_request"}
+    assert draft.status == "pending"
 
 
-def test_origin_idempotency_link_survives_task_deletion(db):
-    reader = FakeReader([_quote("synthetic-deleted-link")])
-    sync = EmailSyncService(
-        db,
-        reader,
-        mailbox_key="synthetic-deletion",
-        timezone="America/Recife",
-        auto_task_creation_enabled=True,
+def test_legacy_deleted_task_link_is_not_recreated_by_email_retry(db):
+    email = InboxEmail(
+        provider="synthetic", mailbox_key="synthetic-deletion", reference="synthetic-deleted-link",
+        sender="client@example.test", subject="Pedido de orçamento", received_at=datetime(2026, 10, 2, 10, tzinfo=TEST_ZONE).replace(tzinfo=None),
+        seen=False, summary="Solicito orçamento", category="customer_quote_request", confidence_band="high",
+        destination="task", classification_reason="pedido explícito", priority="normal", review_status="pending",
+        last_seen_at=datetime(2026, 10, 2, 10, tzinfo=TEST_ZONE).replace(tzinfo=None),
     )
-    sync.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
-    task = db.query(Task).one()
-    db.delete(task)
+    db.add(email)
+    db.flush()
+    db.add(EmailTaskLink(
+        provider="synthetic", mailbox_key="synthetic-deletion", reference="synthetic-deleted-link",
+        action_type="email:customer_quote_request", task_id=None, task_title_snapshot="Tarefa removida",
+    ))
     db.commit()
+    reader = FakeReader([_quote("synthetic-deleted-link")])
+    sync = EmailSyncService(db, reader, mailbox_key="synthetic-deletion", timezone="America/Recife")
 
     retry = sync.sync_once(now=datetime(2026, 10, 2, 12, 15, tzinfo=TEST_ZONE))
 
     assert retry.created_tasks == 0
     assert db.query(Task).count() == 0
     assert db.query(EmailTaskLink).one().task_id is None
-    assert db.query(InboxEmail).one().review_status == "task_created_deleted"
+    assert db.query(EmailActionDraft).one().status == "linked_deleted"
 
 
 def test_existing_task_link_remains_authoritative_if_automation_is_later_disabled(db):
     reader = FakeReader([_quote("synthetic-flag-off")])
+    existing = Task(titulo="Tarefa existente", descricao="", status="a_fazer", ordem=0)
+    db.add(existing)
+    db.flush()
+    db.add(EmailTaskLink(
+        provider="synthetic", mailbox_key="synthetic-flag-off", reference="synthetic-flag-off",
+        action_type="email:customer_quote_request", task_id=existing.id, task_title_snapshot=existing.titulo,
+    ))
+    db.commit()
     enabled = EmailSyncService(
         db, reader, mailbox_key="synthetic-flag-off", timezone="America/Recife",
         auto_task_creation_enabled=True,
@@ -193,7 +211,7 @@ def test_existing_task_link_remains_authoritative_if_automation_is_later_disable
 
     assert retry.created_tasks == 0
     assert db.query(Task).count() == 1
-    assert db.query(InboxEmail).one().review_status == "pending"
+    assert db.query(EmailActionDraft).one().status == "linked"
 
 
 def test_manual_classification_survives_repeated_sync(db):
@@ -349,7 +367,7 @@ def test_paused_sync_does_not_query_provider(db):
     assert db.query(InboxEmail).count() == 0
 
 
-def test_similar_customer_names_still_create_unlinked_review_task(db):
+def test_similar_customer_names_stay_unlinked_in_review_draft(db):
     db.add_all(
         [Client(razao_social="Alfa Serviços"), Client(razao_social="Alfa Indústria")]
     )
@@ -371,18 +389,26 @@ def test_similar_customer_names_still_create_unlinked_review_task(db):
 
     result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
 
-    assert result.created_tasks == 1
-    assert db.query(Task).count() == 1
+    assert result.created_tasks == 0
+    assert db.query(Task).count() == 0
+    draft = db.query(EmailActionDraft).one()
+    from app.services.email_review_service import EmailReviewService
+    confirmed = EmailReviewService(db).confirm_draft(
+        draft.id, {"task_title": "Revisar orçamento Alfa", "client_name": "Alfa"}
+    )
     task = db.query(Task).one()
     assert task.client_id is None
     assert task.client_name == "Alfa"
     assert task.client_link_status == "needs_confirmation"
+    assert confirmed.task_id == task.id
     stored = db.query(InboxEmail).one()
-    assert stored.review_status == "pending"
-    assert "mais de um cadastro" in stored.classification_reason
+    assert stored.review_status == "reviewed"
+    assert "mais de um cadastro" in " ".join(
+        db.query(EmailActionDraft).one().payload["extracted_fields"]["uncertainty"]
+    )
 
 
-def test_unknown_explicit_customer_name_creates_unlinked_task_for_review(db):
+def test_unknown_explicit_customer_name_stays_in_review_draft_until_confirmation(db):
     quote = _quote("synthetic-unknown-customer").model_copy(
         update={"subject": "Pedido de orçamento da empresa Ômega"}
     )
@@ -396,20 +422,28 @@ def test_unknown_explicit_customer_name_creates_unlinked_task_for_review(db):
 
     result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
 
-    assert result.created_tasks == 1
-    assert db.query(Task).count() == 1
+    assert result.created_tasks == 0
+    assert db.query(Task).count() == 0
+    draft = db.query(EmailActionDraft).one()
+    assert draft.payload["client_name"] == "Ômega"
+    from app.services.email_review_service import EmailReviewService
+    EmailReviewService(db).confirm_draft(
+        draft.id, {"task_title": "Revisar orçamento Ômega", "client_name": "Ômega"}
+    )
     task = db.query(Task).one()
     assert task.client_id is None
     assert task.client_name == "Ômega"
     assert task.client_link_status == "pending_review"
     stored = db.query(InboxEmail).one()
-    assert stored.review_status == "pending"
-    assert "não encontrado no cadastro" in stored.classification_reason
+    assert stored.review_status == "reviewed"
+    assert "não corresponde claramente" in " ".join(
+        db.query(EmailActionDraft).one().payload["extracted_fields"]["uncertainty"]
+    )
 
     repeated = service.sync_once(now=datetime(2026, 10, 2, 12, 15, tzinfo=TEST_ZONE))
     assert repeated.created_tasks == 0
     assert db.query(Task).count() == 1
-    assert db.query(InboxEmail).one().review_status == "pending"
+    assert db.query(InboxEmail).one().review_status == "reviewed"
 
 
 def test_first_sync_starts_at_activation_and_never_imports_older_messages(db):
@@ -444,7 +478,7 @@ def test_sync_retry_overlap_is_clamped_to_activation(db):
     assert reader.queries[0].start_at == activation
 
 
-def test_pending_reply_task_requires_complete_sent_coverage(db):
+def test_pending_reply_is_classified_but_not_tasked_automatically(db):
     message = _quote("synthetic-pending-reply").model_copy(
         update={
             "subject": "Aguardamos retorno",
@@ -462,7 +496,9 @@ def test_pending_reply_task_requires_complete_sent_coverage(db):
 
     result = service.sync_once(now=datetime(2026, 10, 2, 12, tzinfo=TEST_ZONE))
 
-    assert result.created_tasks == 1
+    assert result.created_tasks == 0
+    assert db.query(Task).count() == 0
+    assert db.query(EmailActionDraft).one().action_type == "task_pending_reply"
     stored = db.query(InboxEmail).one()
     assert stored.category == "pending_reply"
     assert stored.sent_coverage is True

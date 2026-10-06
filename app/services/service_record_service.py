@@ -2,23 +2,33 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.models import (
-    AssistantAction, Client, ServiceCall, ServiceEvent, ServiceTaskLink,
-    ServiceWorkflowStep, ServiceWorkflowTransition, Task,
+    AssistantAction,
+    Client,
+    ServiceCall,
+    ServiceEvent,
+    ServiceTaskLink,
+    ServiceWorkflowStep,
+    ServiceWorkflowTransition,
+    Task,
 )
 from app.schemas import (
-    CorrectableServiceEventType, ServiceCallQuery, ServiceEventCorrectionCreate,
-    ServiceEventCreate, ServiceReminderCreate, TaskCreate,
+    CorrectableServiceEventType,
+    ServiceCallQuery,
+    ServiceEventCorrectionCreate,
+    ServiceEventCreate,
+    ServiceReminderCreate,
+    TaskCreate,
+    TaskMove,
 )
 from app.services import board_service
-
 
 STEP_TYPES = ("report", "proposal", "proposal_sent", "invoice", "receipt")
 TERMINAL_STEP_STATUSES = frozenset(("completed", "not_applicable"))
@@ -70,6 +80,17 @@ def list_service_calls(db: Session, query: ServiceCallQuery) -> list[ServiceCall
         statement = statement.where(ServiceCall.administrative_status == query.administrative_status)
     if query.pending_only:
         statement = statement.where(ServiceCall.administrative_status == "open")
+    if query.return_tasks_only:
+        statement = statement.options(
+            selectinload(ServiceCall.task_links).selectinload(ServiceTaskLink.task),
+        )
+        statement = statement.join(ServiceTaskLink, ServiceTaskLink.service_call_id == ServiceCall.id).join(
+            Task, Task.id == ServiceTaskLink.task_id
+        ).where(
+            ServiceTaskLink.step_type.is_(None),
+            ServiceTaskLink.service_event_id.is_not(None),
+            Task.status != "concluido",
+        ).distinct()
     return list(db.scalars(statement.order_by(ServiceCall.opened_on.desc(), ServiceCall.id.desc()).limit(query.limit)))
 
 
@@ -192,6 +213,12 @@ def register_event(
         raise ValueError("Cliente nao encontrado.")
     if payload.event_type == "correction":
         raise ValueError("Use correct_event para registrar correcoes.")
+    if payload.return_on is not None and (payload.return_task_id is not None or payload.return_result is not None):
+        raise ValueError("Um evento nao pode criar e verificar retorno ao mesmo tempo.")
+    if (payload.return_task_id is None) != (payload.return_result is None):
+        raise ValueError("Resultado de retorno requer a tarefa de retorno vinculada.")
+    if payload.return_task_id is not None and payload.event_type != "note":
+        raise ValueError("A verificacao de retorno deve ser registrada como nota de acompanhamento.")
     if payload.service_call_id is not None and payload.force_new_call:
         raise ValueError("Nao e possivel indicar chamado e forcar novo chamado.")
     step_types = [change.step_type for change in payload.step_changes]
@@ -214,13 +241,52 @@ def register_event(
                 raise ValueError("Chamado nao encontrado.")
             if call.client_id != payload.client_id:
                 raise ValueError("Chamado pertence a outro cliente.")
+        narrative = []
+        for value, label in (
+            (payload.equipment, "Equipamento"),
+            (payload.reported_problem, "Problema relatado"),
+            (payload.analysis, "Análise"),
+            (payload.work_performed, "Serviço executado"),
+        ):
+            if value:
+                narrative.append(f"{label}: {value.strip()}")
+        narrative.append(payload.description)
+        description = "\n".join(narrative)
+        if payload.return_task_id is not None:
+            outcome = "resolvido" if payload.return_result == "resolved" else "continua pendente"
+            description = f"Verificacao de retorno — tarefa #{payload.return_task_id}: {outcome}.\n{description}"
         event = ServiceEvent(
             service_call_id=call.id, assistant_action_id=assistant_action_id,
             conversation_id=conversation_id, event_type=payload.event_type,
-            occurred_on=payload.occurred_on, description=payload.description,
+            occurred_on=payload.occurred_on, description=description,
         )
         db.add(event)
         db.flush()
+        return_task = None
+        if payload.return_on is not None:
+            return_task = board_service.create_task(db, TaskCreate(
+                titulo=f"Retorno técnico — {call.summary}",
+                descricao=f"Retorno previsto para o chamado #{call.id}; evento de origem #{event.id}.",
+                status="a_fazer", client_id=call.client_id, prazo=payload.return_on,
+            ), commit=False)
+            db.add(ServiceTaskLink(
+                service_call_id=call.id, step_type=None, service_event_id=event.id,
+                task_id=return_task.id, assistant_action_id=assistant_action_id,
+            ))
+        if payload.return_task_id is not None:
+            link = db.scalar(select(ServiceTaskLink).where(
+                ServiceTaskLink.service_call_id == call.id,
+                ServiceTaskLink.task_id == payload.return_task_id,
+                ServiceTaskLink.step_type.is_(None),
+                ServiceTaskLink.service_event_id.is_not(None),
+            ))
+            if link is None or link.task is None or link.task.status == "concluido":
+                raise ValueError("Tarefa de retorno pendente nao encontrada para este chamado.")
+            if payload.return_result == "resolved":
+                completed_order = db.query(Task).filter(Task.status == "concluido").count()
+                board_service.move_task(db, link.task.id, TaskMove(
+                    status="concluido", ordem=completed_order,
+                ), commit=False)
         transitions = []
         for change in payload.step_changes:
             step = db.scalar(select(ServiceWorkflowStep).where(

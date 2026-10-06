@@ -62,3 +62,22 @@ Roteiro sugerido:
 7. Cancelar um rascunho e conferir que nada foi persistido.
 
 Para voz, repetir exatamente os mesmos enunciados usando o microfone; STT apenas encaminha a transcrição ao mesmo endpoint textual, sem caminho paralelo de gravação. A qualidade por microfone e sintetizador depende de teste humano.
+
+## Extensão do ciclo de acompanhamento — 2026-10-06
+
+Esta extensão reutiliza `ServiceCall`, `ServiceEvent`, `ServiceTaskLink`, `Task`, `AssistantAction`, os adaptadores Gemini/Ollama e as páginas existentes. Os campos de equipamento, problema, análise e trabalho executado são validados contra o relato e ficam como narrativa rotulada no evento append-only; não foi adicionada tabela/coluna e não há migração de banco.
+
+Uma data de retorno explícita aparece no rascunho como data absoluta. A mesma confirmação grava o evento e cria, via `board_service`, uma tarefa de retorno ligada ao evento. A consulta de retornos usa somente essas ligações explícitas; o resultado de verificação exige que a tarefa tenha sido apresentada na conversa e gera outro evento. A tarefa só muda para concluída após confirmação do resultado “resolvido”.
+
+Após conclusão técnica, o Assistente oferece a rota existente de criação de proposta para o cliente; o formulário continua responsável pela conferência e geração DOCX/PDF. Não há template/fluxo próprio de relatório técnico DOCX; a interface declara essa limitação. Nada é enviado ou gerado automaticamente.
+
+### Evidência executada nesta extensão
+
+- Testes Python com SQLite temporário e dados sintéticos: **609 passed, 11 skipped** na suíte completa; skips são testes opt-in. Cobrem descrição estruturada, inspeção sem conclusão, execução, ambiguidade, data de retorno, consulta sem escrita, confirmação do resultado, cancelamento/idempotência e paridade dos contratos de ferramenta.
+- Testes JavaScript do projeto: **34 passed**; a resposta de conclusão renderiza o link para o fluxo existente de proposta.
+- `compileall` e `git diff --check` executados após a implementação.
+- Não houve mudança de schema; portanto, não foi aplicada nem necessária migração PostgreSQL. A instância principal conectou ao PostgreSQL `propostas_db` existente, saudável em loopback.
+- 8013 foi iniciada no mesmo endereço (`127.0.0.1:8013`), PID observado **73503**. Health check, Assistente, Serviços, Propostas e endpoints de status de voz/capacidades retornaram HTTP 200. Voz local informou STT/TTS disponíveis. A porta 8000 não foi tocada.
+- O provedor configurado na execução é Gemini, modelo `gemini-3.1-flash-lite`; a chave foi verificada apenas como presente e não foi impressa. Não foi feita chamada do Assistente contra registros operacionais durante esta validação. O smoke real isolado com texto sintético terminou com falha de conexão à API (exit code 1); não é contado como validação bem-sucedida do provedor e não houve fallback para Ollama.
+- O worker Yahoo foi temporariamente pausado no banco antes da inicialização para que a tentativa automática inicial retornasse “paused” sem consultar a caixa; seu estado anterior foi restaurado, o marco `2026-10-02T20:43:34.394255` e o intervalo de 900 segundos foram preservados. Não houve sincronização manual nem inspeção de conteúdo real.
+- Validação manual da conversa por voz e navegação em navegador não foi feita; os testes de voz são automatizados e o status da API foi verificado por HTTP.

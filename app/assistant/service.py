@@ -270,6 +270,21 @@ class AssistantService:
                 )
                 tool_results.append(task_result)
                 executed_tools.append("consultar_tarefas")
+            if command is None and reply is None and self._direct_service_return_query(clean_message):
+                if self.provider is None:
+                    raise ProviderUnavailableError("Provedor nao configurado.")
+                execution = self.service_records.execute_query(
+                    conversation.id, ServiceQueryCommand(return_tasks_only=True, limit=50),
+                )
+                if execution.result is not None:
+                    tool_results.append(execution.result)
+                    executed_tools.append("consultar_servicos")
+                command = self._interpret_provider(
+                    self._provider_messages(conversation.id), today=current_date,
+                    timezone=self.timezone_name, tool_results=tuple(tool_results),
+                    pending_action=self._provider_pending_action(conversation.id),
+                    allowed_tools={"responder_conversa"}, traces=provider_inferences,
+                )
             if command is None and reply is None:
                 if self.provider is None:
                     raise ProviderUnavailableError("Provedor nao configurado.")
@@ -870,6 +885,21 @@ class AssistantService:
             (has_agenda_scope and (asks_for_agenda or asks_to_consult))
             or (has_task_scope and (asks_for_agenda or asks_to_consult or asks_about_today))
             or (asks_about_today and asks_for_agenda)
+        )
+
+    @staticmethod
+    def _direct_service_return_query(message: str) -> bool:
+        normalized = normalize_text(message)
+        asks_for_list = bool(re.search(r"\b(?:quais|tem|existe|liste|listar|mostre|mostrar|preciso saber|o que)\b", normalized))
+        return asks_for_list and bool(
+            re.search(
+                r"\b(?:retorno|retornos)\b.{0,80}\b(?:servico|servicos|chamado|chamados|pendente|precis|agendad)",
+                normalized,
+            )
+            or re.search(
+                r"\b(?:servico|servicos|chamado|chamados)\b.{0,80}\b(?:retorno|retornos|voltar|retornar)\b",
+                normalized,
+            )
         )
 
     def _execute_task_agenda(
