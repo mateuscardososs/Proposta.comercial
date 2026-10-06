@@ -41,12 +41,14 @@ from app.assistant.evidence import (
 )
 from app.assistant.provider import (
     AssistantProvider,
+    ProviderAuthenticationError,
     ProviderConnectionError,
     ProviderInferenceTrace,
     ProviderInterpretation,
     ProviderMessage,
     ProviderModelUnavailableError,
     ProviderPendingAction,
+    ProviderRateLimitError,
     ProviderResponseError,
     ProviderTimeoutError,
     ProviderToolResult,
@@ -485,44 +487,70 @@ class AssistantService:
                     )
             else:  # pragma: no cover - protected by the provider contract
                 raise ProviderResponseError("Comando desconhecido.")
-        except ProviderModelUnavailableError:
+        except ProviderAuthenticationError as exc:
+            reply = AssistantReply(
+                conversation_id=conversation.id,
+                kind="error",
+                retryable=False,
+                message=str(exc),
+            )
+        except ProviderRateLimitError as exc:
             reply = AssistantReply(
                 conversation_id=conversation.id,
                 kind="error",
                 retryable=True,
-                message=(
-                    "O serviço Ollama está ativo, mas o modelo configurado não está instalado localmente. "
-                    "Confira OLLAMA_MODEL e os modelos disponíveis."
+                message=str(exc),
+            )
+        except ProviderModelUnavailableError as exc:
+            reply = AssistantReply(
+                conversation_id=conversation.id,
+                kind="error",
+                retryable=True,
+                message=self._provider_error_message(
+                    exc,
+                    ollama=(
+                        "O serviço Ollama está ativo, mas o modelo configurado não está instalado localmente. "
+                        "Confira OLLAMA_MODEL e os modelos disponíveis."
+                    ),
                 ),
             )
-        except ProviderTimeoutError:
+        except ProviderTimeoutError as exc:
             reply = AssistantReply(
                 conversation_id=conversation.id,
                 kind="error",
                 retryable=True,
-                message=(
-                    "O Ollama excedeu o tempo limite desta solicitação. Nada foi alterado; "
-                    "você pode tentar novamente."
+                message=self._provider_error_message(
+                    exc,
+                    ollama=(
+                        "O Ollama excedeu o tempo limite desta solicitação. Nada foi alterado; "
+                        "você pode tentar novamente."
+                    ),
                 ),
             )
-        except ProviderConnectionError:
+        except ProviderConnectionError as exc:
             reply = AssistantReply(
                 conversation_id=conversation.id,
                 kind="error",
                 retryable=True,
-                message=(
-                    "Não foi possível alcançar o serviço Ollama local. Verifique se ele está iniciado "
-                    "no endereço configurado; nenhuma ação foi concluída."
+                message=self._provider_error_message(
+                    exc,
+                    ollama=(
+                        "Não foi possível alcançar o serviço Ollama local. Verifique se ele está iniciado "
+                        "no endereço configurado; nenhuma ação foi concluída."
+                    ),
                 ),
             )
-        except ProviderUnavailableError:
+        except ProviderUnavailableError as exc:
             reply = AssistantReply(
                 conversation_id=conversation.id,
                 kind="error",
                 retryable=True,
-                message=(
-                    "O serviço Ollama local não está disponível. Nenhuma ação foi concluída; "
-                    "confira a configuração local."
+                message=self._provider_error_message(
+                    exc,
+                    ollama=(
+                        "O serviço Ollama local não está disponível. Nenhuma ação foi concluída; "
+                        "confira a configuração local."
+                    ),
                 ),
             )
         except ProviderResponseError as exc:
@@ -536,9 +564,12 @@ class AssistantService:
                     "excluir ou alterar dados fora do quadro."
                 )
             else:
-                message = (
-                    "O Ollama respondeu fora do formato esperado. "
-                    "Nada foi alterado; reformule a mensagem e tente novamente."
+                message = self._provider_error_message(
+                    exc,
+                    ollama=(
+                        "O Ollama respondeu fora do formato esperado. "
+                        "Nada foi alterado; reformule a mensagem e tente novamente."
+                    ),
                 )
             reply = AssistantReply(
                 conversation_id=conversation.id,
@@ -554,6 +585,12 @@ class AssistantService:
             provider_inferences=provider_inferences,
             executed_tools=executed_tools,
         )
+
+    def _provider_error_message(self, exc: Exception, *, ollama: str) -> str:
+        if getattr(self.provider, "display_name", "Ollama") == "Gemini":
+            # Gemini adapter errors are deliberately mapped to safe, user-facing messages.
+            return str(exc)
+        return ollama
 
     def _interpret_provider(
         self,

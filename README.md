@@ -85,7 +85,23 @@ Exemplos do que se pode pedir:
 
 #### Configuração do interpretador
 
-O modelo não é fixado pelo código. Configure o nome exato que `ollama list` mostrar:
+O provedor padrão continua sendo Ollama local. Como alternativa explícita, o backend pode usar a API Gemini; isso envia ao Google o texto de conversa e os dados contextuais estritamente necessários que o assistente já preparou. A seleção é feita por `LLM_PROVIDER` e não altera a lógica determinística, as confirmações, os serviços de banco nem as ferramentas permitidas. STT e TTS continuam independentes e locais. Não há fallback automático entre provedores.
+
+O modelo não é fixado em vários pontos do código. Para Ollama, configure o nome exato que `ollama list` mostrar. Para o Gemini, configure `GEMINI_MODEL`; o valor inicial de referência é `gemini-3.1-flash-lite`, definido em um único padrão de configuração e sobrescrevível por ambiente. Antes de enviar dados reais da empresa, gere uma chave nova (a chave anteriormente colada deve ser considerada comprometida), confirme que a conta/projeto e o plano têm termos de tratamento de dados adequados ao uso empresarial e aprove o envio de conteúdo ao serviço externo. Não use plano gratuito com dados reais sem verificar seus termos: a documentação atual informa tratamento diferente de dados entre níveis. O smoke test, se usado, envia somente uma pergunta sintética.
+
+| Variável | Padrão | Para que serve |
+|---|---|---|
+| `LLM_PROVIDER` | `ollama` | Provedor de interpretação: `ollama` ou `gemini`. Valor inválido é rejeitado na configuração. |
+| `GEMINI_API_KEY` | vazio | Chave lida no backend e enviada no cabeçalho HTTPS; nunca é retornada à interface ou registrada nos logs. |
+| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Modelo configurável. Consulte a lista oficial antes de atualizar o identificador. |
+| `GEMINI_CONNECT_TIMEOUT` | `3` segundos | Limite para conexão à API Gemini. |
+| `GEMINI_READ_TIMEOUT` | `60` segundos | Limite de espera pela API. |
+
+Para executar o piloto remoto, guarde a chave nova em `.env.gemini.local` (explicitamente ignorado pelo Git) ou em um gerenciador de segredos do sistema. Edite o arquivo local com um editor, sem colocar o valor em comandos, histórico do shell ou argumentos de processo; `.env.example` contém somente valor vazio e não deve receber a chave. Se a chave comprometida ainda estiver ativa, revogue-a no console Google. Selecione `LLM_PROVIDER=gemini` para iniciar o processo, apontando `APP_ENV_FILE=.env.gemini.local`. Para retornar ao modo local, remova essa seleção ou defina `LLM_PROVIDER=ollama`; configure `OLLAMA_BASE_URL` e `OLLAMA_MODEL` com o serviço/modelo local. Ausência de chave, autorização inválida, modelo ausente, cota, timeout e resposta inválida são apresentados como erros, sem fallback silencioso.
+
+O modelo Gemini usado como referência foi escolhido por ser apresentado pela documentação oficial como opção estável, leve e de baixo custo relativo; disponibilidade, preço, limites e termos podem mudar. Consulte [modelos oficiais](https://ai.google.dev/gemini-api/docs/models), [preços e níveis de dados](https://ai.google.dev/gemini-api/docs/pricing) e [boas práticas para chaves](https://ai.google.dev/gemini-api/docs/api-key) antes de cada adoção. O adaptador chama a API pelo backend via HTTPS, envia a declaração das ferramentas autorizadas e valida os argumentos novamente nos contratos Pydantic existentes; o modelo não recebe acesso ao banco, shell ou sistema de arquivos.
+
+Para Ollama, configure o endereço e o modelo local:
 
 | Variável | Padrão | Para que serve |
 |---|---|---|

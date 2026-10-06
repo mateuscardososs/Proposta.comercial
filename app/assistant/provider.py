@@ -50,6 +50,7 @@ class ProviderInferenceTrace(BaseModel):
     outcome: str | None = Field(default=None, max_length=80)
     repair_reason: str | None = Field(default=None, max_length=80)
     grounding_adjustment: str | None = Field(default=None, max_length=80)
+    provider: Literal["ollama", "gemini"] = "ollama"
 
 
 class ProviderInterpretation(BaseModel):
@@ -71,6 +72,14 @@ class ProviderModelUnavailableError(ProviderUnavailableError):
 
 class ProviderTimeoutError(ProviderUnavailableError):
     """A request to the local provider exceeded its configured timeout."""
+
+
+class ProviderAuthenticationError(ProviderUnavailableError):
+    """The remote provider rejected its credential or account authorization."""
+
+
+class ProviderRateLimitError(ProviderUnavailableError):
+    """The provider rejected a request because of quota or rate limits."""
 
 
 class ProviderResponseError(RuntimeError):
