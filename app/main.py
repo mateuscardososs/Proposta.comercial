@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.db import Base, SessionLocal, engine, ensure_schema_compatibility
 from app.models import User
 from app.routers import (
+    agenda,
     assistant,
     board,
     clients,
@@ -99,6 +100,7 @@ app.mount("/output", StaticFiles(directory=str(settings.output_dir)), name="outp
 
 app.include_router(proposal_files.router)
 app.include_router(pages.router)
+app.include_router(agenda.router)
 app.include_router(clients.router)
 app.include_router(users.router)
 app.include_router(proposals.router)

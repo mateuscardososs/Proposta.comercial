@@ -94,6 +94,7 @@ async def board_new_submit(request: Request, db: Session = Depends(get_db)) -> R
         proposal_id_val = form.get("proposal_id")
         user_id_val = form.get("user_id")
         prazo_val = form.get("prazo")
+        duration_val = form.get("estimated_duration_minutes")
 
         payload = TaskCreate(
             titulo=str(form.get("titulo", "")).strip(),
@@ -104,6 +105,7 @@ async def board_new_submit(request: Request, db: Session = Depends(get_db)) -> R
             proposal_id=int(proposal_id_val) if proposal_id_val else None,
             user_id=int(user_id_val) if user_id_val else None,
             prazo=datetime.strptime(str(prazo_val), "%Y-%m-%d").date() if prazo_val else None,
+            estimated_duration_minutes=int(duration_val) if duration_val else None,
         )
         if not payload.titulo:
             raise ValueError("Título é obrigatório")
@@ -147,6 +149,7 @@ async def board_edit_submit(task_id: int, request: Request, db: Session = Depend
         proposal_id_val = form.get("proposal_id")
         user_id_val = form.get("user_id")
         prazo_val = form.get("prazo")
+        duration_val = form.get("estimated_duration_minutes")
 
         payload = TaskUpdate(
             titulo=str(form.get("titulo", "")).strip(),
@@ -157,6 +160,7 @@ async def board_edit_submit(task_id: int, request: Request, db: Session = Depend
             proposal_id=int(proposal_id_val) if proposal_id_val else None,
             user_id=int(user_id_val) if user_id_val else None,
             prazo=datetime.strptime(str(prazo_val), "%Y-%m-%d").date() if prazo_val else None,
+            estimated_duration_minutes=int(duration_val) if duration_val else None,
         )
 
         board_service.update_task(db, task_id, payload)

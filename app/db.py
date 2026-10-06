@@ -53,6 +53,7 @@ def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
         task_additions = (
             ("client_name", "VARCHAR(255)", None),
             ("client_link_status", "VARCHAR(30)", "'unlinked'"),
+            ("estimated_duration_minutes", "INTEGER", None),
         )
         for column_name, column_type, default_value in task_additions:
             if column_name in task_columns:
@@ -126,7 +127,8 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
     tables = set(inspect(target_engine).get_table_names())
     service_tables = {"service_events", "service_workflow_transitions"}.intersection(tables)
     finance_tables = {"lancamento_historicos"}.intersection(tables)
-    if not service_tables and not finance_tables:
+    schedule_tables = {"daily_schedule_snapshots"}.intersection(tables)
+    if not service_tables and not finance_tables and not schedule_tables:
         return
 
     if target_engine.dialect.name == "sqlite":
@@ -138,6 +140,10 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
             for operation in ("UPDATE", "DELETE"):
                 trigger = f"lancamento_historicos_reject_{operation.lower()}"
                 conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON lancamento_historicos BEGIN SELECT RAISE(ABORT, 'financial history is immutable'); END"))
+            for table in schedule_tables:
+                for operation in ("UPDATE", "DELETE"):
+                    trigger = f"{table}_reject_{operation.lower()}"
+                    conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'daily schedule history is immutable'); END"))
     elif target_engine.dialect.name == "postgresql":
         with target_engine.begin() as conn:
             conn.execute(
@@ -167,6 +173,21 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
                 )
                 conn.execute(text("DROP TRIGGER IF EXISTS lancamento_historicos_reject_mutation ON lancamento_historicos"))
                 conn.execute(text("CREATE TRIGGER lancamento_historicos_reject_mutation BEFORE UPDATE OR DELETE ON lancamento_historicos FOR EACH ROW EXECUTE FUNCTION reject_financial_history_mutation()"))
+            if schedule_tables:
+                conn.execute(
+                    text("""
+                    CREATE OR REPLACE FUNCTION reject_daily_schedule_mutation()
+                    RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RAISE EXCEPTION 'daily schedule history is immutable';
+                    END;
+                    $$
+                    """)
+                )
+                for table in schedule_tables:
+                    trigger = f"{table}_reject_mutation"
+                    conn.execute(text(f"DROP TRIGGER IF EXISTS {trigger} ON {table}"))
+                    conn.execute(text(f"CREATE TRIGGER {trigger} BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION reject_daily_schedule_mutation()"))
 
 
 @event.listens_for(Session, "before_flush")

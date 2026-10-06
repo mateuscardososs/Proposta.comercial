@@ -336,6 +336,7 @@ class TaskBase(BaseModel):
     proposal_id: int | None = None
     user_id: int | None = None
     prazo: date | None = None
+    estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 
 class TaskCreate(TaskBase):
@@ -352,6 +353,7 @@ class TaskUpdate(BaseModel):
     proposal_id: int | None = None
     user_id: int | None = None
     prazo: date | None = None
+    estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
     ordem: int | None = None
 
 

@@ -82,6 +82,7 @@ class TaskCreateCommand(BaseModel):
     )
     proposal_number: int | None = Field(default=None, ge=1)
     source_email_reference: str | None = Field(default=None, max_length=160)
+    estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 
 class UnsupportedCommand(BaseModel):
@@ -141,6 +142,7 @@ class TaskDraftCorrectionCommand(BaseModel):
     clear_due_date: bool = False
     clear_client: bool = False
     clear_responsible: bool = False
+    estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
 
     @model_validator(mode="after")
     def require_change(self) -> TaskDraftCorrectionCommand:
@@ -153,6 +155,7 @@ class TaskDraftCorrectionCommand(BaseModel):
                 self.clear_due_date,
                 self.clear_client,
                 self.clear_responsible,
+                self.estimated_duration_minutes is not None,
             )
         ):
             raise ValueError("Informe ao menos uma correcao para o rascunho.")

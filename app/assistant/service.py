@@ -63,10 +63,16 @@ from app.models import (
     AssistantRequest,
     Client,
     Proposal,
+    Task,
     User,
 )
 from app.schemas import TaskCreate
 from app.services import board_service
+from app.services.daily_schedule_service import (
+    ScheduleChangedError,
+    build_daily_schedule,
+    save_daily_schedule_snapshot,
+)
 from app.services.today_service import TASK_STATUS_LABELS, get_task_day_plan
 
 logger = logging.getLogger(__name__)
@@ -208,9 +214,13 @@ class AssistantService:
                 )
             if command is None:
                 command = self._direct_email_task_command(clean_message)
-            if command is None:
+            if command is None and self._direct_schedule_save_request(clean_message):
+                reply = self._prepare_daily_schedule_snapshot(
+                    conversation.id, clean_request_id, current_date
+                )
+            if command is None and reply is None:
                 command = self._direct_task_create(conversation.id, clean_message)
-            if command is None:
+            if command is None and reply is None:
                 direct_email_query = self._direct_email_query(clean_message)
                 if direct_email_query is not None:
                     prior_result = next(
@@ -254,7 +264,7 @@ class AssistantService:
                             allowed_tools={"responder_conversa"},
                             traces=provider_inferences,
                         )
-            if command is None and self._direct_board_query(clean_message):
+            if command is None and reply is None and self._direct_board_query(clean_message):
                 reply, task_result = self._execute_task_agenda(
                     conversation.id, current_date
                 )
@@ -868,8 +878,15 @@ class AssistantService:
         today: date,
     ) -> tuple[AssistantReply, ProviderToolResult]:
         plan = get_task_day_plan(self.db, today=today)
+        schedule = build_daily_schedule(
+            self.db,
+            today=today,
+            now=self._local_now(),
+            timezone=self.timezone_name,
+            task_plan=plan,
+        )
         if not plan.items:
-            message = "Consultei o quadro: não há tarefas abertas."
+            lines = ["Consultei o quadro: não há tarefas abertas."]
         else:
             lines = [
                 f"Consultei todas as tarefas abertas do quadro e montei um plano para {today:%d/%m/%Y}.",
@@ -877,7 +894,7 @@ class AssistantService:
             ]
             if plan.due_today_count == 0:
                 lines.append("Não há tarefa com prazo hoje; seguem as próximas pendências abertas relevantes.")
-            lines.append("Ordem sugerida, sem horários ou duração cadastrados:")
+            lines.append("Ordem sugerida pela prioridade compartilhada com a página Hoje:")
             for position, item in enumerate(plan.items, start=1):
                 due_label = item.due_date.strftime("%d/%m/%Y") if item.due_date else "sem prazo"
                 parts = [
@@ -894,8 +911,42 @@ class AssistantService:
                     parts.append(f"Cliente: {client}")
                 lines.append(" — ".join(parts))
             lines.append("O sistema não registra dependências formais entre tarefas; usei apenas status e etapas representadas no quadro.")
-            message = "\n".join(lines)
 
+        lines.append("Sugestão de blocos de horário (determinística e somente de leitura):")
+        if not schedule.availability_configured:
+            lines.append("A disponibilidade semanal não está configurada; nenhum horário foi presumido como livre.")
+        else:
+            for fixed in schedule.fixed_blocks:
+                lines.append(
+                    f"{fixed.start:%H:%M}–{fixed.end:%H:%M} — {fixed.title} (compromisso/intervalo bloqueado)."
+                )
+        if schedule.availability_configured and schedule.blocks:
+            for block in schedule.blocks:
+                duration_label = (
+                    "estimativa padrão" if block.duration_source == "default_estimate"
+                    else "duração estimada informada na tarefa"
+                )
+                due_label = block.due_date.strftime("%d/%m/%Y") if block.due_date else "sem prazo"
+                lines.append(
+                    f"{block.start:%H:%M}–{block.end:%H:%M} — {block.title}; "
+                    f"{block.duration_minutes} min ({duration_label}); {block.status_label}; "
+                    f"prazo {due_label}. Motivo: {block.reason}"
+                )
+        elif schedule.availability_configured:
+            lines.append("Nenhuma tarefa coube nas janelas livres restantes de hoje.")
+        if schedule.unscheduled:
+            lines.append("Não alocadas:")
+            lines.extend(f"- {item.title}: {item.reason}" for item in schedule.unscheduled)
+        lines.append(
+            "Visualizar ou gerar a sugestão não salva a agenda nem altera tarefas. "
+            "Para salvar um snapshot, peça para salvar a agenda e confirme a prévia."
+        )
+        message = "\n".join(lines)
+
+        duration_by_task = {
+            task.id: task.estimated_duration_minutes
+            for task in self.db.query(Task).filter(Task.id.in_([item.task_id for item in plan.items])).all()
+        }
         result = ProviderToolResult(
             tool="consultar_tarefas",
             payload={
@@ -917,12 +968,99 @@ class AssistantService:
                         "client_link_status": item.client_link_status,
                         "section": item.section_key,
                         "href": item.href,
+                        "estimated_duration_minutes": duration_by_task.get(item.task_id),
                     }
                     for item in plan.items
                 ],
+                "schedule": schedule.snapshot(),
             },
         )
         return AssistantReply(conversation_id=conversation_id, kind="text", message=message), result
+
+    @staticmethod
+    def _direct_schedule_save_request(message: str) -> bool:
+        normalized = normalize_text(message)
+        asks_to_save = any(
+            verb in normalized for verb in ("salve", "salvar", "grave", "gravar", "registre")
+        )
+        refers_to_schedule = any(
+            subject in normalized for subject in ("agenda", "plano do dia", "blocos de horario")
+        )
+        return asks_to_save and refers_to_schedule
+
+    def _prepare_daily_schedule_snapshot(
+        self,
+        conversation_id: int,
+        request_id: str,
+        today: date,
+    ) -> AssistantReply:
+        pending = (
+            self.db.query(AssistantAction)
+            .filter(
+                AssistantAction.conversation_id == conversation_id,
+                AssistantAction.action_type == "save_daily_schedule",
+                AssistantAction.status.in_(("pending", "needs_clarification")),
+            )
+            .order_by(AssistantAction.id.desc())
+            .first()
+        )
+        if pending is not None:
+            return AssistantReply(
+                conversation_id=conversation_id,
+                kind="clarification",
+                message=(
+                    "Já existe uma prévia de agenda aguardando confirmação ou cancelamento. "
+                    "Resolva essa prévia antes de gerar outra; nenhum snapshot foi salvo."
+                ),
+                action_id=pending.id,
+            )
+        schedule = build_daily_schedule(
+            self.db,
+            today=today,
+            now=self._local_now(),
+            timezone=self.timezone_name,
+        )
+        token = secrets.token_urlsafe(32)
+        action = AssistantAction(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            confirmation_token_hash=self._token_hash(token),
+            action_type="save_daily_schedule",
+            status="pending",
+            arguments_json={
+                "date": today.isoformat(),
+                "snapshot": schedule.snapshot(),
+                "expected_previous_snapshot_id": (
+                    schedule.prior_snapshot.id if schedule.prior_snapshot else None
+                ),
+            },
+            result_json={},
+        )
+        self.db.add(action)
+        self.db.flush()
+        replacing = schedule.prior_snapshot is not None
+        message = f"Confirme para salvar o snapshot da agenda de {today:%d/%m/%Y}. "
+        if replacing:
+            message += (
+                f"Será criada a versão {schedule.prior_snapshot.version + 1}; "
+                "a versão anterior continuará no histórico. "
+            )
+        else:
+            message += "Esta será a primeira versão salva. "
+        message += "Nada será salvo até a confirmação e as tarefas não serão alteradas."
+        return AssistantReply(
+            conversation_id=conversation_id,
+            kind="confirmation",
+            message=message,
+            action_id=action.id,
+            confirmation_token=token,
+            fields={
+                "data": today.strftime("%d/%m/%Y"),
+                "blocos": str(len(schedule.blocks)),
+                "tarefas_nao_alocadas": str(len(schedule.unscheduled)),
+                "substitui": str(schedule.prior_snapshot.version) if replacing else "não",
+            },
+        )
 
     def _direct_pending_date_correction(
         self,
@@ -1148,6 +1286,58 @@ class AssistantService:
                     ))
                 self.db.commit()
                 return reply
+            if action.action_type == "save_daily_schedule":
+                try:
+                    snapshot = save_daily_schedule_snapshot(
+                        self.db,
+                        schedule_date=date.fromisoformat(str(arguments["date"])),
+                        snapshot=dict(arguments["snapshot"]),
+                        assistant_action_id=action.id,
+                        idempotency_key=f"assistant-action:{action.id}",
+                        expected_previous_snapshot_id=(
+                            int(arguments["expected_previous_snapshot_id"])
+                            if arguments.get("expected_previous_snapshot_id") is not None
+                            else None
+                        ),
+                    )
+                except ScheduleChangedError as exc:
+                    self.db.rollback()
+                    stale_action = self.db.get(AssistantAction, action.id)
+                    if stale_action is not None:
+                        stale_action.status = "needs_clarification"
+                        stale_action.result_json = {"error": "schedule_changed"}
+                        self.db.commit()
+                    return AssistantReply(
+                        conversation_id=action.conversation_id,
+                        kind="clarification",
+                        message=f"{exc} Nenhum snapshot foi salvo.",
+                        action_id=action.id,
+                    )
+                action.status = "executed"
+                action.result_json = {
+                    "snapshot_id": snapshot.id,
+                    "schedule_date": snapshot.schedule_date.isoformat(),
+                    "version": snapshot.version,
+                }
+                reply = AssistantReply(
+                    conversation_id=action.conversation_id,
+                    kind="success",
+                    message=(
+                        f"Snapshot da agenda de {snapshot.schedule_date:%d/%m/%Y} salvo "
+                        f"como versão {snapshot.version}. As tarefas não foram alteradas."
+                    ),
+                    action_id=action.id,
+                )
+                if record_message:
+                    self.db.add(AssistantMessage(
+                        conversation_id=action.conversation_id,
+                        role="assistant",
+                        kind="success",
+                        content=reply.message,
+                        details_json=reply.model_dump(mode="json"),
+                    ))
+                self.db.commit()
+                return reply
             payload = TaskCreate(
                 titulo=str(arguments["titulo"]),
                 descricao=str(arguments.get("descricao") or ""),
@@ -1158,6 +1348,10 @@ class AssistantService:
                 client_link_status=str(arguments.get("client_link_status") or "unlinked"),
                 proposal_id=int(arguments["proposal_id"]) if arguments.get("proposal_id") else None,
                 user_id=int(arguments["user_id"]) if arguments.get("user_id") else None,
+                estimated_duration_minutes=(
+                    int(arguments["estimated_duration_minutes"])
+                    if arguments.get("estimated_duration_minutes") else None
+                ),
             )
             task = board_service.create_task(self.db, payload, commit=False)
             source_email_reference = arguments.get("source_email_reference")
@@ -1234,6 +1428,8 @@ class AssistantService:
                 cancellation_message = "Registro cancelado. Nenhum evento ou correção foi salvo."
             elif action.action_type == "create_service_reminders":
                 cancellation_message = "Lembretes cancelados. Nenhuma tarefa foi adicionada ao quadro."
+            elif action.action_type == "save_daily_schedule":
+                cancellation_message = "Salvamento da agenda cancelado. Nenhum snapshot foi gravado."
             else:
                 cancellation_message = "Criacao cancelada. Nenhuma tarefa foi adicionada ao quadro."
             reply = AssistantReply(
@@ -1513,7 +1709,7 @@ class AssistantService:
             .filter(
                 AssistantAction.conversation_id == conversation_id,
                 AssistantAction.action_type.in_(
-                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders")
+                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders", "save_daily_schedule")
                 ),
                 AssistantAction.status.in_(("pending", "needs_clarification")),
             )
@@ -2246,7 +2442,7 @@ class AssistantService:
             .filter(
                 AssistantAction.conversation_id == conversation_id,
                 AssistantAction.action_type.in_(
-                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders")
+                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders", "save_daily_schedule")
                 ),
                 AssistantAction.status.in_( ("pending", "needs_clarification") ),
             )
@@ -2260,7 +2456,7 @@ class AssistantService:
             .filter(
                 AssistantAction.conversation_id == conversation_id,
                 AssistantAction.action_type.in_(
-                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders")
+                    ("create_task", "register_service_event", "correct_service_event", "create_service_reminders", "save_daily_schedule")
                 ),
             )
             .order_by(AssistantAction.id.desc())
@@ -2308,6 +2504,8 @@ class AssistantService:
                 updates["responsible"] = None
             elif command.responsible is not None:
                 updates["responsible"] = command.responsible
+            if command.estimated_duration_minutes is not None:
+                updates["estimated_duration_minutes"] = command.estimated_duration_minutes
             return self._prepare_task(
                 conversation_id,
                 action.request_id or request_id,
@@ -2381,6 +2579,9 @@ class AssistantService:
                     message=question,
                 )
             arguments["user_id"] = user.id
+
+        if command.estimated_duration_minutes is not None:
+            arguments["estimated_duration_minutes"] = command.estimated_duration_minutes
 
         confirmation_token = secrets.token_urlsafe(32)
         action.arguments_json = arguments
@@ -2474,6 +2675,7 @@ class AssistantService:
             "proposal_id": proposal.id if proposal else None,
             "user_id": user.id if user else None,
             "source_email_reference": command.source_email_reference,
+            "estimated_duration_minutes": command.estimated_duration_minutes,
         }
         confirmation_token = secrets.token_urlsafe(32)
         action = existing_action or AssistantAction(
@@ -2528,11 +2730,17 @@ class AssistantService:
                 "Sem cliente"
             ),
             "responsavel": user.nome if user else "Sem responsavel",
+            "duracao_estimada": (
+                f"{arguments['estimated_duration_minutes']} minutos (estimativa)"
+                if arguments.get("estimated_duration_minutes")
+                else "Não informada; a agenda usará a estimativa padrão configurada."
+            ),
         }
         message = (
             "Revise antes de criar: "
             f"{fields['titulo']}; status {fields['status']}; prazo {fields['prazo']}; "
-            f"cliente {fields['cliente']}; responsavel {fields['responsavel']}."
+            f"cliente {fields['cliente']}; responsavel {fields['responsavel']}; "
+            f"duração {fields['duracao_estimada']}."
         )
         if arguments.get("client_link_status") in {"pending_review", "needs_confirmation"}:
             message += " Não criei nem alterei cadastro de cliente."
@@ -2644,6 +2852,17 @@ class AssistantService:
         return None, f"Encontrei mais de um {entity_name}: {options}. Qual deles devo usar?"
 
     def _success_reply(self, action: AssistantAction) -> AssistantReply:
+        if action.action_type == "save_daily_schedule":
+            result = action.result_json
+            return AssistantReply(
+                conversation_id=action.conversation_id,
+                kind="success",
+                message=(
+                    f"Snapshot da agenda de {date.fromisoformat(str(result['schedule_date'])):%d/%m/%Y} "
+                    f"salvo como versão {result['version']}. As tarefas não foram alteradas."
+                ),
+                action_id=action.id,
+            )
         if action.action_type in {
             "register_service_event", "correct_service_event", "create_service_reminders",
         }:

@@ -57,7 +57,7 @@ def test_today_page_renders_complete_synthetic_task_plan_without_fake_time_block
     assert "Tarefa futura sintética" in response.text
     assert "Tarefa sem prazo sintética" in response.text
     assert "Tarefa aberta extra 7" in response.text
-    assert "Sequência completa e somente de leitura" in response.text
+    assert "Sequência completa, com sugestão horária separada e somente de leitura" in response.text
     assert "dependências formais" in response.text
 
 

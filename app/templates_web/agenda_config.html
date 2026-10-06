@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-inner">
+    <span class="eyebrow">Agenda · disponibilidade</span>
+    <h1 class="page-title">Configurar horários</h1>
+    <p class="page-subtitle">A agenda só usa disponibilidade que você cadastrar. Não há horários livres presumidos.</p>
+  </div>
+</div>
+
+{% if saved %}<p class="alert alert-success" role="status">Configuração da agenda salva.</p>{% endif %}
+
+<section class="card today-panel">
+  <h2 class="card-title">Estimativa padrão de duração</h2>
+  <p class="card-subtitle">Tarefas sem duração individual usam este valor e aparecem marcadas como estimativa.</p>
+  <form action="/web/agenda/config" method="post" class="form-grid-2 mt-12">
+    <input type="hidden" name="action" value="default_duration">
+    <div class="field"><label for="default_task_duration_minutes">Minutos estimados</label><input id="default_task_duration_minutes" name="default_task_duration_minutes" type="number" min="1" max="1440" value="{{ default_duration_minutes }}" required></div>
+    <div class="field actions-end"><button class="btn btn-primary" type="submit">Salvar estimativa padrão</button></div>
+  </form>
+</section>
+
+<section class="card today-panel">
+  <h2 class="card-title">Disponibilidade semanal</h2>
+  <p class="card-subtitle">Cadastre cada janela em que o trabalho pode ser planejado. Use janelas separadas para intervalos.</p>
+  {% if windows %}<ul class="today-compact-list">{% for window in windows %}<li><div><strong>{{ weekdays[window.weekday][1] }} · {{ window.start_time.strftime('%H:%M') }}–{{ window.end_time.strftime('%H:%M') }}</strong><span>{{ window.label }}</span></div><form action="/web/agenda/config" method="post"><input type="hidden" name="action" value="delete_window"><input type="hidden" name="id" value="{{ window.id }}"><button class="btn btn-ghost" type="submit" aria-label="Remover janela">Remover</button></form></li>{% endfor %}</ul>{% else %}<p class="empty-state">Nenhuma disponibilidade semanal configurada. A agenda não alocará horários até adicionar uma janela.</p>{% endif %}
+  <form action="/web/agenda/config" method="post" class="form-grid-2 mt-12">
+    <input type="hidden" name="action" value="add_window">
+    <div class="field"><label for="window_weekday">Dia</label><select id="window_weekday" name="weekday" required>{% for day, label in weekdays %}<option value="{{ day }}">{{ label }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="window_label">Rótulo</label><input id="window_label" name="label" maxlength="120" value="Expediente"></div>
+    <div class="field"><label for="window_start">Início</label><input id="window_start" name="start_time" type="time" required></div>
+    <div class="field"><label for="window_end">Fim</label><input id="window_end" name="end_time" type="time" required></div>
+    <div class="field actions-end"><button class="btn btn-primary" type="submit">Adicionar janela</button></div>
+  </form>
+</section>
+
+<section class="card today-panel">
+  <h2 class="card-title">Intervalos e compromissos fixos</h2>
+  <p class="card-subtitle">Podem se repetir em um dia da semana ou bloquear uma data específica. Nunca serão deslocados pelo planejador.</p>
+  {% if commitments %}<ul class="today-compact-list">{% for commitment in commitments %}<li><div><strong>{{ commitment.title }} · {{ commitment.start_time.strftime('%H:%M') }}–{{ commitment.end_time.strftime('%H:%M') }}</strong><span>{% if commitment.occurrence_type == 'weekly' %}{{ weekdays[commitment.weekday][1] }} · semanal{% else %}{{ commitment.commitment_date.strftime('%d/%m/%Y') }} · data específica{% endif %}</span></div><form action="/web/agenda/config" method="post"><input type="hidden" name="action" value="delete_commitment"><input type="hidden" name="id" value="{{ commitment.id }}"><button class="btn btn-ghost" type="submit" aria-label="Remover compromisso">Remover</button></form></li>{% endfor %}</ul>{% else %}<p class="muted">Nenhum bloqueio de horário cadastrado.</p>{% endif %}
+  <form action="/web/agenda/config" method="post" class="form-grid-2 mt-12">
+    <input type="hidden" name="action" value="add_commitment">
+    <div class="field"><label for="commitment_title">Nome / motivo</label><input id="commitment_title" name="title" maxlength="160" required></div>
+    <div class="field"><label for="occurrence_type">Repetição</label><select id="occurrence_type" name="occurrence_type" required><option value="weekly">Semanal</option><option value="dated">Data específica</option></select></div>
+    <div class="field"><label for="commitment_weekday">Dia semanal (para repetição semanal)</label><select id="commitment_weekday" name="weekday">{% for day, label in weekdays %}<option value="{{ day }}">{{ label }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="commitment_date">Data (para compromisso avulso)</label><input id="commitment_date" name="commitment_date" type="date"></div>
+    <div class="field"><label for="commitment_start">Início</label><input id="commitment_start" name="start_time" type="time" required></div>
+    <div class="field"><label for="commitment_end">Fim</label><input id="commitment_end" name="end_time" type="time" required></div>
+    <div class="field actions-end"><button class="btn btn-primary" type="submit">Adicionar bloqueio</button></div>
+  </form>
+</section>
+<p><a class="btn btn-ghost" href="/">Voltar para Hoje</a></p>
+{% endblock %}

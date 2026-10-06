@@ -37,6 +37,14 @@
 
     <div class="form-grid-1 mt-12">
       <div class="field">
+        <label for="estimated_duration_minutes">Duração estimada (minutos, opcional)</label>
+        <input type="number" id="estimated_duration_minutes" name="estimated_duration_minutes" min="1" max="1440" step="1" value="{{ task.estimated_duration_minutes if task and task.estimated_duration_minutes else '' }}" aria-describedby="duration-estimate-help">
+        <small id="duration-estimate-help">Aparecerá como estimativa na agenda; se ficar vazio, será usada a estimativa padrão configurada nela.</small>
+      </div>
+    </div>
+
+    <div class="form-grid-1 mt-12">
+      <div class="field">
         <label for="descricao">Descrição (opcional)</label>
         <textarea id="descricao" name="descricao">{{ task.descricao if task else '' }}</textarea>
       </div>
