@@ -40,8 +40,31 @@
   </section>
 
   <section class="card today-panel" data-today-section="agenda">
-    <div class="card-head"><div><h2 class="card-title">Agenda do dia</h2><p class="card-subtitle">Tarefas abertas ordenadas pelas regras do sistema.</p></div><a class="text-link" href="/web/board">Abrir quadro</a></div>
-    {% if today_sections.agenda %}<ul class="today-compact-list">{% for item in today_sections.agenda[:5] %}<li><div><strong><a href="{{ item.href }}">{{ item.title }}</a></strong><span>{{ item.reason }}</span></div>{% if item.due_date %}<time datetime="{{ item.due_date.isoformat() }}">{{ item.due_date.strftime('%d/%m') }}</time>{% else %}<span class="badge">Sem prazo</span>{% endif %}</li>{% endfor %}</ul>{% else %}<p class="muted">Nenhuma tarefa datada nesta janela.</p>{% endif %}
+    <div class="card-head"><div><h2 class="card-title">Plano de tarefas para hoje</h2><p class="card-subtitle">Sequência completa e somente de leitura; sem horários ou duração inventados.</p></div><a class="text-link" href="/web/board">Abrir quadro</a></div>
+    {% if agenda.task_plan.items %}
+      <p class="muted">{{ agenda.task_plan.open_count }} tarefas abertas; {{ agenda.task_plan.overdue_count }} atrasadas e {{ agenda.task_plan.due_today_count }} com prazo hoje.{% if agenda.task_plan.due_today_count == 0 %} Não há tarefa com prazo hoje; confira os próximos prazos e as tarefas sem prazo abaixo.{% endif %}</p>
+      {% for section in agenda.task_plan.sections %}
+      <section class="today-task-plan-group" aria-labelledby="task-plan-{{ section.key }}">
+        <h3 id="task-plan-{{ section.key }}">{{ section.label }}</h3>
+        <ol class="today-items">
+          {% for item in section.items %}
+          <li class="today-item{% if item.section_key == 'overdue' %} today-item-overdue{% endif %}">
+            <div class="today-item-main">
+              <div class="today-item-meta"><span class="badge{% if item.section_key == 'overdue' %} danger{% elif item.section_key == 'today' %} warning{% endif %}">{{ item.priority_label }}</span><span class="badge">{{ item.status_label }}</span>{% if item.due_date %}<time class="muted" datetime="{{ item.due_date.isoformat() }}">Prazo {{ item.due_date.strftime('%d/%m/%Y') }}</time>{% else %}<span class="badge">Sem prazo</span>{% endif %}</div>
+              <h4><a href="{{ item.href }}">{{ item.title }}</a></h4>
+              {% if item.client_name %}<p>{% if item.client_link_status == 'pending_review' %}Empresa informada (vínculo pendente):{% else %}Cliente:{% endif %} {{ item.client_name }}</p>{% endif %}
+              <p>{{ item.reason }}</p>
+            </div>
+            <a class="btn btn-ghost" href="{{ item.href }}" aria-label="Abrir {{ item.title }}">Abrir</a>
+          </li>
+          {% endfor %}
+        </ol>
+      </section>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state"><h3>Não há tarefas abertas</h3><p>A consulta ao quadro não encontrou pendências abertas.</p><a class="btn btn-ghost" href="/web/board">Abrir quadro</a></div>
+    {% endif %}
+    <p class="muted">O quadro não registra dependências formais entre tarefas nem horários ou duração estimados; a ordem usa apenas prazos, urgência explícita e situação.</p>
   </section>
 </div>
 

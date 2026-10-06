@@ -1,11 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.main import app
-from app.models import EmailSyncState, InboxEmail
+from app.models import EmailSyncState, InboxEmail, Task
 
 
 def test_today_is_home_and_shell_has_keyboard_navigation(db):
@@ -29,6 +29,36 @@ def test_today_is_home_and_shell_has_keyboard_navigation(db):
     assert (
         'aria-label="Breadcrumb"' not in response.text
     )  # home has no redundant breadcrumb
+
+
+def test_today_page_renders_complete_synthetic_task_plan_without_fake_time_blocks(db):
+    today = datetime.now(ZoneInfo("America/Recife")).date()
+    db.add_all(
+        [
+            Task(titulo="Tarefa atrasada sintética", status="a_fazer", prazo=today - timedelta(days=1), ordem=0),
+            Task(titulo="Tarefa de hoje sintética", status="em_andamento", prazo=today, ordem=0),
+            Task(titulo="Tarefa futura sintética", status="a_fazer", prazo=today + timedelta(days=2), ordem=0),
+            Task(titulo="Tarefa sem prazo sintética", status="a_fazer", ordem=0),
+            *[
+                Task(titulo=f"Tarefa aberta extra {index}", status="a_fazer", ordem=index)
+                for index in range(8)
+            ],
+        ]
+    )
+    db.commit()
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Plano de tarefas para hoje" in response.text
+    assert "Tarefa atrasada sintética" in response.text
+    assert "Tarefa de hoje sintética" in response.text
+    assert "Tarefa futura sintética" in response.text
+    assert "Tarefa sem prazo sintética" in response.text
+    assert "Tarefa aberta extra 7" in response.text
+    assert "Sequência completa e somente de leitura" in response.text
+    assert "dependências formais" in response.text
 
 
 def test_messages_page_explains_sync_status_and_never_offers_email_mutations(db):
