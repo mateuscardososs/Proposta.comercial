@@ -47,9 +47,9 @@ Aplicação web interna para organizar o trabalho comercial e operacional da AD 
 ### Assistente por texto e voz
 
 - A página **Assistente** mantém histórico e entende pedidos em português para consultar o quadro/agenda, consultar serviços e, se o leitor estiver configurado, consultar e-mails. Também prepara tarefas e registros de eventos/lembretes de serviço para confirmação.
-- O Ollama é o **interpretador de linguagem local**: transforma a fala ou texto em um comando estruturado permitido e ajuda a formular respostas naturais. Ele não acessa o banco diretamente e não grava dados por conta própria.
+- O Gemini é o **interpretador de linguagem padrão** pela API; Ollama local permanece como alternativa selecionável. O provedor transforma fala transcrita ou texto em comando estruturado permitido e ajuda a formular respostas naturais. Nenhum deles acessa o banco diretamente ou grava dados por conta própria.
 - Os pedidos conhecidos de consulta (por exemplo, agenda e algumas intenções de e-mail) também têm roteamento determinístico no backend. Quando necessário, a aplicação consulta os serviços e o banco reais; a resposta fica fundamentada nos resultados dessa solicitação, não em uma afirmação livre do modelo.
-- Existe uma interface `AssistantProvider`; o adaptador atualmente implementado é Ollama. As regras de domínio e validações ficam na aplicação, então trocar o provedor no futuro não deve exigir reescrever o fluxo de tarefas/serviços. Nesta versão não há API paga nem fallback automático para nuvem.
+- Existe uma interface `AssistantProvider`, com adaptadores Gemini e Ollama selecionáveis por `LLM_PROVIDER`. Gemini é o padrão; para processamento exclusivamente local, defina `LLM_PROVIDER=ollama`. As regras de domínio e validações ficam na aplicação e não há fallback automático entre provedores. Gemini requer chave, conectividade externa e plano aprovado; o conteúdo enviado à API deixa de ser exclusivamente local.
 - Comandos e argumentos são validados por esquemas tipados e por uma lista explícita de ferramentas. Não são aceitos SQL, shell ou execução de código gerado pelo modelo. Resposta estrutural inválida não autoriza uma gravação; o backend pode fazer uma única tentativa controlada de reparo e encerra com erro compreensível se ela falhar.
 - Consultas de tarefa, serviço e e-mail são executadas por serviços específicos do backend. O assistente só deve dizer que consultou quando houver evidência de resultado, distinguindo sucesso, vazio confirmado, falha, parcial e capacidade não configurada.
 - Criações manuais passam por rascunho e confirmação explícita antes de gravar; correções invalidam a confirmação anterior. A persistência usa identificadores de requisição/ação para reconciliar repetição e evitar duplicidade. Cliente ausente ou ambíguo não bloqueia a tarefa: mantém-se o nome informado, sem inventar cliente ou ID, e o vínculo fica pendente de revisão.
@@ -64,7 +64,7 @@ Microfone → STT local (faster-whisper) → texto ───┤
                                    FastAPI / Assistente
                      roteamento + histórico + capacidades disponíveis
                                                   ↓
-                         Ollama local via AssistantProvider
+                  Gemini API ou Ollama local via AssistantProvider
                     comando estruturado com argumentos validados
                                                   ↓
            ferramenta permitida → serviços da aplicação → banco real
@@ -85,19 +85,19 @@ Exemplos do que se pode pedir:
 
 #### Configuração do interpretador
 
-O provedor padrão continua sendo Ollama local. Como alternativa explícita, o backend pode usar a API Gemini; isso envia ao Google o texto de conversa e os dados contextuais estritamente necessários que o assistente já preparou. A seleção é feita por `LLM_PROVIDER` e não altera a lógica determinística, as confirmações, os serviços de banco nem as ferramentas permitidas. STT e TTS continuam independentes e locais. Não há fallback automático entre provedores.
+Gemini é o provedor padrão; Ollama local continua disponível como alternativa. Com Gemini, o backend envia ao Google o texto da conversa e o contexto necessário para interpretar o pedido. A seleção por `LLM_PROVIDER` não altera roteamento determinístico, confirmações, serviços de banco nem ferramentas autorizadas. STT e TTS continuam independentes e locais. Não há fallback automático entre provedores.
 
 O modelo não é fixado em vários pontos do código. Para Ollama, configure o nome exato que `ollama list` mostrar. Para o Gemini, configure `GEMINI_MODEL`; o valor inicial de referência é `gemini-3.1-flash-lite`, definido em um único padrão de configuração e sobrescrevível por ambiente. Antes de enviar dados reais da empresa, gere uma chave nova (a chave anteriormente colada deve ser considerada comprometida), confirme que a conta/projeto e o plano têm termos de tratamento de dados adequados ao uso empresarial e aprove o envio de conteúdo ao serviço externo. Não use plano gratuito com dados reais sem verificar seus termos: a documentação atual informa tratamento diferente de dados entre níveis. O smoke test, se usado, envia somente uma pergunta sintética.
 
 | Variável | Padrão | Para que serve |
 |---|---|---|
-| `LLM_PROVIDER` | `ollama` | Provedor de interpretação: `ollama` ou `gemini`. Valor inválido é rejeitado na configuração. |
+| `LLM_PROVIDER` | `gemini` | Provedor de interpretação: `gemini` ou `ollama`. Valor inválido é rejeitado na configuração. |
 | `GEMINI_API_KEY` | vazio | Chave lida no backend e enviada no cabeçalho HTTPS; nunca é retornada à interface ou registrada nos logs. |
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Modelo configurável. Consulte a lista oficial antes de atualizar o identificador. |
 | `GEMINI_CONNECT_TIMEOUT` | `3` segundos | Limite para conexão à API Gemini. |
 | `GEMINI_READ_TIMEOUT` | `60` segundos | Limite de espera pela API. |
 
-Para executar o piloto remoto, guarde a chave nova em `.env.gemini.local` (explicitamente ignorado pelo Git) ou em um gerenciador de segredos do sistema. Edite o arquivo local com um editor, sem colocar o valor em comandos, histórico do shell ou argumentos de processo; `.env.example` contém somente valor vazio e não deve receber a chave. Se a chave comprometida ainda estiver ativa, revogue-a no console Google. Selecione `LLM_PROVIDER=gemini` para iniciar o processo, apontando `APP_ENV_FILE=.env.gemini.local`. Para retornar ao modo local, remova essa seleção ou defina `LLM_PROVIDER=ollama`; configure `OLLAMA_BASE_URL` e `OLLAMA_MODEL` com o serviço/modelo local. Ausência de chave, autorização inválida, modelo ausente, cota, timeout e resposta inválida são apresentados como erros, sem fallback silencioso.
+Guarde uma chave nova em `.env.gemini.local` (explicitamente ignorado pelo Git) ou em um gerenciador de segredos do sistema. Edite o arquivo local com um editor, sem colocar o valor em comandos, histórico do shell ou argumentos de processo; `.env.example` mantém a chave vazia. Revogue a chave anteriormente exposta. Para iniciar o servidor com esse arquivo, use `APP_ENV_FILE=.env.gemini.local python run.py`. Para voltar ao modo local, defina `LLM_PROVIDER=ollama` e configure `OLLAMA_BASE_URL` e `OLLAMA_MODEL`. Ausência de chave, autorização inválida, modelo ausente, cota, timeout e resposta inválida são apresentados como erros; nunca há fallback silencioso.
 
 O modelo Gemini usado como referência foi escolhido por ser apresentado pela documentação oficial como opção estável, leve e de baixo custo relativo; disponibilidade, preço, limites e termos podem mudar. Consulte [modelos oficiais](https://ai.google.dev/gemini-api/docs/models), [preços e níveis de dados](https://ai.google.dev/gemini-api/docs/pricing) e [boas práticas para chaves](https://ai.google.dev/gemini-api/docs/api-key) antes de cada adoção. O adaptador chama a API pelo backend via HTTPS, envia a declaração das ferramentas autorizadas e valida os argumentos novamente nos contratos Pydantic existentes; o modelo não recebe acesso ao banco, shell ou sistema de arquivos.
 
@@ -187,14 +187,14 @@ O teste real controlado do Ollama documentado cobre um caso específico de inter
 - Jinja2, HTML/CSS/JavaScript do próprio projeto.
 - PostgreSQL para execução com Docker Compose; SQLite é o padrão da execução nativa quando `DATABASE_URL` não é definido.
 - `docxtpl` para DOCX e LibreOffice headless para PDF; `pdfplumber` para leitura de PDFs legados.
-- Ollama local para interpretação; opcionalmente faster-whisper e Piper para voz local.
+- Gemini API por padrão ou Ollama local alternativo para interpretação; faster-whisper e Piper locais são opcionais para voz.
 - Yahoo IMAP opcional para leitura de e-mail.
 
 ## Requisitos
 
 - Python 3.12.
 - Para gerar PDF: LibreOffice instalado (ou use o container, que o instala).
-- Para o assistente: Ollama em execução e um modelo local instalado, com nome configurado em `OLLAMA_MODEL`.
+- Para o assistente: Gemini por padrão exige `GEMINI_API_KEY`, acesso à rede e modelo configurado em `GEMINI_MODEL`; alternativamente, Ollama em execução com modelo local em `OLLAMA_MODEL`.
 - Para voz: dependências de `requirements-voice.txt` e arquivos de modelo STT/TTS locais. Consulte [`docs/assistente/execucao.md`](docs/assistente/execucao.md) e [`docs/assistente/validacao-voz-local.md`](docs/assistente/validacao-voz-local.md) para preparação e limites.
 - Para usar PostgreSQL via Compose: Docker com Docker Compose.
 
@@ -208,16 +208,13 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Configure variáveis no ambiente ou em um arquivo `.env` local, ignorado pelo Git. O mínimo para usar Ollama já iniciado no mesmo computador é:
+Configure a chave em `.env.gemini.local` ou em um gerenciador de segredos local e use:
 
 ```bash
-export APP_HOST=127.0.0.1
-export APP_PORT=8000
-export OLLAMA_BASE_URL=http://127.0.0.1:11434
-export OLLAMA_MODEL='<nome-de-um-modelo-local-instalado>'
-export ASSISTANT_TIMEZONE=America/Recife
-python run.py
+APP_ENV_FILE=.env.gemini.local APP_HOST=127.0.0.1 APP_PORT=8000 python run.py
 ```
+
+Isso mantém o serviço na máquina local. Para rodar sem enviar conversas à nuvem, selecione `LLM_PROVIDER=ollama` e configure o endereço/modelo Ollama.
 
 Acesse `http://127.0.0.1:8000/`. Verificação de saúde: `/healthz`; documentação interativa da API: `/docs`.
 
@@ -253,13 +250,14 @@ py -3.12 -m venv .venv
 python -m pip install -r requirements.txt
 $env:APP_HOST = "127.0.0.1"
 $env:APP_PORT = "8000"
-$env:OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-$env:OLLAMA_MODEL = "<nome-de-um-modelo-local-instalado>"
+$env:APP_ENV_FILE = ".env.gemini.local"
+$env:APP_HOST = "127.0.0.1"
+$env:LLM_PROVIDER = "gemini"
 $env:ASSISTANT_TIMEZONE = "America/Recife"
 python run.py
 ```
 
-O destino Windows não deve depender de GPU dedicada. O modelo Ollama, Whisper e Piper precisam ser escolhidos/testados nesse hardware; a velocidade medida em um Mac não representa o desempenho no Windows. Veja [`docs/assistente/execucao.md`](docs/assistente/execucao.md).
+O destino Windows não deve depender de GPU dedicada. Gemini requer rede e plano apropriado; alternativamente, o modelo Ollama, Whisper e Piper precisam ser escolhidos/testados nesse hardware. Veja [`docs/assistente/execucao.md`](docs/assistente/execucao.md).
 
 ## Execução com Docker Compose
 
@@ -278,7 +276,7 @@ docker compose down
 
 Os dados do PostgreSQL ficam no volume `postgres_data`; arquivos gerados ficam em `output/` e o modelo de proposta em `doc_templates/`. **Não use `docker compose down -v` em um ambiente com dados a preservar:** isso remove o volume do banco.
 
-No Docker, `OLLAMA_BASE_URL` normalmente aponta para `http://host.docker.internal:11434`, pois o Ollama roda no host. Não publique a porta do Ollama. STT/TTS exigem que dependências e modelos estejam instalados e acessíveis pelo processo/container; voz vem desativada por padrão no Compose.
+No Docker, Gemini requer `GEMINI_API_KEY` entregue com segurança ao container. Para alternativa Ollama, `OLLAMA_BASE_URL` normalmente aponta para `http://host.docker.internal:11434`, pois o Ollama roda no host; não publique a porta do Ollama. STT/TTS exigem dependências e modelos acessíveis no processo/container; voz vem desativada por padrão no Compose.
 
 ## Rotas úteis
 

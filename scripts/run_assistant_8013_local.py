@@ -102,7 +102,7 @@ def run() -> None:
 
     verify_database(settings.database_url)
     print("8013 local: voz habilitada; PostgreSQL propostas_db validado em loopback.")
-    print("Ollama local e modelo instalado validados; sem fallback externo.")
+    print(f"Provedor de texto ativo: {settings.llm_provider}.")
 
     import uvicorn
 
