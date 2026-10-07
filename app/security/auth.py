@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.routing import Match
 
 from app.models import User
 from app.security.passwords import is_argon2id_hash
@@ -70,6 +71,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         if path == "/login" and request.method in {"GET", "HEAD", "POST"}:
             if request.method == "POST" and not self._csrf_valid(request, require_header=False):
                 return JSONResponse({"detail": "Falha na validação de segurança da solicitação."}, status_code=403)
+            return await call_next(request)
+
+        if not any(route.matches(request.scope)[0] is not Match.NONE for route in request.app.router.routes):
             return await call_next(request)
 
         if (

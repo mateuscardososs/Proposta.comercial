@@ -71,9 +71,10 @@ def login_submit(
 
     with request.app.state.auth_session_factory() as db:
         user = db.query(User).filter(User.email == email.strip()).first()
-        encoded = user.senha_hash if user and is_argon2id_hash(user.senha_hash) else _DUMMY_HASH
-        valid = verify_password(password, encoded)
-        if user is None or not user.ativo or not valid:
+        has_valid_account = bool(user and user.ativo and is_argon2id_hash(user.senha_hash))
+        encoded = user.senha_hash if has_valid_account else _DUMMY_HASH
+        password_matches = verify_password(password, encoded)
+        if not has_valid_account or not password_matches:
             limiter.record_failure(key)
             return request.app.state.templates.TemplateResponse(
                 "login.html",

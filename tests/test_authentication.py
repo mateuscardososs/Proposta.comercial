@@ -166,6 +166,50 @@ def test_invalid_credentials_are_generic_and_do_not_create_a_session(db, tmp_pat
     assert client.get("/web/clients", follow_redirects=False).status_code == 302
 
 
+def test_nonexistent_account_cannot_authenticate_with_dummy_hash_password(db, tmp_path):
+    client = TestClient(_make_app(tmp_path))
+
+    response = _login(client, email="missing@example.test", password="not-a-real-user-password")
+
+    assert response.status_code == 401
+    assert client.get("/web/clients", follow_redirects=False).status_code == 302
+
+
+def test_legacy_account_cannot_authenticate_with_dummy_hash_password(db, tmp_path):
+    db.add(
+        User(
+            nome="Conta legada sintética",
+            cargo="",
+            email=_EMAIL,
+            senha_hash="legacy-sha256-hash",
+            ativo=True,
+        )
+    )
+    db.commit()
+    client = TestClient(_make_app(tmp_path))
+
+    response = _login(client, password="not-a-real-user-password")
+
+    assert response.status_code == 401
+    assert client.get("/web/clients", follow_redirects=False).status_code == 302
+
+
+def test_unknown_api_path_remains_404_while_registered_api_requires_login(db, tmp_path):
+    client = TestClient(_make_app(tmp_path))
+
+    assert client.get("/api/path-that-does-not-exist").status_code == 404
+    assert client.get("/api/clients/").status_code == 401
+
+
+def test_main_application_registers_public_login_and_health_routes():
+    from app.main import app
+
+    registered_paths = {route.path for route in app.routes if hasattr(route, "path")}
+
+    assert "/login" in registered_paths
+    assert "/healthz" in registered_paths
+
+
 def test_repeated_invalid_login_attempts_are_rate_limited(db, tmp_path):
     _create_user(db)
     client = TestClient(_make_app(tmp_path, max_attempts=2))
