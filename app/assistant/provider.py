@@ -25,7 +25,8 @@ class ProviderToolResult(BaseModel):
 
 class ProviderPendingAction(BaseModel):
     action_type: Literal[
-        "create_task", "register_service_event", "correct_service_event", "create_service_reminders"
+        "create_task", "register_service_event", "correct_service_event", "create_service_reminders",
+        "generate_service_report",
     ]
     status: Literal["pending", "needs_clarification"]
     arguments: dict[str, object]

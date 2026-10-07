@@ -48,6 +48,7 @@ class Base(DeclarativeBase):
 def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
     inspector = inspect(target_engine)
     table_names = set(inspector.get_table_names())
+    _relax_service_report_event_links(target_engine, table_names)
     if "tasks" in table_names:
         task_columns = {str(column["name"]) for column in inspector.get_columns("tasks")}
         task_additions = (
@@ -125,6 +126,72 @@ def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
             conn.execute(text(statement))
 
 
+def _relax_service_report_event_links(target_engine: Engine, table_names: set[str]) -> None:
+    """Allow document/admin history to exist without fabricating a technical event."""
+    requirements = {
+        "service_workflow_transitions": {"service_event_id"},
+        "service_technical_reports": {"document_event_id"},
+    }
+    required_changes: list[tuple[str, str]] = []
+    current_inspector = inspect(target_engine)
+    for table_name, column_names in requirements.items():
+        if table_name not in table_names:
+            continue
+        for column in current_inspector.get_columns(table_name):
+            if column["name"] in column_names and not column["nullable"]:
+                required_changes.append((table_name, str(column["name"])))
+    if not required_changes:
+        return
+
+    if target_engine.dialect.name == "postgresql":
+        with target_engine.begin() as connection:
+            for table_name, column_name in required_changes:
+                connection.execute(text(
+                    f'ALTER TABLE "{table_name}" ALTER COLUMN "{column_name}" DROP NOT NULL'
+                ))
+        return
+
+    if target_engine.dialect.name != "sqlite":
+        raise RuntimeError("Migração de vínculos opcionais de relatório não suportada neste banco.")
+
+    # SQLite cannot alter nullability in place. Rebuild only the two affected tables,
+    # copying every column verbatim. Foreign keys are re-enabled and checked before return.
+    metadata = Base.metadata
+    with target_engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        connection.commit()
+        transaction = connection.begin()
+        try:
+            for table_name in dict.fromkeys(table for table, _ in required_changes):
+                old_table = f"_compat_old_{table_name}"
+                if old_table in inspect(connection).get_table_names():
+                    raise RuntimeError(f"Migração SQLite interrompida: tabela temporária {old_table} existe.")
+                table = metadata.tables[table_name]
+                names = [column.name for column in table.columns]
+                quoted_names = ", ".join(f'"{name}"' for name in names)
+                connection.exec_driver_sql(f'ALTER TABLE "{table_name}" RENAME TO "{old_table}"')
+                for index in inspect(connection).get_indexes(old_table):
+                    index_name = index.get("name")
+                    if index_name:
+                        connection.exec_driver_sql(f'DROP INDEX "{index_name}"')
+                table.create(connection)
+                connection.exec_driver_sql(
+                    f'INSERT INTO "{table_name}" ({quoted_names}) '
+                    f'SELECT {quoted_names} FROM "{old_table}"'
+                )
+                connection.exec_driver_sql(f'DROP TABLE "{old_table}"')
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            raise
+        finally:
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            connection.commit()
+        violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError("Migração SQLite deixou violações de chave estrangeira.")
+
+
 def ensure_schema_compatibility() -> None:
     ensure_schema_compatibility_for_engine(engine)
     ensure_service_history_guards_for_engine(engine)
@@ -199,7 +266,12 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
 
 @event.listens_for(Session, "before_flush")
 def _reject_service_history_mutation(session: Session, flush_context, instances) -> None:
-    from .models import LancamentoHistorico, ServiceEvent, ServiceTechnicalReport, ServiceWorkflowTransition
+    from .models import (
+        LancamentoHistorico,
+        ServiceEvent,
+        ServiceTechnicalReport,
+        ServiceWorkflowTransition,
+    )
 
     del flush_context, instances
     historical = (ServiceEvent, ServiceWorkflowTransition, ServiceTechnicalReport)

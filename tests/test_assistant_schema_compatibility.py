@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import MetaData, create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.db import (
@@ -11,7 +11,20 @@ from app.db import (
     ensure_schema_compatibility_for_engine,
     ensure_service_history_guards_for_engine,
 )
-from app.models import Client, Lancamento, Proposal, Task, User
+from app.models import (
+    AssistantAction,
+    AssistantConversation,
+    Client,
+    Lancamento,
+    Proposal,
+    ServiceCall,
+    ServiceEvent,
+    ServiceTechnicalReport,
+    ServiceWorkflowStep,
+    ServiceWorkflowTransition,
+    Task,
+    User,
+)
 
 ASSISTANT_TABLES = {
     "assistant_conversations",
@@ -230,3 +243,102 @@ def test_email_sync_activation_boundary_is_added_to_existing_state_table(tmp_pat
     assert "activation_at" in columns
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT COUNT(*) FROM email_sync_states")) == 1
+
+
+def test_report_event_links_become_optional_without_losing_existing_history(tmp_path):
+    engine = create_engine(f"sqlite:///{(tmp_path / 'legacy_service_report_links.sqlite3').as_posix()}" )
+    legacy_metadata = MetaData()
+    for table in Base.metadata.sorted_tables:
+        table.to_metadata(legacy_metadata)
+    legacy_metadata.tables["service_workflow_transitions"].c.service_event_id.nullable = False
+    legacy_metadata.tables["service_technical_reports"].c.document_event_id.nullable = False
+    legacy_metadata.create_all(engine)
+
+    with Session(engine) as session:
+        client = Client(razao_social="Cliente legado")
+        conversation = AssistantConversation()
+        session.add_all([client, conversation])
+        session.flush()
+        source_action = AssistantAction(
+            conversation_id=conversation.id,
+            request_id="legacy-service-source",
+            confirmation_token_hash="1" * 64,
+            action_type="register_service_event",
+            status="executed",
+        )
+        report_action = AssistantAction(
+            conversation_id=conversation.id,
+            request_id="legacy-report-action",
+            confirmation_token_hash="2" * 64,
+            action_type="generate_service_report",
+            status="executed",
+        )
+        session.add_all([source_action, report_action])
+        session.flush()
+        call = ServiceCall(
+            client_id=client.id,
+            summary="Chamado legado",
+            opened_on=date(2026, 10, 1),
+            execution_status="completed",
+        )
+        session.add(call)
+        session.flush()
+        step = ServiceWorkflowStep(service_call_id=call.id, step_type="report", status="completed")
+        session.add(step)
+        session.flush()
+        event = ServiceEvent(
+            service_call_id=call.id,
+            assistant_action_id=source_action.id,
+            conversation_id=conversation.id,
+            event_type="execution_completed",
+            occurred_on=date(2026, 10, 2),
+            description="Registro legado",
+        )
+        session.add(event)
+        session.flush()
+        session.add(ServiceWorkflowTransition(
+            service_call_id=call.id,
+            step_type="report",
+            previous_status="pending",
+            new_status="completed",
+            observation="Transição legada preservada",
+            service_event_id=event.id,
+            assistant_action_id=source_action.id,
+        ))
+        report = ServiceTechnicalReport(
+            service_call_id=call.id,
+            assistant_action_id=report_action.id,
+            document_event_id=event.id,
+            idempotency_key="legacy-report-key",
+            source_fingerprint="a" * 64,
+            source_event_ids=[event.id],
+            client_snapshot_json={"name": "Cliente legado"},
+            fields_json={"equipment": "Balança sintética"},
+            source_fields_json={},
+            manual_overrides_json=[],
+            missing_fields_json=[],
+            docx_path="legacy/report.docx",
+            pdf_path="legacy/report.pdf",
+            confirmed_at=datetime(2026, 10, 3, tzinfo=UTC),
+        )
+        session.add(report)
+        session.commit()
+        report_id = report.id
+
+    ensure_schema_compatibility_for_engine(engine)
+
+    columns = {
+        table: {column["name"]: column["nullable"] for column in inspect(engine).get_columns(table)}
+        for table in ("service_workflow_transitions", "service_technical_reports")
+    }
+    assert columns["service_workflow_transitions"]["service_event_id"] is True
+    assert columns["service_technical_reports"]["document_event_id"] is True
+    with Session(engine) as session:
+        migrated = session.get(ServiceTechnicalReport, report_id)
+        transition = session.scalar(select(ServiceWorkflowTransition))
+        assert migrated.fields_json["equipment"] == "Balança sintética"
+        assert migrated.document_event_id is not None
+        assert transition.observation == "Transição legada preservada"
+        assert transition.service_event_id is not None
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []

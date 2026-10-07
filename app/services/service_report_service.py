@@ -1,34 +1,37 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, date, datetime
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import tempfile
 import unicodedata
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     AssistantAction,
     AssistantConversation,
     AssistantMessage,
+    Client,
     ServiceCall,
-    ServiceEvent,
     ServiceTechnicalReport,
     ServiceWorkflowStep,
     ServiceWorkflowTransition,
 )
 from app.schemas import ServiceTechnicalReportFields
-from app.services import pdf_service, service_record_service, technical_report_document_service
-
+from app.services import (
+    pdf_service,
+    service_record_service,
+    technical_report_document_service,
+)
 
 FIELD_LABELS = {
     "client_name": "Cliente",
@@ -42,6 +45,7 @@ FIELD_LABELS = {
     "work_performed": "Serviço executado",
     "verification_result": "Resultado da verificação",
 }
+MAX_SERVICE_CALL_ID = 2_147_483_647
 EVENT_LABELS = {
     "call_received": "Chamado recebido",
     "visit_started": "Visita iniciada",
@@ -112,9 +116,88 @@ class ReportGenerationResult:
     replayed: bool = False
 
 
+def assistant_generation_settings() -> ReportGenerationSettings:
+    from app.config import get_settings
+
+    settings = get_settings()
+    return ReportGenerationSettings(
+        output_dir=settings.output_dir,
+        template_path=settings.technical_report_template_path,
+        libreoffice_cmd=settings.libreoffice_cmd,
+        timezone=settings.assistant_timezone,
+        libreoffice_docker_image=settings.technical_report_pdf_converter_image,
+    )
+
+
+def completed_service_calls(
+    db: Session,
+    *,
+    service_call_id: int | None = None,
+    client: str | None = None,
+    reference: str | None = None,
+) -> list[ServiceCall]:
+    query = (
+        select(ServiceCall)
+        .options(selectinload(ServiceCall.client))
+        .where(ServiceCall.execution_status == "completed")
+    )
+    if service_call_id is not None:
+        if not 1 <= service_call_id <= MAX_SERVICE_CALL_ID:
+            return []
+        query = query.where(ServiceCall.id == service_call_id)
+    else:
+        if client:
+            query = query.where(
+                ServiceCall.client.has(
+                    _contains_accent_insensitive(Client.razao_social, client)
+                )
+            )
+        if reference:
+            value = reference.strip()
+            matching_reference = [
+                _contains_accent_insensitive(ServiceCall.summary, value)
+            ]
+            if value.isdecimal() and len(value) <= 10:
+                numeric_reference = int(value)
+                if numeric_reference <= MAX_SERVICE_CALL_ID:
+                    matching_reference.append(ServiceCall.id == numeric_reference)
+            matching_reference.append(
+                ServiceCall.client.has(
+                    _contains_accent_insensitive(Client.razao_social, value)
+                )
+            )
+            query = query.where(or_(*matching_reference))
+    return list(
+        db.scalars(
+            query.order_by(ServiceCall.opened_on.desc(), ServiceCall.id.desc()).limit(11)
+        ).all()
+    )
+
+
 def _normalize_label(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", value.casefold())
     return "".join(char for char in decomposed if not unicodedata.combining(char)).strip()
+
+
+def _contains_accent_insensitive(column, value: str):
+    search_term = _normalize_label(value)
+    escaped = search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    expression = column
+    accent_map = {
+        "àáâãäå": "a",
+        "èéêë": "e",
+        "ìíîï": "i",
+        "òóôõöø": "o",
+        "ùúûü": "u",
+        "ç": "c",
+        "ñ": "n",
+        "ýÿ": "y",
+    }
+    for accented, plain in accent_map.items():
+        for character in accented:
+            expression = func.replace(expression, character, plain)
+            expression = func.replace(expression, character.upper(), plain)
+    return func.lower(expression).like(f"%{escaped}%", escape="\\")
 
 
 def _parse_narrative(description: str) -> dict[str, str]:
@@ -320,6 +403,7 @@ def generate_report(
     settings: ReportGenerationSettings,
     confirmed: bool,
     expected_fingerprint: str | None = None,
+    assistant_action: AssistantAction | None = None,
 ) -> ReportGenerationResult:
     if not confirmed:
         raise ReportConfirmationRequired("Confirme explicitamente a geração do relatório.")
@@ -367,34 +451,48 @@ def generate_report(
     report_dir.mkdir(parents=True, exist_ok=True)
 
     conversation: AssistantConversation | None = None
+    action: AssistantAction | None = None
     promoted: list[Path] = []
     commit_attempted = False
     try:
         with db.begin_nested():
-            conversation = AssistantConversation()
-            db.add(conversation)
-            db.flush()
-            request_id = f"service-report:{key}"
-            action = AssistantAction(
-                conversation_id=conversation.id,
-                request_id=request_id,
-                confirmation_token_hash=hashlib.sha256(f"service-report-confirm:{key}".encode()).hexdigest(),
-                action_type="generate_service_report",
-                status="executing",
-                arguments_json={
+            if assistant_action is None:
+                conversation = AssistantConversation()
+                db.add(conversation)
+                db.flush()
+                request_id = f"service-report:{key}"
+                action = AssistantAction(
+                    conversation_id=conversation.id,
+                    request_id=request_id,
+                    confirmation_token_hash=hashlib.sha256(f"service-report-confirm:{key}".encode()).hexdigest(),
+                    action_type="generate_service_report",
+                    status="executing",
+                    arguments_json={
+                        "service_call_id": call.id,
+                        "source_fingerprint": preview.source_fingerprint,
+                        "manual_overrides": overrides,
+                    },
+                )
+                db.add(action)
+                db.flush()
+                db.add(AssistantMessage(
+                    conversation_id=conversation.id,
+                    role="user",
+                    content=f"Confirmação explícita para gerar o relatório técnico do chamado #{call.id}.",
+                    request_id=request_id,
+                ))
+            else:
+                if assistant_action.action_type != "generate_service_report":
+                    raise ReportGenerationError("A ação de confirmação não corresponde a um relatório técnico.")
+                if assistant_action.status != "executing":
+                    raise ReportGenerationError("A ação de relatório não está em execução confirmada.")
+                action = assistant_action
+                action.arguments_json = {
+                    **action.arguments_json,
                     "service_call_id": call.id,
                     "source_fingerprint": preview.source_fingerprint,
                     "manual_overrides": overrides,
-                },
-            )
-            db.add(action)
-            db.flush()
-            db.add(AssistantMessage(
-                conversation_id=conversation.id,
-                role="user",
-                content=f"Confirmação explícita para gerar o relatório técnico do chamado #{call.id}.",
-                request_id=request_id,
-            ))
+                }
 
             with tempfile.TemporaryDirectory(prefix=f".report-{key_hash}-", dir=report_dir) as temporary:
                 temp_dir = Path(temporary)
@@ -421,20 +519,10 @@ def generate_report(
                 if _promote_exclusive(temp_pdf, pdf_final):
                     promoted.append(pdf_final)
 
-            document_event = ServiceEvent(
-                service_call_id=call.id,
-                assistant_action_id=action.id,
-                conversation_id=conversation.id,
-                event_type="note",
-                occurred_on=business_today,
-                description="Relatório técnico DOCX/PDF gerado após confirmação explícita.",
-            )
-            db.add(document_event)
-            db.flush()
             report = ServiceTechnicalReport(
                 service_call_id=call.id,
                 assistant_action_id=action.id,
-                document_event_id=document_event.id,
+                document_event_id=None,
                 idempotency_key=key,
                 source_fingerprint=preview.source_fingerprint,
                 source_event_ids=preview.source_event_ids,
@@ -461,7 +549,7 @@ def generate_report(
                     previous_status=report_step.status,
                     new_status="completed",
                     observation="Relatório técnico DOCX/PDF gerado após confirmação explícita.",
-                    service_event_id=document_event.id,
+                    service_event_id=None,
                     assistant_action_id=action.id,
                 ))
             action.status = "executed"
@@ -470,15 +558,19 @@ def generate_report(
                 "service_technical_report_id": report.id,
                 "docx_path": docx_relative,
                 "pdf_path": pdf_relative,
+                "report_id": report.id,
+                "report_docx_url": f"/web/services/relatorios/{report.id}/docx",
+                "report_pdf_url": f"/web/services/relatorios/{report.id}/pdf",
             }
-            db.add(AssistantMessage(
-                conversation_id=conversation.id,
-                role="assistant",
-                kind="tool_result",
-                content=f"Relatório técnico do chamado #{call.id} gerado em DOCX e PDF.",
-                reply_to_request_id=request_id,
-                details_json={"service_technical_report_id": report.id},
-            ))
+            if conversation is not None:
+                db.add(AssistantMessage(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    kind="tool_result",
+                    content=f"Relatório técnico do chamado #{call.id} gerado em DOCX e PDF.",
+                    reply_to_request_id=request_id,
+                    details_json={"service_technical_report_id": report.id},
+                ))
             service_record_service.rebuild_current_projection(db, call)
         commit_attempted = True
         db.commit()
