@@ -2,7 +2,7 @@
 
 Aplicação web interna para organizar o trabalho comercial e operacional da AD Balanças: clientes, propostas, tarefas, serviços, mensagens de e-mail e lançamentos financeiros. O sistema usa FastAPI, páginas renderizadas com Jinja2 e SQLAlchemy; os fluxos existentes foram ampliados gradualmente e não dependem de um frontend separado.
 
-> **Segurança:** ainda não há autenticação efetiva protegendo as páginas e APIs. Use somente em computadores confiáveis e mantenha a aplicação e o PostgreSQL vinculados a `127.0.0.1`. Não publique o serviço na rede ou na internet.
+> **Segurança:** o projeto agora exige autenticação por sessão quando habilitado; a instância local 8013 deve permanecer na versão anterior até o primeiro administrador ser provisionado e seu login validado pelo procedimento interativo. Mantenha aplicação e PostgreSQL em `127.0.0.1`; não publique o serviço na rede ou na internet.
 
 ## O que o projeto faz
 
@@ -59,7 +59,16 @@ Aplicação web interna para organizar o trabalho comercial e operacional da AD 
 - Comandos e argumentos são validados por esquemas tipados e por uma lista explícita de ferramentas. Não são aceitos SQL, shell ou execução de código gerado pelo modelo. Resposta estrutural inválida não autoriza uma gravação; o backend pode fazer uma única tentativa controlada de reparo e encerra com erro compreensível se ela falhar.
 - Consultas de tarefa, serviço e e-mail são executadas por serviços específicos do backend. O assistente só deve dizer que consultou quando houver evidência de resultado, distinguindo sucesso, vazio confirmado, falha, parcial e capacidade não configurada.
 - Criações manuais passam por rascunho e confirmação explícita antes de gravar; correções invalidam a confirmação anterior. A persistência usa identificadores de requisição/ação para reconciliar repetição e evitar duplicidade. Cliente ausente ou ambíguo não bloqueia a tarefa: mantém-se o nome informado, sem inventar cliente ou ID, e o vínculo fica pendente de revisão.
-- O modelo não envia e-mails, não altera mensagens, não paga/baixa contas e não emite nota fiscal. Capacidades indisponíveis ou não implementadas devem ser explicadas; não devem ser convertidas silenciosamente em outra ação.
+- O modelo do Assistente não envia e-mails, não altera mensagens, não paga/baixa contas e não emite nota fiscal. A aba Promoções tem transporte SMTP separado e só pode enviar depois de configuração própria e confirmação explícita da campanha.
+
+### Promoções por e-mail
+
+- A aba **Promoções** combina descrição livre com prompt-base fixo para gerar imagem, assunto e corpo usando Gemini. O período é opcional; a aplicação valida números e condições para reduzir risco de conteúdo comercial inventado.
+- Imagem e mensagem têm prévias editáveis. A imagem pode ser regenerada com uma referência visual PNG/JPEG opcional ou substituída; o texto comercial continua revisável independentemente da arte.
+- A ficha de cada cliente permite cadastrar contatos de campanha. Autorização começa desativada e exige e-mail válido, origem e data registrados; clientes antigos não são incluídos automaticamente. Revogações têm histórico append-only.
+- Rascunho e seleção de destinatários não enviam nada. O envio requer `PROMOTION_SMTP_*` configurado separadamente do IMAP Yahoo, confirmação explícita e revalidação de consentimento. O resultado fica registrado por campanha e destinatário.
+- Cada mensagem é individual. Repetições não reenviam destinatários concluídos; um resultado SMTP ambíguo fica para revisão, sem retry automático. Não existe envio de campanhas nos testes.
+- Veja [documentação de campanhas](docs/promocoes-campanhas.md) para variáveis de ambiente, privacidade, migração, consentimento e limites.
 
 #### Como a IA é usada
 
@@ -305,7 +314,7 @@ No Docker, Gemini requer `GEMINI_API_KEY` entregue com segurança ao container. 
 - O startup cria tabelas ausentes e aplica verificações de compatibilidade previstas pelo código. Faça backup antes de atualizar um banco existente; não trate isso como substituto de um processo formal de migração/rollback.
 - Não exponha `.env`, `.env.yahoo.local`, backups, `output/`, áudios, arquivos de modelo ou documentos com dados de clientes ao Git ou a serviços externos.
 - O histórico de conversa e metadados necessários ao fluxo ficam no banco. O sistema não deve registrar áudio ou credenciais em logs; mensagens de e-mail são armazenadas como projeção mínima, sem corpo integral.
-- Como não há autenticação efetiva, localhost restringe o acesso por interface de rede, mas não substitui controle de acesso entre usuários da mesma máquina. Não hospede em computador compartilhado ou rede corporativa sem implementar e validar autenticação e autorização.
+- O login protege as rotas e os downloads, mas não implementa papéis: todo usuário ativo autenticado tem acesso equivalente. Localhost restringe a interface de rede, mas não substitui autorização granular para computador compartilhado.
 
 ## Testes
 
@@ -323,4 +332,5 @@ No Windows, use `python -m pytest -q` no lugar do caminho Unix `.venv/bin/pytest
 - [`docs/assistente/`](docs/assistente/) — configuração, desenho e relatórios de validação do assistente, voz e e-mail.
 - [`docs/assistente/especificacao-produto-evolucao.md`](docs/assistente/especificacao-produto-evolucao.md) — capacidades existentes e evolução planejada.
 - [`docs/assistente/plano-evolucao.md`](docs/assistente/plano-evolucao.md) — fases futuras; plano não significa funcionalidade já implementada.
+- [`docs/autenticacao.md`](docs/autenticacao.md) — login, CSRF, proteção de arquivos e bootstrap do administrador.
 - `docs/superpowers/` — especificações e planos históricos de mudanças.

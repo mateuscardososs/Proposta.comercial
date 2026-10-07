@@ -126,6 +126,45 @@
 {% endif %}
 
 {% if client %}
+<section class="card" id="campaign-contacts">
+  <div class="card-head"><div><h2 class="card-title">Contatos para campanhas</h2><p class="card-subtitle">Novos contatos começam sem autorização. Só entram em campanhas quando houver e-mail válido e consentimento com origem e data registrados.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Contato</th><th>E-mail</th><th>Autorização</th><th>Origem / data</th><th>Ação</th></tr></thead>
+    <tbody>
+      {% for contact in campaign_contacts or [] %}
+      <tr><td>{{ contact.name or "-" }}</td><td>{{ contact.email }}</td><td>{% if contact.active and contact.marketing_enabled %}<span class="badge success">Autorizado</span>{% else %}<span class="badge">Fora dos envios</span>{% endif %}</td><td>{{ contact.consent_source or "-" }}{% if contact.consented_at %}<br>{{ contact.consented_at.strftime('%d/%m/%Y') }}{% endif %}{% if contact.revoked_at %}<br>Revogado em {{ contact.revoked_at.strftime('%d/%m/%Y') }}{% endif %}</td><td>
+        <details><summary class="btn btn-ghost">Editar autorização</summary>
+          <form method="post" action="/web/clients/{{ client.id }}/campaign-contacts/{{ contact.id }}" class="form-stack mt-8">
+            <input type="hidden" name="form_token" value="{{ campaign_form_token }}">
+            <label>Nome do contato <input name="name" value="{{ contact.name }}" maxlength="120"></label>
+            <label>E-mail <input name="email" type="email" value="{{ contact.email }}" required maxlength="254"></label>
+            <label><input type="checkbox" name="marketing_enabled" {% if contact.marketing_enabled %}checked{% endif %}> Autorizado a receber campanhas</label>
+            <label>Origem da autorização <input name="consent_source" value="{{ contact.consent_source }}" maxlength="500" placeholder="Ex.: formulário de consentimento"></label>
+            <label>Data da autorização <input name="consented_on" type="date" value="{{ contact.consented_at.strftime('%Y-%m-%d') if contact.consented_at else '' }}"></label>
+            <label><input type="checkbox" name="reauthorize_consent"> Confirmo nova autorização se alterei o endereço, a origem ou a data</label>
+            <label>Origem da revogação (se aplicável) <input name="revocation_source" value="{{ contact.revocation_source }}" maxlength="500"></label>
+            <button class="btn btn-secondary" type="submit">Salvar contato</button>
+          </form>
+        </details>
+      </td></tr>
+      {% else %}<tr><td colspan="5"><div class="empty-state compact">Nenhum contato de campanha cadastrado. Nenhum cliente existente é elegível automaticamente.</div></td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  <details class="mt-12"><summary class="btn btn-primary">Cadastrar contato de campanha</summary>
+    <form method="post" action="/web/clients/{{ client.id }}/campaign-contacts" class="form-grid-2 mt-8">
+      <input type="hidden" name="form_token" value="{{ campaign_form_token }}">
+      <label>Nome do contato <input name="name" maxlength="120"></label>
+      <label>E-mail <input name="email" type="email" required maxlength="254"></label>
+      <label><input type="checkbox" name="marketing_enabled"> Autorizado a receber campanhas</label>
+      <label>Origem da autorização <input name="consent_source" maxlength="500" placeholder="Preencha somente se autorizado"></label>
+      <label>Data da autorização <input name="consented_on" type="date"></label>
+      <div><button class="btn btn-success" type="submit">Salvar contato</button></div>
+    </form>
+  </details>
+</section>
+{% endif %}
+
+{% if client %}
 <section class="card" data-client-services>
   <div class="card-head"><div><h2 class="card-title">Serviços confirmados deste cliente</h2><p class="card-subtitle">Somente vínculos registrados pelo identificador do cliente.</p></div></div>
   <div class="table-wrap"><table>

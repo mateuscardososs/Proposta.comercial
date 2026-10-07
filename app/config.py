@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     app_reload: bool = True
+    auth_enabled: bool = True
+    auth_session_secret: SecretStr = SecretStr("")
+    auth_session_max_age_seconds: int = Field(default=8 * 60 * 60, ge=1, le=7 * 24 * 60 * 60)
+    auth_login_attempts: int = Field(default=5, ge=1, le=20)
+    auth_login_window_seconds: int = Field(default=900, ge=60, le=86400)
     default_km_value: float = 2.95
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = ""
@@ -69,8 +74,19 @@ class Settings(BaseSettings):
     llm_provider: Literal["ollama", "gemini"] = "gemini"
     gemini_api_key: SecretStr = SecretStr("")
     gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_image_model: str = "gemini-nano-banana-2.1"
     gemini_connect_timeout: float = 3.0
     gemini_read_timeout: float = 60.0
+    promotion_max_reference_image_bytes: int = Field(default=8 * 1024 * 1024, ge=1024, le=20 * 1024 * 1024)
+    promotion_smtp_host: str = ""
+    promotion_smtp_port: int = Field(default=587, ge=1, le=65535)
+    promotion_smtp_username: str = ""
+    promotion_smtp_password: SecretStr = SecretStr("")
+    promotion_smtp_from_email: str = ""
+    promotion_smtp_from_name: str = "AD Balanças"
+    promotion_smtp_starttls: bool = True
+    promotion_smtp_use_ssl: bool = False
+    promotion_smtp_timeout_seconds: float = Field(default=15.0, ge=1, le=120)
     voice_enabled: bool = True
     voice_model_dir: Path = VOICE_MODEL_DIR
     voice_whisper_model: str = "small"

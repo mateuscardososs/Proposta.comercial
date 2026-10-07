@@ -58,6 +58,133 @@ class Client(Base, TimestampMixin):
         back_populates="client",
         cascade="all, delete-orphan",
     )
+    campaign_contacts: Mapped[list["ClientCampaignContact"]] = relationship(
+        back_populates="client",
+    )
+
+
+class ClientCampaignContact(Base, TimestampMixin):
+    """A contact explicitly opted in (or out) of promotional email."""
+
+    __tablename__ = "client_campaign_contacts"
+    __table_args__ = (
+        UniqueConstraint("client_id", "email_normalized", name="uq_campaign_contact_client_email"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    email: Mapped[str] = mapped_column(String(254), nullable=False)
+    email_normalized: Mapped[str] = mapped_column(String(254), nullable=False, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    marketing_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    consent_source: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revocation_source: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+
+    client: Mapped[Client] = relationship(back_populates="campaign_contacts")
+    consent_events: Mapped[list["CampaignContactConsentEvent"]] = relationship()
+
+
+class CampaignContactConsentEvent(Base):
+    __tablename__ = "campaign_contact_consent_events"
+    __table_args__ = (
+        UniqueConstraint("event_key", name="uq_campaign_contact_consent_event_key"),
+        CheckConstraint("event_type IN ('opt_in', 'opt_out')", name="ck_campaign_consent_event_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    contact_id: Mapped[int] = mapped_column(
+        ForeignKey("client_campaign_contacts.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    event_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    email_snapshot: Mapped[str] = mapped_column(String(254), nullable=False)
+    source: Mapped[str] = mapped_column(String(500), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PromotionCampaign(Base, TimestampMixin):
+    __tablename__ = "promotion_campaigns"
+    __table_args__ = (
+        UniqueConstraint("request_key", name="uq_promotion_campaign_request_key"),
+        CheckConstraint(
+            "status IN ('draft', 'generating', 'generation_failed', 'sending', 'sent', 'partial', 'cancelled')",
+            name="ck_promotion_campaign_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    request_key: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    body: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    image_path: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    image_mime: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="draft", server_default="draft", nullable=False, index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    confirmed_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    generation_error: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+
+    recipients: Mapped[list["PromotionRecipient"]] = relationship(back_populates="campaign")
+    events: Mapped[list["PromotionCampaignEvent"]] = relationship(back_populates="campaign")
+
+
+class PromotionRecipient(Base, TimestampMixin):
+    __tablename__ = "promotion_recipients"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "email_normalized", name="uq_promotion_recipient_email"),
+        CheckConstraint(
+            "status IN ('pending', 'sending', 'sent', 'failed', 'unknown', 'suppressed', 'cancelled')",
+            name="ck_promotion_recipient_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("promotion_campaigns.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    contact_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_campaign_contacts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    client_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    contact_name_snapshot: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    email_snapshot: Mapped[str] = mapped_column(String(254), nullable=False)
+    email_normalized: Mapped[str] = mapped_column(String(254), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending", nullable=False, index=True)
+    provider_message_id: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    error_code: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    campaign: Mapped[PromotionCampaign] = relationship(back_populates="recipients")
+    contact: Mapped[ClientCampaignContact | None] = relationship()
+
+
+class PromotionCampaignEvent(Base):
+    __tablename__ = "promotion_campaign_events"
+    __table_args__ = (UniqueConstraint("event_key", name="uq_promotion_campaign_event_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("promotion_campaigns.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    event_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    details: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    campaign: Mapped[PromotionCampaign] = relationship(back_populates="events")
 
 
 class User(Base, TimestampMixin):

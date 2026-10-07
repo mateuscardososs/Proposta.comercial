@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header"><div><span class="eyebrow">Promoções · revisão obrigatória</span>
+  <h1 class="page-title">Campanha #{{ campaign.id }}</h1>
+  <p class="page-subtitle">Estado: <strong>{{ campaign.status|replace('_', ' ')|title }}</strong> · Versão {{ campaign.revision }} · {{ campaign.recipients|length }} destinatário(s) selecionado(s).</p>
+  <div class="meta-line"><a class="btn btn-secondary" href="/web/promocoes">Voltar às campanhas</a></div>
+</div></section>
+
+{% if campaign.status == "generation_failed" %}<div class="alert alert-warning" role="status">A geração falhou (código {{ campaign.generation_error or "indisponível" }}). Não houve envio. Você pode revisar o texto e substituir a imagem abaixo ou criar outro rascunho.</div>{% endif %}
+{% if send_enabled %}<div class="alert alert-warning" role="status">O provedor de saída está configurado. O envio só começa após a confirmação explícita no final desta página.</div>{% else %}<div class="alert alert-info" role="status"><strong>Envio desativado.</strong> {{ send_unavailable_reason }}</div>{% endif %}
+
+<section class="card"><div class="card-head"><div><h2 class="card-title">Prévia visual</h2><p class="card-subtitle">A imagem é ilustrativa; confira o texto comercial separadamente abaixo.</p></div></div>
+  {% if output_image_url %}<img src="{{ output_image_url }}" alt="Prévia da imagem promocional da campanha" style="max-width:100%;height:auto;border-radius:12px">{% else %}<div class="empty-state compact">Ainda não há imagem disponível.</div>{% endif %}
+  {% if campaign.status in ["draft", "generation_failed"] %}
+  <form method="post" action="/web/promocoes/{{ campaign.id }}/edit" enctype="multipart/form-data" class="mt-12">
+    <input type="hidden" name="form_token" value="{{ form_token }}">
+    <input type="hidden" name="description" value="{{ campaign.description }}">
+    <input type="hidden" name="subject" value="{{ campaign.subject }}">
+    <input type="hidden" name="body" value="{{ campaign.body }}">
+    <label>Substituir a imagem revisada (PNG/JPEG) <input type="file" name="replacement_image" accept="image/png,image/jpeg"></label>
+    <button class="btn btn-secondary mt-8" type="submit">Atualizar imagem da prévia</button>
+  </form>
+  <details class="mt-12"><summary class="btn btn-ghost">Gerar outra imagem com Gemini</summary>
+    <form method="post" action="/web/promocoes/{{ campaign.id }}/regenerate-image" enctype="multipart/form-data" class="mt-8">
+      <input type="hidden" name="form_token" value="{{ form_token }}">
+      <label>Referência visual opcional (PNG/JPEG, até {{ max_reference_image_bytes // 1024 // 1024 }} MB) <input type="file" name="reference_image" accept="image/png,image/jpeg"></label>
+      <p class="muted">Uma referência enviada nesta ação será encaminhada ao Gemini e descartada localmente após a geração.</p>
+      <button class="btn btn-secondary" type="submit" {% if not generation_enabled %}disabled{% endif %}>Regenerar imagem</button>
+    </form>
+  </details>{% endif %}
+</section>
+
+<section class="card"><div class="card-head"><div><h2 class="card-title">Prévia editável do e-mail</h2><p class="card-subtitle">Revisão da mensagem e dos dados é independente da imagem. A edição cria nova versão e invalida qualquer confirmação anterior.</p></div></div>
+  {% if campaign.status in ["draft", "generation_failed"] %}
+  <form method="post" action="/web/promocoes/{{ campaign.id }}/edit" enctype="multipart/form-data">
+    <input type="hidden" name="form_token" value="{{ form_token }}">
+    <input type="hidden" name="replacement_image" value="">
+    <div class="field"><label for="description">Descrição-base da campanha</label><textarea id="description" name="description" rows="4" required>{{ campaign.description }}</textarea></div>
+    <div class="field mt-8"><label for="subject">Assunto</label><input id="subject" name="subject" value="{{ campaign.subject }}" required maxlength="255"></div>
+    <div class="field mt-8"><label for="body">Corpo do e-mail</label><textarea id="body" name="body" rows="10" required>{{ campaign.body }}</textarea></div>
+    <button class="btn btn-primary mt-8" type="submit">Salvar revisão</button>
+  </form>
+  {% else %}<h3>{{ campaign.subject }}</h3><p style="white-space:pre-wrap">{{ campaign.body }}</p>{% endif %}
+</section>
+
+<section class="card"><div class="card-head"><div><h2 class="card-title">Destinatários e resultado</h2><p class="card-subtitle">O envio revalida autorização e endereço antes de cada destinatário. Nenhum destinatário oculto em cópia compartilhada.</p></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Cliente</th><th>Contato</th><th>E-mail</th><th>Estado</th><th>Tentativas</th><th>Resultado</th></tr></thead><tbody>
+    {% for recipient in campaign.recipients %}<tr><td>{{ recipient.client_name_snapshot }}</td><td>{{ recipient.contact_name_snapshot or "-" }}</td><td>{{ recipient.email_snapshot }}</td><td>{{ recipient.status|replace('_', ' ')|title }}</td><td>{{ recipient.attempts }}</td><td>{{ recipient.error_code or recipient.provider_message_id or "-" }}</td></tr>
+    {% else %}<tr><td colspan="6"><div class="empty-state compact">Nenhum destinatário selecionado. Crie uma nova campanha após cadastrar contatos autorizados.</div></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+{% if campaign.status in ["draft", "generation_failed"] %}
+<section class="card"><div class="card-head"><div><h2 class="card-title">Confirmar envio</h2><p class="card-subtitle">Confira imagem, assunto, corpo e destinatários. O envio será um e-mail individual por destinatário e não pode ser desfeito.</p></div></div>
+  {% if send_enabled %}
+  <form method="post" action="/web/promocoes/{{ campaign.id }}/confirm-send">
+    <input type="hidden" name="form_token" value="{{ form_token }}">
+    <label class="check-row"><input type="checkbox" name="confirmation" value="CONFIRMAR" required> Confirmo o envio desta versão ({{ campaign.recipients|length }} destinatário(s))</label>
+    <button class="btn btn-danger mt-8" type="submit" {% if not campaign.image_path or not campaign.subject or not campaign.body or not campaign.recipients %}disabled{% endif %}>Confirmar e enviar</button>
+  </form>
+  {% else %}<p class="muted">O botão de envio fica indisponível até configurar o SMTP separado.</p>{% endif %}
+  <form method="post" action="/web/promocoes/{{ campaign.id }}/cancel" class="mt-12"><input type="hidden" name="form_token" value="{{ form_token }}"><button class="btn btn-ghost" type="submit">Cancelar campanha</button></form>
+</section>{% endif %}
+{% endblock %}

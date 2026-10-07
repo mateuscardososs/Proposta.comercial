@@ -10,12 +10,14 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 from scripts.assistant_8013_runtime import (
+    AUTH_SESSION_SECRET_FILE,
     DATABASE_URL_FILE,
     DEFAULT_OLLAMA_MODEL,
     PROJECT_ROOT,
     installed_ollama_models,
     prepare_database_url_from_container,
     prepare_runtime_settings_from_container,
+    read_private_auth_session_secret,
     read_private_database_url,
     read_private_runtime_settings,
     runtime_environment,
@@ -115,6 +117,8 @@ def _verify_voice_assets(environment: dict[str, str]) -> None:
 def run() -> None:
     base_values = _load_local_configuration()
     database_url = read_private_database_url(DATABASE_URL_FILE)
+    os.environ["AUTH_SESSION_SECRET"] = read_private_auth_session_secret(AUTH_SESSION_SECRET_FILE)
+    os.environ["AUTH_ENABLED"] = "true"
     model = _select_installed_model(base_values, provider=os.getenv("LLM_PROVIDER"))
     environment = runtime_environment(
         database_url,
@@ -139,6 +143,10 @@ def run() -> None:
         raise RuntimeError("A criacao automatica existente esta desativada na configuracao.")
 
     verify_database(settings.database_url)
+    from app.db import SessionLocal
+    from app.security.auth import assert_auth_ready
+
+    assert_auth_ready(SessionLocal)
     print("8013 local: voz habilitada; PostgreSQL propostas_db validado em loopback.")
     print(f"Provedor de texto ativo: {settings.llm_provider}.")
 
