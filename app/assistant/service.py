@@ -910,10 +910,21 @@ class AssistantService:
         normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", normalize_text(message)).split())
         refers_to_document = any(
             term in normalized.split()
-            for term in ("proposta", "propostas", "documento", "documentos", "arquivo", "arquivos", "pdf", "docx")
+            for term in (
+                "proposta",
+                "propostas",
+                "documento",
+                "documentos",
+                "arquivo",
+                "arquivos",
+                "relatorio",
+                "relatorios",
+                "pdf",
+                "docx",
+            )
         ) or "no arquivo" in normalized or "na proposta" in normalized
         asks_about_content = any(
-            cue in normalized
+            re.search(rf"\b{re.escape(cue)}\b", normalized)
             for cue in (
                 "qual",
                 "quanto",
@@ -962,10 +973,20 @@ class AssistantService:
                     source += f", seção {item.get('section') or 'não identificada'}"
                 lines.append(f"• “{item['excerpt']}”\n  Fonte: {source}.")
             message = "\n\n".join(lines)
+            if result.partial_documents:
+                message += (
+                    f"\n\nA busca é parcial: {result.partial_documents} arquivo(s) foram indexados parcialmente; "
+                    "a ausência de outras informações não está confirmada."
+                )
             if result.unreadable_documents:
                 message += (
-                    f"\n\nA busca é parcial: {result.unreadable_documents} arquivo(s) registrado(s) "
-                    "não puderam ser consultados; a ausência de outras informações não está confirmada."
+                    f"\n\n{result.unreadable_documents} arquivo(s) registrado(s) não puderam ser consultados; "
+                    "a ausência de outras informações não está confirmada."
+                )
+            if result.ocr_unavailable_documents:
+                message += (
+                    f" OCR local não está disponível para {result.ocr_unavailable_documents} PDF(s) "
+                    "sem texto pesquisável."
                 )
             spoken_message = f"Encontrei {len(items)} trecho(s) com referência de documento. "
             spoken_message += " ".join(
@@ -974,22 +995,39 @@ class AssistantService:
                 for item in items[:2]
             )
         elif result.registered_documents == 0:
-            message = "Não encontrei documentos vinculados a propostas para consultar nesta aplicação."
-            spoken_message = "Não encontrei documentos de proposta registrados para consulta."
+            message = "Não encontrei documentos importados e registrados para consulta nesta aplicação."
+            spoken_message = "Não encontrei documentos registrados para consulta."
         elif result.readable_documents == 0 and result.unreadable_documents:
             message = (
-                "Não consegui consultar os arquivos de proposta registrados. "
+                "Não consegui consultar os arquivos registrados. "
                 "Não posso confirmar se a informação solicitada existe nos documentos."
             )
+            if result.ocr_unavailable_documents:
+                message += (
+                    f" OCR local não está disponível para {result.ocr_unavailable_documents} PDF(s) "
+                    "sem texto pesquisável."
+                )
             spoken_message = "Não consegui consultar os arquivos registrados; não posso confirmar essa informação."
         else:
             message = "Não encontrei evidência suficiente nos documentos consultáveis para responder."
             if result.unreadable_documents:
                 message += (
                     f" A busca é parcial: {result.unreadable_documents} arquivo(s) registrado(s) "
-                    "não puderam ser consultados."
+                    "não puderam ser consultados; a ausência não está confirmada."
+                )
+            if result.partial_documents:
+                message += (
+                    f" {result.partial_documents} arquivo(s) foram indexados parcialmente; "
+                    "a ausência de outras informações não está confirmada."
+                )
+            if result.ocr_unavailable_documents:
+                message += (
+                    f" OCR local não está disponível para {result.ocr_unavailable_documents} PDF(s) "
+                    "sem texto pesquisável."
                 )
             spoken_message = "Não encontrei evidência suficiente nos documentos consultáveis para responder."
+        if result.unreadable_documents or result.partial_documents:
+            spoken_message += " A busca foi parcial, então não posso confirmar ausência de outras informações."
         return AssistantReply(
             conversation_id=conversation_id,
             kind="text",
@@ -997,9 +1035,11 @@ class AssistantService:
             spoken_message=spoken_message,
             document_items=items,
             limitations=(
-                ["A busca foi parcial porque há arquivos registrados que não puderam ser consultados."]
-                if result.unreadable_documents
-                else []
+                (
+                    ["A busca foi parcial porque há arquivos registrados que não puderam ser consultados."]
+                    + (["OCR local indisponível para alguns PDFs sem camada de texto."] if result.ocr_unavailable_documents else [])
+                )
+                if result.unreadable_documents or result.partial_documents else []
             ),
         )
 

@@ -4,11 +4,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.assistant.dates import normalize_text
-from app.models import Proposal
-from app.services import pdf_import_service, proposal_file_service
+from app.models import DocumentTextIndex, DocumentTextIndexEntry, Proposal
+from app.services.document_index_service import reindex_registered_documents
 
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 MAX_RESULTS = 5
@@ -42,8 +43,8 @@ _INSTRUCTION_LIKE = re.compile(
 @dataclass(frozen=True)
 class DocumentEvidence:
     document_name: str
-    proposal_number: int
-    revision: str
+    proposal_number: int | None
+    revision: str | None
     page: int | None
     section: str | None
     excerpt: str
@@ -68,6 +69,8 @@ class DocumentSearchResult:
     registered_documents: int
     readable_documents: int
     unreadable_documents: int
+    ocr_unavailable_documents: int = 0
+    partial_documents: int = 0
 
 
 def _proposal_number(query: str) -> int | None:
@@ -147,71 +150,75 @@ def search_proposal_documents(
     query: str,
     limit: int = MAX_RESULTS,
 ) -> DocumentSearchResult:
-    """Search only files registered on proposal rows and contained in OUTPUT_DIR."""
+    """Reconcile and search the persistent index of system-registered documents."""
+    reindex_registered_documents(db, output_dir=output_dir)
+    return search_document_index(db, query=query, limit=limit)
+
+
+def search_document_index(
+    db: Session,
+    *,
+    query: str,
+    limit: int = MAX_RESULTS,
+) -> DocumentSearchResult:
     requested_number = _proposal_number(query)
     query_terms = _query_terms(query)
-    proposals = (
-        db.query(Proposal)
-        .filter((Proposal.docx_path != "") | (Proposal.pdf_path != ""))
-        .order_by(Proposal.data_geracao.desc(), Proposal.numero.desc(), Proposal.id.desc())
-        .all()
-    )
+    indexes = db.scalars(select(DocumentTextIndex).order_by(DocumentTextIndex.id)).all()
+    registered_documents = len(indexes)
+    readable_documents = sum(index.status in {"searchable", "partial"} for index in indexes)
+    partial_documents = sum(index.status == "partial" for index in indexes)
+    unreadable_documents = sum(index.status not in {"searchable", "partial"} for index in indexes)
+    ocr_unavailable_documents = sum(index.extraction_method == "ocr_unavailable" for index in indexes)
     if requested_number is not None:
-        proposals = [proposal for proposal in proposals if proposal.numero == requested_number]
-
-    registered_documents = 0
-    readable_documents = 0
-    unreadable_documents = 0
+        proposal_ids = set(
+            db.scalars(select(Proposal.id).where(Proposal.numero == requested_number)).all()
+        )
+        indexes = [
+            index for index in indexes
+            if index.source_type == "proposal" and index.source_id in proposal_ids
+        ]
     evidence: list[DocumentEvidence] = []
-    for proposal in proposals:
-        for relative_path, suffix in ((proposal.pdf_path, ".pdf"), (proposal.docx_path, ".docx")):
-            if not relative_path:
-                continue
-            registered_documents += 1
-            path = _resolve_registered_file(relative_path, output_dir, suffix)
-            if path is None:
-                unreadable_documents += 1
-                continue
-            try:
-                payload = path.read_bytes()
-                if suffix == ".pdf":
-                    pages = pdf_import_service.extract_pdf_pages(payload)
-                    if not any(pages):
-                        raise pdf_import_service.PDFNoTextError("PDF sem texto extraível.")
-                    readable_documents += 1
-                    for page_number, page_text in enumerate(pages, start=1):
-                        evidence.extend(
-                            _search_document(
-                                path=path,
-                                proposal=proposal,
-                                query_terms=query_terms,
-                                page=page_number,
-                                section=None,
-                                text=page_text,
-                            )
-                        )
-                else:
-                    sections = proposal_file_service.extract_docx_sections(payload)
-                    readable_documents += 1
-                    for section, section_text in sections:
-                        evidence.extend(
-                            _search_document(
-                                path=path,
-                                proposal=proposal,
-                                query_terms=query_terms,
-                                page=None,
-                                section=section,
-                                text=section_text,
-                            )
-                        )
-            except Exception:
-                # The reply reports incompleteness without logging document contents or parser details.
-                unreadable_documents += 1
+    for index in indexes:
+        if index.status not in {"searchable", "partial"}:
+            continue
+        proposal: Proposal | None = None
+        if index.source_type == "proposal":
+            proposal = db.get(Proposal, index.source_id)
+        for entry in db.scalars(
+            select(DocumentTextIndexEntry)
+            .where(DocumentTextIndexEntry.document_index_id == index.id)
+            .order_by(DocumentTextIndexEntry.ordinal)
+        ).all():
+            for segment in _segments(entry.text):
+                score = _score_segment(segment, query_terms)
+                if not score:
+                    continue
+                evidence.append(
+                    DocumentEvidence(
+                        document_name=index.document_name,
+                        proposal_number=proposal.numero if proposal else None,
+                        revision=proposal.revisao if proposal else None,
+                        page=entry.page,
+                        section=entry.section,
+                        excerpt=segment[:700],
+                        score=score,
+                    )
+                )
 
-    evidence.sort(key=lambda item: (-item.score, -item.proposal_number, item.document_name, item.page or 0))
+    evidence.sort(
+        key=lambda item: (
+            -item.score,
+            -(item.proposal_number or 0),
+            item.document_name,
+            item.page or 0,
+            item.section or "",
+        )
+    )
     return DocumentSearchResult(
         evidence=tuple(evidence[: max(1, min(limit, MAX_RESULTS))]),
         registered_documents=registered_documents,
         readable_documents=readable_documents,
         unreadable_documents=unreadable_documents,
+        ocr_unavailable_documents=ocr_unavailable_documents,
+        partial_documents=partial_documents,
     )

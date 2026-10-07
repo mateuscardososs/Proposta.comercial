@@ -6,6 +6,7 @@ from decimal import Decimal
 from sqlalchemy import (
     JSON,
     Boolean,
+    BigInteger,
     CheckConstraint,
     Date,
     DateTime,
@@ -777,3 +778,57 @@ class ServiceTechnicalReport(Base):
     service_call: Mapped[ServiceCall] = relationship()
     assistant_action: Mapped[AssistantAction] = relationship()
     document_event: Mapped[ServiceEvent | None] = relationship()
+
+
+class DocumentTextIndex(Base):
+    """Mutable search index for a file explicitly registered by the application."""
+
+    __tablename__ = "document_text_indexes"
+    __table_args__ = (
+        UniqueConstraint("source_type", "source_id", "source_slot", name="uq_document_text_source"),
+        CheckConstraint("source_type IN ('proposal', 'service_report')", name="ck_document_text_source_type"),
+        CheckConstraint("source_slot IN ('pdf', 'docx')", name="ck_document_text_source_slot"),
+        CheckConstraint(
+            "status IN ('searchable', 'partial', 'unsearchable', 'missing', 'blocked')",
+            name="ck_document_text_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source_slot: Mapped[str] = mapped_column(String(10), nullable=False)
+    relative_path: Mapped[str] = mapped_column(String(1000), nullable=False)
+    document_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    mtime_ns: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    extraction_method: Mapped[str] = mapped_column(String(30), default="", nullable=False)
+    language: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    entries: Mapped[list[DocumentTextIndexEntry]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="DocumentTextIndexEntry.ordinal",
+    )
+
+
+class DocumentTextIndexEntry(Base):
+    __tablename__ = "document_text_index_entries"
+    __table_args__ = (
+        UniqueConstraint("document_index_id", "ordinal", name="uq_document_text_entry_ordinal"),
+        CheckConstraint("page IS NULL OR page > 0", name="ck_document_text_entry_page"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_index_id: Mapped[int] = mapped_column(
+        ForeignKey("document_text_indexes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    document: Mapped[DocumentTextIndex] = relationship(back_populates="entries")
