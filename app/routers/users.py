@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import hashlib
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import User
 from app.schemas import UserCreate, UserRead
+from app.security.passwords import hash_password
 
 router = APIRouter(prefix="/api/users", tags=["users"])
-
-
-def hash_password(raw_password: str) -> str:
-    return hashlib.sha256(raw_password.encode("utf-8")).hexdigest()
 
 
 @router.get("/", response_model=list[UserRead])

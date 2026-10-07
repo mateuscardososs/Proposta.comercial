@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from pydantic import ValidationError
 from sqlalchemy import and_, func, not_, or_
 from sqlalchemy.orm import Session, joinedload
 
@@ -16,6 +17,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import (
     Client,
+    ClientCampaignContact,
     EmailActionDraft,
     EmailSyncState,
     EmailTaskLink,
@@ -40,6 +42,7 @@ from app.services import (
 )
 from app.services.daily_schedule_service import build_daily_schedule
 from app.services.email_review_service import ensure_email_action_draft
+from app.services.promotion_campaign_service import promotion_form_token
 from app.services.today_service import get_today_agenda
 from app.utils.currency import format_brl
 from app.utils.dates import format_date_br
@@ -534,6 +537,11 @@ def client_detail_page(client_id: int, request: Request, db: Session = Depends(g
             "action_url": f"/web/clients/{client_id}/edit",
             "proposals": proposals,
             "services": services,
+            "campaign_contacts": db.query(ClientCampaignContact)
+            .filter_by(client_id=client_id)
+            .order_by(ClientCampaignContact.email.asc())
+            .all(),
+            "campaign_form_token": promotion_form_token(f"client-contacts:{client_id}"),
         },
     )
 
@@ -580,13 +588,21 @@ def user_new_page(request: Request) -> object:
 @router.post("/web/users/new")
 async def user_new_submit(request: Request, db: Session = Depends(get_db)) -> object:
     form = await request.form()
-    payload = UserCreate(
-        nome=str(form.get("nome", "")).strip(),
-        cargo=str(form.get("cargo", "")).strip(),
-        email=str(form.get("email", "")).strip(),
-        senha=str(form.get("senha", "123456")).strip() or "123456",
-        ativo=True if form.get("ativo") == "on" else False,
-    )
+    try:
+        payload = UserCreate(
+            nome=str(form.get("nome", "")).strip(),
+            cargo=str(form.get("cargo", "")).strip(),
+            email=str(form.get("email", "")).strip(),
+            senha=str(form.get("senha", "")),
+            ativo=form.get("ativo") == "on",
+        )
+    except ValidationError:
+        return render_template(
+            request,
+            "user_form.html",
+            {"error": "A senha precisa ter pelo menos 12 caracteres."},
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
     if db.query(User).filter(User.email == payload.email).first():
         return render_template(request, "user_form.html", {"error": "Email ja existe."})
     user = User(

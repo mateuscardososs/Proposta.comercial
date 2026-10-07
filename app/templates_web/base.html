@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ request.scope.get('session', {}).get('csrf_token', '') }}">
   <title>{{ title or "Propostas AD Balancas" }}</title>
   <style>
     :root {
@@ -337,12 +338,45 @@
       background: #fdecee;
     }
 
-    .alert.error {
+    .alert {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      background: var(--surface-muted);
+      color: var(--text);
+    }
+
+    .alert.error,
+    .alert.danger {
       border: 1px solid rgba(178, 51, 62, 0.3);
       border-radius: var(--radius-sm);
       background: #fdecee;
       color: #8b202b;
-      padding: 10px 12px;
+    }
+
+    .alert.info {
+      border-color: rgba(13, 90, 157, 0.28);
+      background: #e8f2fc;
+      color: var(--brand-dark);
+    }
+
+    .alert.warning {
+      border-color: rgba(181, 89, 31, 0.28);
+      background: #fff1e8;
+      color: #844013;
+    }
+
+    .check-row { display: flex; align-items: flex-start; gap: 8px; }
+    .form-stack { display: grid; gap: 8px; max-width: 560px; }
+    .form-stack label { display: grid; gap: 4px; }
+    details > summary { cursor: pointer; width: fit-content; }
+    details[open] > summary { margin-bottom: 8px; }
+
+    .alert.error {
+      border: 1px solid rgba(178, 51, 62, 0.3);
+      background: #fdecee;
+      color: #8b202b;
     }
 
     .card {
@@ -1019,6 +1053,12 @@
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
           <span class="menu-toggle-label" id="menuToggleLabel">Abrir navegação</span>
         </button>
+        {% if request.scope.get('session', {}).get('auth_user_id') %}
+          <form method="post" action="/logout" class="session-exit">
+            <input type="hidden" name="csrf_token" value="{{ request.scope.get('session', {}).get('csrf_token', '') }}">
+            <button type="submit" class="btn btn-ghost">Sair</button>
+          </form>
+        {% endif %}
       </div>
     </div>
   </header>
@@ -1038,6 +1078,7 @@
         </section>
         <section class="nav-group" data-nav-group="comunicacao" aria-labelledby="nav-comunicacao"><h2 class="nav-group-title" id="nav-comunicacao">Comunicação</h2>
           <a href="/web/mensagens" aria-label="E-mails e mensagens" title="E-mails e mensagens" {% if request.url.path.startswith('/web/mensagens') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/mensagens') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4Z"/><path d="m4 7 8 6 8-6"/></svg></span><span class="nav-label">E-mails e mensagens</span></a>
+          <a href="/web/promocoes" aria-label="Promoções" title="Promoções" {% if request.url.path.startswith('/web/promocoes') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/promocoes') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4Z"/><path d="M7 9h10M7 13h7M7 16h4"/><path d="m16 4 1 2 2 .5-2 1-1 2-1-2-2-1 2-.5Z"/></svg></span><span class="nav-label">Promoções</span></a>
           <a href="/web/assistente" aria-label="Assistente" title="Assistente" {% if request.url.path.startswith('/web/assistente') %}aria-current="page"{% endif %} class="{% if request.url.path.startswith('/web/assistente') %}active{% endif %}"><span class="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 14 9l6 2-6 2-2 6-2-6-6-2 6-2Z"/></svg></span><span class="nav-label">Assistente</span></a>
         </section>
         <section class="nav-group" data-nav-group="comercial" aria-labelledby="nav-comercial"><h2 class="nav-group-title" id="nav-comercial">Comercial</h2>
@@ -1090,6 +1131,23 @@
   </div>
 
   <script>
+    (function () {
+      const token = document.querySelector('meta[name="csrf-token"]')?.content;
+      if (!token) return;
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init = {}) => {
+        const method = String(init.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+        const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+        if (url.origin === window.location.origin && !["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+          const headers = new Headers(input instanceof Request ? input.headers : undefined);
+          new Headers(init.headers || {}).forEach((value, key) => headers.set(key, value));
+          headers.set("X-CSRF-Token", token);
+          init = { ...init, headers };
+        }
+        return originalFetch(input, init);
+      };
+    })();
+
     (function () {
       const toggleBtn = document.getElementById("menuToggle");
       const nav = document.getElementById("siteNav");

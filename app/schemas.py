@@ -152,7 +152,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    senha: str = Field(min_length=4, default="123456")
+    senha: str = Field(min_length=12)
 
 
 class UserRead(ORMModel, UserBase):

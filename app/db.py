@@ -202,7 +202,8 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
     service_tables = {"service_events", "service_workflow_transitions", "service_technical_reports"}.intersection(tables)
     finance_tables = {"lancamento_historicos"}.intersection(tables)
     schedule_tables = {"daily_schedule_snapshots"}.intersection(tables)
-    if not service_tables and not finance_tables and not schedule_tables:
+    campaign_history_tables = {"promotion_campaign_events", "campaign_contact_consent_events"}.intersection(tables)
+    if not service_tables and not finance_tables and not schedule_tables and not campaign_history_tables:
         return
 
     if target_engine.dialect.name == "sqlite":
@@ -218,6 +219,10 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
                 for operation in ("UPDATE", "DELETE"):
                     trigger = f"{table}_reject_{operation.lower()}"
                     conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'daily schedule history is immutable'); END"))
+            for table in campaign_history_tables:
+                for operation in ("UPDATE", "DELETE"):
+                    trigger = f"{table}_reject_{operation.lower()}"
+                    conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'promotion history is immutable'); END"))
     elif target_engine.dialect.name == "postgresql":
         with target_engine.begin() as conn:
             conn.execute(
@@ -262,12 +267,29 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
                     trigger = f"{table}_reject_mutation"
                     conn.execute(text(f"DROP TRIGGER IF EXISTS {trigger} ON {table}"))
                     conn.execute(text(f"CREATE TRIGGER {trigger} BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION reject_daily_schedule_mutation()"))
+            if campaign_history_tables:
+                conn.execute(
+                    text("""
+                    CREATE OR REPLACE FUNCTION reject_promotion_history_mutation()
+                    RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RAISE EXCEPTION 'promotion history is immutable';
+                    END;
+                    $$
+                    """)
+                )
+                for table in campaign_history_tables:
+                    trigger = f"{table}_reject_mutation"
+                    conn.execute(text(f"DROP TRIGGER IF EXISTS {trigger} ON {table}"))
+                    conn.execute(text(f"CREATE TRIGGER {trigger} BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION reject_promotion_history_mutation()"))
 
 
 @event.listens_for(Session, "before_flush")
 def _reject_service_history_mutation(session: Session, flush_context, instances) -> None:
     from .models import (
         LancamentoHistorico,
+        CampaignContactConsentEvent,
+        PromotionCampaignEvent,
         ServiceEvent,
         ServiceTechnicalReport,
         ServiceWorkflowTransition,
@@ -275,10 +297,13 @@ def _reject_service_history_mutation(session: Session, flush_context, instances)
 
     del flush_context, instances
     historical = (ServiceEvent, ServiceWorkflowTransition, ServiceTechnicalReport)
+    campaign_history = (CampaignContactConsentEvent, PromotionCampaignEvent)
     if any(isinstance(obj, LancamentoHistorico) for obj in session.deleted):
         raise ValueError("Histórico financeiro imutável: exclusão não permitida.")
     if any(isinstance(obj, historical) for obj in session.deleted):
         raise ValueError("Historico de servico imutavel: exclusao nao permitida.")
+    if any(isinstance(obj, campaign_history) for obj in session.deleted):
+        raise ValueError("Histórico de campanhas imutável: exclusão não permitida.")
     for obj in session.dirty:
         state = inspect(obj)
         if isinstance(obj, LancamentoHistorico) and state.persistent and any(
@@ -288,6 +313,10 @@ def _reject_service_history_mutation(session: Session, flush_context, instances)
             raise ValueError("Histórico financeiro imutável: alteração não permitida.")
         if isinstance(obj, historical) and state.persistent and any(state.attrs[column.key].history.has_changes() for column in state.mapper.column_attrs):
             raise ValueError("Historico de servico imutavel: alteracao nao permitida.")
+        if isinstance(obj, campaign_history) and state.persistent and any(
+            state.attrs[column.key].history.has_changes() for column in state.mapper.column_attrs
+        ):
+            raise ValueError("Histórico de campanhas imutável: alteração não permitida.")
 
 
 def get_db() -> Generator[Session, None, None]:
