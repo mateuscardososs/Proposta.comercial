@@ -27,6 +27,8 @@ Aplicação web interna para organizar o trabalho comercial e operacional da AD 
 - O histórico de eventos é preservado; correções são acrescentadas ao histórico e a projeção do estado atual é reconstruída de forma determinística.
 - As etapas administrativas têm estados próprios: relatório, proposta, envio da proposta, nota fiscal e recebimento. Assim, serviço tecnicamente concluído pode continuar administrativamente aberto.
 - Lembretes dessas etapas podem ser vinculados ao quadro. O sistema não gera nem envia propostas e não emite nota fiscal automaticamente.
+- Após a conclusão técnica, a tela de detalhes permite revisar campos do chamado e confirmar a geração de um relatório técnico profissional em DOCX e PDF. Cliente/equipamento, problema, análise, trabalho, datas e verificações vêm do cadastro e de eventos efetivos; ausências ficam destacadas para revisão, sem texto técnico inventado.
+- A confirmação registra um snapshot imutável, mantém vínculo aos eventos e atualiza a etapa administrativa de relatório com histórico. Repetir a mesma solicitação não cria outro documento; nova revisão mantém versões anteriores. Relatórios são salvos em `output/service-reports/` e não são enviados automaticamente.
 
 ### Contas a pagar e a receber
 
@@ -49,7 +51,7 @@ Aplicação web interna para organizar o trabalho comercial e operacional da AD 
 ### Assistente por texto e voz
 
 - A página **Assistente** mantém histórico e entende pedidos em português para consultar o quadro/agenda, consultar serviços/retornos e, se o leitor estiver configurado, consultar e-mails. Também prepara tarefas e registros de eventos/lembretes de serviço para confirmação; uma data de retorno confirmada cria uma tarefa vinculada ao evento, sem duplicar em retries.
-- Após conclusão técnica, oferece o fluxo existente para preparar uma proposta em DOCX/PDF. Relatório técnico DOCX ainda não possui modelo/fluxo próprio; documentos nunca são enviados automaticamente.
+- Após conclusão técnica, a tela do chamado oferece prévia editável e confirmação para gerar relatório técnico DOCX/PDF; a proposta continua no próprio fluxo. A geração é determinística a partir do histórico, e mudanças na revisão não alteram eventos. A conversão usa LibreOffice configurado. No launcher local da 8013, se ele não estiver instalado no host, pode ser usado o conversor já existente na imagem local do projeto: é uma execução efêmera sem rede e com montagem apenas da pasta temporária daquele documento. Sem um conversor disponível, nenhum relatório é registrado. Documentos nunca são enviados automaticamente.
 - O Gemini é o **interpretador de linguagem padrão** pela API; Ollama local permanece como alternativa selecionável. O provedor transforma fala transcrita ou texto em comando estruturado permitido e ajuda a formular respostas naturais. Nenhum deles acessa o banco diretamente ou grava dados por conta própria.
 - Os pedidos conhecidos de consulta (por exemplo, agenda e algumas intenções de e-mail) também têm roteamento determinístico no backend. Quando necessário, a aplicação consulta os serviços e o banco reais; a resposta fica fundamentada nos resultados dessa solicitação, não em uma afirmação livre do modelo.
 - Existe uma interface `AssistantProvider`, com adaptadores Gemini e Ollama selecionáveis por `LLM_PROVIDER`. Gemini é o padrão; para processamento exclusivamente local, defina `LLM_PROVIDER=ollama`. As regras de domínio e validações ficam na aplicação e não há fallback automático entre provedores. Gemini requer chave, conectividade externa e plano aprovado; o conteúdo enviado à API deixa de ser exclusivamente local.
@@ -189,14 +191,14 @@ O teste real controlado do Ollama documentado cobre um caso específico de inter
 - Python 3.12, FastAPI, Uvicorn, SQLAlchemy 2 e Pydantic Settings.
 - Jinja2, HTML/CSS/JavaScript do próprio projeto.
 - PostgreSQL para execução com Docker Compose; SQLite é o padrão da execução nativa quando `DATABASE_URL` não é definido.
-- `docxtpl` para DOCX e LibreOffice headless para PDF; `pdfplumber` para leitura de PDFs legados.
+- `docxtpl`/`python-docx` para DOCX e LibreOffice headless para PDF; no launcher local da 8013, a imagem de conversão pode ser selecionada por `TECHNICAL_REPORT_PDF_CONVERTER_IMAGE` e executada localmente, sem rede. `pdfplumber` lê PDFs legados.
 - Gemini API por padrão ou Ollama local alternativo para interpretação; faster-whisper e Piper locais são opcionais para voz.
 - Yahoo IMAP opcional para leitura de e-mail.
 
 ## Requisitos
 
 - Python 3.12.
-- Para gerar PDF: LibreOffice instalado (ou use o container, que o instala).
+- Para gerar PDF: LibreOffice instalado. No launcher local da 8013, a imagem local existente do projeto pode servir como conversor isolado, se disponível; para outra execução, configure `LIBREOFFICE_CMD` ou `TECHNICAL_REPORT_PDF_CONVERTER_IMAGE`. A conversão é limitada a 120 segundos e não usa serviços externos.
 - Para o assistente: Gemini por padrão exige `GEMINI_API_KEY`, acesso à rede e modelo configurado em `GEMINI_MODEL`; alternativamente, Ollama em execução com modelo local em `OLLAMA_MODEL`.
 - Para voz: dependências de `requirements-voice.txt` e arquivos de modelo STT/TTS locais. Consulte [`docs/assistente/execucao.md`](docs/assistente/execucao.md) e [`docs/assistente/validacao-voz-local.md`](docs/assistente/validacao-voz-local.md) para preparação e limites.
 - Para usar PostgreSQL via Compose: Docker com Docker Compose.

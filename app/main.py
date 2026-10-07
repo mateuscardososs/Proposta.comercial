@@ -33,6 +33,7 @@ from app.services.storage_service import ensure_directory
 settings = get_settings()
 ensure_directory(settings.output_dir)
 ensure_directory(settings.template_doc_path.parent)
+ensure_directory(settings.technical_report_template_path.parent)
 
 app = FastAPI(title=settings.app_name)
 _email_sync_task: asyncio.Task[None] | None = None
@@ -53,6 +54,7 @@ async def on_startup() -> None:
         backfill_existing_email_drafts(db)
     ensure_directory(settings.output_dir)
     ensure_directory(settings.template_doc_path.parent)
+    ensure_directory(settings.technical_report_template_path.parent)
     _ensure_default_user()
     if _finance_archive_task is None:
         _finance_archive_task = asyncio.create_task(finance_archive_loop())

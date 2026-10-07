@@ -49,7 +49,7 @@ router = APIRouter(tags=["pages"])
 settings = get_settings()
 
 
-def render_template(request: Request, template_name: str, context: dict) -> object:
+def render_template(request: Request, template_name: str, context: dict, *, status_code: int = 200) -> object:
     templates = request.app.state.templates
     base_context = {
         "request": request,
@@ -57,7 +57,7 @@ def render_template(request: Request, template_name: str, context: dict) -> obje
         "format_date_br": format_date_br,
     }
     base_context.update(context)
-    return templates.TemplateResponse(template_name, base_context)
+    return templates.TemplateResponse(template_name, base_context, status_code=status_code)
 
 
 def _default_form_data() -> dict[str, object]:

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
         default_factory=lambda: f"sqlite:///{(BASE_DIR / 'propostas.db').as_posix()}"
     )
     template_doc_path: Path = BASE_DIR / "doc_templates" / "proposta_template.docx"
+    technical_report_template_path: Path = BASE_DIR / "doc_templates" / "relatorio_tecnico_template.docx"
+    technical_report_pdf_converter_image: str = ""
     output_dir: Path = BASE_DIR / "output"
     libreoffice_cmd: str = Field(default_factory=_default_libreoffice_cmd)
     app_host: str = "127.0.0.1"
