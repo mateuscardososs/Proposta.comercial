@@ -23,12 +23,29 @@
   <p class="card-subtitle">{% if call.execution_status != 'completed' %}A execução ainda está em {{ execution_labels[call.execution_status]|lower }}.{% elif next_step %}Situação atual: {{ status_labels[next_step.status] }}.{% else %}Não há pendências administrativas registradas.{% endif %}</p>
 </section>
 
-{% if call.execution_status == 'completed' and steps['proposal'].status != 'not_applicable' %}
+{% if call.execution_status == 'completed' %}
 <section class="card" data-service-document-next-steps>
   <div class="card-head"><div><span class="eyebrow">Preparação de documentos</span><h2 class="card-title">Execução concluída; etapas administrativas separadas</h2></div></div>
-  <p class="card-subtitle">O relatório técnico e a proposta não foram gerados nem enviados automaticamente. Use o fluxo atual para preparar a proposta em DOCX/PDF; revise os dados antes de salvar.</p>
-  <div class="actions mt-12"><a class="btn btn-primary" href="/web/proposals/new?client_id={{ call.client_id }}">Preparar proposta</a></div>
-  <p class="muted mt-12">Não há neste momento um modelo/fluxo próprio de relatório técnico DOCX no sistema.</p>
+  <p class="card-subtitle">Revise os dados registrados e confirme antes de gerar o relatório. A proposta continua no fluxo próprio. Nada é enviado automaticamente.</p>
+  <div class="actions mt-12">
+    <a class="btn btn-primary" href="/web/services/{{ call.id }}/relatorio/previa">Preparar relatório técnico</a>
+    {% if steps['proposal'].status != 'not_applicable' %}<a class="btn btn-ghost" href="/web/proposals/new?client_id={{ call.client_id }}">Preparar proposta</a>{% endif %}
+  </div>
+  {% if reports %}
+  <div class="table-wrap mt-12"><table>
+    <thead><tr><th>Relatório</th><th>Gerado em</th><th>Arquivos</th><th>Campos para revisão</th></tr></thead>
+    <tbody>
+      {% for report in reports %}
+      <tr>
+        <td>#{{ report.id }}</td>
+        <td>{{ format_date_br(report.confirmed_at.date()) }}</td>
+        <td><a href="/web/services/relatorios/{{ report.id }}/docx">DOCX</a> · <a href="/web/services/relatorios/{{ report.id }}/pdf">PDF</a></td>
+        <td>{{ report.missing_fields_json|length }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted mt-12">Nenhum relatório técnico foi gerado para este chamado.</p>{% endif %}
 </section>
 {% endif %}
 

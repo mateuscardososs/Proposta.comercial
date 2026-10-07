@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <div class="page-header-inner">
+    <span class="eyebrow">Serviços · revisão documental</span>
+    <h1 class="page-title">Prévia do relatório técnico</h1>
+    <p class="page-subtitle">Chamado #{{ preview.service_call.id }} · {{ preview.service_call.summary }} · {{ preview.service_call.client.razao_social }}</p>
+  </div>
+</section>
+
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+
+  <form action="/web/services/{{ preview.service_call.id }}/relatorio/gerar" method="post" id="service-report-confirmation-form">
+  <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+  <input type="hidden" name="source_fingerprint" value="{{ preview.source_fingerprint }}">
+<section class="card" aria-labelledby="report-preview-title">
+  <div class="card-head">
+    <div><span class="eyebrow">Somente dados revisáveis</span><h2 id="report-preview-title" class="card-title">Confirme o conteúdo antes de gerar</h2></div>
+  </div>
+  <p class="card-subtitle">Os valores iniciais vêm do cadastro do cliente e dos eventos efetivos do chamado. Ajustes abaixo afetam apenas este relatório e não alteram o cadastro nem o histórico.</p>
+  {% if missing_fields %}
+  <p class="report-missing-summary" role="status">Campos destacados em amarelo não foram encontrados no registro. Revise ou mantenha-os sinalizados no arquivo.</p>
+  {% endif %}
+  <dl class="report-facts">
+    <div><dt>Cliente cadastrado</dt><dd>{{ preview.service_call.client.razao_social }}</dd></div>
+    <div><dt>CNPJ cadastrado</dt><dd>{{ preview.client_snapshot.cnpj or 'Não cadastrado' }}</dd></div>
+    <div><dt>Telefone cadastrado</dt><dd>{{ preview.client_snapshot.phone or 'Não cadastrado' }}</dd></div>
+    <div><dt>Endereço cadastrado</dt><dd>{{ preview.client_snapshot.address or 'Não cadastrado' }}</dd></div>
+    <div><dt>Chamado aberto</dt><dd>{{ format_date_br(preview.service_call.opened_on) }}</dd></div>
+    <div><dt>Eventos de origem</dt><dd>{% for event_id in preview.source_event_ids %}#{{ event_id }}{% if not loop.last %}, {% endif %}{% else %}Nenhum evento{% endfor %}</dd></div>
+  </dl>
+
+    <h3 class="card-title mt-12">Dados revisáveis do cliente e equipamento</h3>
+    <div class="form-grid-2 mt-12">
+      {% for name in ['client_name', 'client_cnpj', 'client_phone', 'client_address', 'equipment', 'completion_date'] %}
+      <div class="field {% if name in missing_fields %}report-field-missing{% endif %}">
+        <label for="{{ name }}">{{ field_labels[name] }}{% if name in missing_fields %} · revisar{% endif %}</label>
+        {% if name == 'completion_date' %}
+        <input type="date" id="{{ name }}" name="{{ name }}" value="{{ fields|attr(name) }}" aria-describedby="{{ name }}-help">
+        {% elif name in ['client_address', 'equipment'] %}
+        <textarea id="{{ name }}" name="{{ name }}" maxlength="1000" rows="2">{{ fields|attr(name) }}</textarea>
+        {% else %}
+        <input type="text" id="{{ name }}" name="{{ name }}" maxlength="{{ 32 if name == 'client_cnpj' else 50 if name == 'client_phone' else 255 }}" value="{{ fields|attr(name) }}">
+        {% endif %}
+        {% if name in missing_fields %}<small id="{{ name }}-help">Não informado no cadastro/eventos; não será preenchido por inferência.</small>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="form-grid-1 mt-12">
+      {% for name in ['reported_problem', 'analysis', 'work_performed', 'verification_result'] %}
+      <div class="field {% if name in missing_fields %}report-field-missing{% endif %}">
+        <label for="{{ name }}">{{ field_labels[name] }}{% if name in missing_fields %} · revisar{% endif %}</label>
+        <textarea id="{{ name }}" name="{{ name }}" maxlength="4000" rows="3">{{ fields|attr(name) }}</textarea>
+        {% if name in missing_fields %}<small>Não informado nos eventos efetivos; não será preenchido por inferência.</small>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+</section>
+
+<section class="card" data-report-source-events>
+  <div class="card-head"><div><span class="eyebrow">Origem</span><h2 class="card-title">Eventos registrados usados na prévia</h2></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Evento efetivo</th><th>Descrição registrada</th></tr></thead>
+    <tbody>
+      {% for event in preview.event_timeline %}
+      <tr><td>{{ event.date or '—' }}</td><td>{{ event.type }}</td><td>{{ event.description or '—' }}</td></tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">Não há eventos registrados para detalhar o histórico técnico.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted mt-12">A prévia não grava histórico nem cria arquivo. Campos preenchidos nesta revisão ficam registrados no snapshot do relatório.</p>
+</section>
+
+<section class="card">
+  <label class="report-confirm-label"><input form="service-report-confirmation-form" type="checkbox" name="confirmed" value="yes" required> Revisei os dados e autorizo gerar DOCX e PDF.</label>
+  <div class="actions mt-12 actions-end">
+    <a class="btn btn-ghost" href="/web/services/{{ preview.service_call.id }}">Cancelar</a>
+    <button form="service-report-confirmation-form" class="btn btn-primary" type="submit">Confirmar e gerar relatório</button>
+  </div>
+</section>
+</form>
+<style>
+  .report-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+  .report-facts div { border-bottom: 1px solid var(--line); padding: 8px 0; }
+  .report-facts dt { color: var(--text-soft); font-size: 12px; }
+  .report-facts dd { margin: 4px 0 0; font-weight: 600; }
+  .report-fact-missing { background: #fff8dc; color: #5c4700; }
+  .report-field-missing { border-left: 4px solid #d19a00; padding-left: 10px; background: #fff8dc; }
+  .report-missing-summary { border-left: 4px solid #d19a00; padding: 8px 12px; background: #fff8dc; color: #5c4700; }
+  .report-confirm-label { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .report-confirm-label input { width: auto; }
+  @media (max-width: 720px) { .report-facts { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}

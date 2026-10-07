@@ -94,8 +94,10 @@ def list_service_calls(db: Session, query: ServiceCallQuery) -> list[ServiceCall
     return list(db.scalars(statement.order_by(ServiceCall.opened_on.desc(), ServiceCall.id.desc()).limit(query.limit)))
 
 
-def get_service_call(db: Session, service_call_id: int) -> ServiceCall | None:
-    return db.scalar(
+def get_service_call(
+    db: Session, service_call_id: int, *, populate_existing: bool = False,
+) -> ServiceCall | None:
+    statement = (
         select(ServiceCall)
         .options(
             joinedload(ServiceCall.client),
@@ -106,6 +108,9 @@ def get_service_call(db: Session, service_call_id: int) -> ServiceCall | None:
         )
         .where(ServiceCall.id == service_call_id)
     )
+    if populate_existing:
+        statement = statement.execution_options(populate_existing=True)
+    return db.scalar(statement)
 
 
 def find_open_calls_for_client(db: Session, client_id: int) -> list[ServiceCall]:

@@ -739,3 +739,41 @@ class ServiceTaskLink(Base, TimestampMixin):
     service_event: Mapped[ServiceEvent | None] = relationship()
     task: Mapped[Task | None] = relationship()
     assistant_action: Mapped[AssistantAction] = relationship()
+
+
+class ServiceTechnicalReport(Base):
+    """Immutable report snapshot created only after explicit web confirmation."""
+
+    __tablename__ = "service_technical_reports"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_service_report_idempotency_key"),
+        UniqueConstraint("assistant_action_id", name="uq_service_report_action"),
+        UniqueConstraint("document_event_id", name="uq_service_report_document_event"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service_call_id: Mapped[int] = mapped_column(
+        ForeignKey("service_calls.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    assistant_action_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_actions.id", ondelete="RESTRICT"), nullable=False
+    )
+    document_event_id: Mapped[int] = mapped_column(
+        ForeignKey("service_events.id", ondelete="RESTRICT"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_event_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False)
+    client_snapshot_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    fields_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    source_fields_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    manual_overrides_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    missing_fields_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    docx_path: Mapped[str] = mapped_column(String(1000), nullable=False)
+    pdf_path: Mapped[str] = mapped_column(String(1000), nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    service_call: Mapped[ServiceCall] = relationship()
+    assistant_action: Mapped[AssistantAction] = relationship()
+    document_event: Mapped[ServiceEvent] = relationship()

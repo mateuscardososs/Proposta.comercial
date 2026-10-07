@@ -9,4 +9,5 @@ __pycache__
 output/
 *.pdf
 *.docx
+!doc_templates/relatorio_tecnico_template.docx
 .models/

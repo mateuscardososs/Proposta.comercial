@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +21,31 @@ from scripts.assistant_8013_runtime import (
     runtime_environment,
     verify_database,
 )
+
+LOCAL_REPORT_CONVERTER_IMAGE = "adbalancas-propostas-local:20261003-finance"
+
+
+def _configure_local_report_pdf_converter() -> None:
+    if os.getenv("TECHNICAL_REPORT_PDF_CONVERTER_IMAGE"):
+        return
+    libreoffice_cmd = os.getenv("LIBREOFFICE_CMD", "soffice")
+    if shutil.which(libreoffice_cmd):
+        return
+    docker = shutil.which("docker")
+    if not docker:
+        return
+    try:
+        result = subprocess.run(
+            [docker, "image", "inspect", LOCAL_REPORT_CONVERTER_IMAGE],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if result.returncode == 0:
+        os.environ["TECHNICAL_REPORT_PDF_CONVERTER_IMAGE"] = LOCAL_REPORT_CONVERTER_IMAGE
 
 
 def _load_local_configuration() -> dict[str, str]:
@@ -96,6 +123,7 @@ def run() -> None:
     )
     _verify_voice_assets(environment)
     os.environ.update(environment)
+    _configure_local_report_pdf_converter()
     os.environ["APP_ENV_FILE"] = str(PROJECT_ROOT / ".env")
 
     from app.config import get_settings

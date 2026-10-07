@@ -132,7 +132,7 @@ def ensure_schema_compatibility() -> None:
 
 def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
     tables = set(inspect(target_engine).get_table_names())
-    service_tables = {"service_events", "service_workflow_transitions"}.intersection(tables)
+    service_tables = {"service_events", "service_workflow_transitions", "service_technical_reports"}.intersection(tables)
     finance_tables = {"lancamento_historicos"}.intersection(tables)
     schedule_tables = {"daily_schedule_snapshots"}.intersection(tables)
     if not service_tables and not finance_tables and not schedule_tables:
@@ -199,10 +199,10 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
 
 @event.listens_for(Session, "before_flush")
 def _reject_service_history_mutation(session: Session, flush_context, instances) -> None:
-    from .models import LancamentoHistorico, ServiceEvent, ServiceWorkflowTransition
+    from .models import LancamentoHistorico, ServiceEvent, ServiceTechnicalReport, ServiceWorkflowTransition
 
     del flush_context, instances
-    historical = (ServiceEvent, ServiceWorkflowTransition)
+    historical = (ServiceEvent, ServiceWorkflowTransition, ServiceTechnicalReport)
     if any(isinstance(obj, LancamentoHistorico) for obj in session.deleted):
         raise ValueError("Histórico financeiro imutável: exclusão não permitida.")
     if any(isinstance(obj, historical) for obj in session.deleted):

@@ -73,6 +73,21 @@ class ServiceEventCorrectionCreate(BaseModel):
         return self
 
 
+class ServiceTechnicalReportFields(BaseModel):
+    """Human-reviewed narrative fields; they never mutate service history."""
+
+    client_name: str = Field(default="", max_length=255)
+    client_cnpj: str = Field(default="", max_length=32)
+    client_phone: str = Field(default="", max_length=50)
+    client_address: str = Field(default="", max_length=1000)
+    equipment: str = Field(default="", max_length=1000)
+    completion_date: str = Field(default="", max_length=10)
+    reported_problem: str = Field(default="", max_length=4000)
+    analysis: str = Field(default="", max_length=4000)
+    work_performed: str = Field(default="", max_length=4000)
+    verification_result: str = Field(default="", max_length=4000)
+
+
 class ServiceCallQuery(BaseModel):
     client_id: int | None = Field(default=None, ge=1)
     execution_status: ServiceExecutionStatus | None = None
