@@ -129,24 +129,53 @@ def _parse_decimal(raw: str, default: str = "0.00") -> Decimal:
         return Decimal(default)
 
 
-def _extract_text_pdfplumber(file_bytes: bytes) -> str:
+def _extract_pages_pdfplumber(file_bytes: bytes) -> list[str]:
     import pdfplumber  # type: ignore[import-not-found]
 
-    chunks: list[str] = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page in pdf.pages:
-            chunks.append(page.extract_text() or "")
-    return "\n".join(chunks).strip()
+        return [(page.extract_text() or "").strip() for page in pdf.pages]
+
+
+def _extract_text_pdfplumber(file_bytes: bytes) -> str:
+    return "\n".join(_extract_pages_pdfplumber(file_bytes)).strip()
+
+
+def _extract_pages_pymupdf(file_bytes: bytes) -> list[str]:
+    import fitz  # type: ignore[import-not-found]
+
+    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+        return [(page.get_text() or "").strip() for page in doc]
 
 
 def _extract_text_pymupdf(file_bytes: bytes) -> str:
-    import fitz  # type: ignore[import-not-found]
+    return "\n".join(_extract_pages_pymupdf(file_bytes)).strip()
 
-    chunks: list[str] = []
-    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-        for page in doc:
-            chunks.append(page.get_text() or "")
-    return "\n".join(chunks).strip()
+
+def extract_pdf_pages(file_bytes: bytes) -> list[str]:
+    """Extract page text with page boundaries, reusing the configured PDF extractors."""
+    errors: list[str] = []
+    empty_results = 0
+    try:
+        pages = _extract_pages_pdfplumber(file_bytes)
+        if any(pages):
+            return pages
+        empty_results += 1
+        errors.append("pdfplumber returned empty text")
+    except Exception as exc:
+        errors.append(f"pdfplumber error: {exc}")
+
+    try:
+        pages = _extract_pages_pymupdf(file_bytes)
+        if any(pages):
+            return pages
+        empty_results += 1
+        errors.append("pymupdf returned empty text")
+    except Exception as exc:
+        errors.append(f"pymupdf error: {exc}")
+
+    if empty_results:
+        raise PDFNoTextError("PDF sem texto extraível.")
+    raise PDFImportError("Failed to extract text from PDF: " + " | ".join(errors))
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
