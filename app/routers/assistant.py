@@ -172,6 +172,10 @@ def _service(
         email_reader=email_reader,
         capabilities=_capability_registry(settings),
         email_history_retention_days=settings.email_cache_retention_days,
+        email_provider=settings.email_provider.strip().casefold(),
+        email_mailbox_key=settings.email_sync_mailbox_key,
+        email_freshness_seconds=settings.email_sync_interval_seconds * 2,
+        today_lookahead_days=settings.today_lookahead_days,
     )
 
 
@@ -207,8 +211,7 @@ def assistant_voice_status() -> VoiceStatus:
         if not piper_available:
             missing.append("sintese")
         message = (
-            f"Componentes locais de {' e '.join(missing)} indisponiveis. "
-            "O assistente por texto continua disponivel."
+            f"Componentes locais de {' e '.join(missing)} indisponiveis. O assistente por texto continua disponivel."
         )
     return VoiceStatus(
         enabled=settings.voice_enabled,
@@ -232,7 +235,10 @@ async def assistant_voice_transcription(
 ) -> VoiceTranscriptionResponse:
     settings = get_settings()
     if not settings.voice_enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="A voz esta desativada.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="A voz esta desativada.",
+        )
 
     path = await _store_temporary_audio(audio, settings.voice_max_upload_bytes)
 
@@ -271,8 +277,7 @@ async def assistant_voice_transcription(
             timeout=settings.voice_transcription_timeout_seconds,
         )
         logger.info(
-            "assistant_voice stage=transcription outcome=success queue_wait_ms=%d "
-            "duration_ms=%d audio_duration_ms=%d",
+            "assistant_voice stage=transcription outcome=success queue_wait_ms=%d duration_ms=%d audio_duration_ms=%d",
             round(execution.queue_wait_seconds * 1000),
             round(execution.value.transcription_seconds * 1000),
             round(execution.value.audio_duration_seconds * 1000),
@@ -311,7 +316,10 @@ async def assistant_voice_speech(
 ) -> Response:
     settings = get_settings()
     if not settings.voice_enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="A voz esta desativada.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="A voz esta desativada.",
+        )
     text = spoken_text(payload.text, payload.kind)
     try:
         execution = await _synthesis_executor.submit_with_metrics(
@@ -461,7 +469,5 @@ def _whisper_is_available(settings: object) -> bool:
 def _piper_is_available(settings: object) -> bool:
     model_path = settings.voice_piper_model_path
     return (
-        importlib.util.find_spec("piper") is not None
-        and model_path.is_file()
-        and Path(f"{model_path}.json").is_file()
+        importlib.util.find_spec("piper") is not None and model_path.is_file() and Path(f"{model_path}.json").is_file()
     )

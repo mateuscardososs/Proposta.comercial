@@ -37,8 +37,8 @@ def test_assistant_page_uses_existing_shell_and_local_warning():
     assert 'id="voice-stop"' in response.text
     assert 'id="voice-repeat"' in response.text
     assert 'id="voice-end"' in response.text
-    assert 'src="/assets/assistant_chat.js?v=voice-agenda-transcript-20261003-1"' in response.text
-    assert 'src="/assets/assistant_voice_bootstrap.js?v=voice-agenda-transcript-20261003-1"' in response.text
+    assert 'src="/assets/assistant_chat.js?v=daily-brief-20261007-1"' in response.text
+    assert 'src="/assets/assistant_voice_bootstrap.js?v=daily-brief-20261007-1"' in response.text
     assert 'id="assistant-retry"' in response.text
     assert 'id="voice-level"' in response.text
     assert 'id="voice-transcript-review"' not in response.text

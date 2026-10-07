@@ -66,7 +66,12 @@ class EffectiveServiceEvent:
     description: str
 
 
-def list_service_calls(db: Session, query: ServiceCallQuery) -> list[ServiceCall]:
+def list_service_calls(
+    db: Session,
+    query: ServiceCallQuery,
+    *,
+    unbounded: bool = False,
+) -> list[ServiceCall]:
     statement = select(ServiceCall).options(
         joinedload(ServiceCall.client),
         selectinload(ServiceCall.workflow_steps),
@@ -84,18 +89,27 @@ def list_service_calls(db: Session, query: ServiceCallQuery) -> list[ServiceCall
         statement = statement.options(
             selectinload(ServiceCall.task_links).selectinload(ServiceTaskLink.task),
         )
-        statement = statement.join(ServiceTaskLink, ServiceTaskLink.service_call_id == ServiceCall.id).join(
-            Task, Task.id == ServiceTaskLink.task_id
-        ).where(
-            ServiceTaskLink.step_type.is_(None),
-            ServiceTaskLink.service_event_id.is_not(None),
-            Task.status != "concluido",
-        ).distinct()
-    return list(db.scalars(statement.order_by(ServiceCall.opened_on.desc(), ServiceCall.id.desc()).limit(query.limit)))
+        statement = (
+            statement.join(ServiceTaskLink, ServiceTaskLink.service_call_id == ServiceCall.id)
+            .join(Task, Task.id == ServiceTaskLink.task_id)
+            .where(
+                ServiceTaskLink.step_type.is_(None),
+                ServiceTaskLink.service_event_id.is_not(None),
+                Task.status != "concluido",
+            )
+            .distinct()
+        )
+    statement = statement.order_by(ServiceCall.opened_on.desc(), ServiceCall.id.desc())
+    if not unbounded:
+        statement = statement.limit(query.limit)
+    return list(db.scalars(statement))
 
 
 def get_service_call(
-    db: Session, service_call_id: int, *, populate_existing: bool = False,
+    db: Session,
+    service_call_id: int,
+    *,
+    populate_existing: bool = False,
 ) -> ServiceCall | None:
     statement = (
         select(ServiceCall)
@@ -114,10 +128,15 @@ def get_service_call(
 
 
 def find_open_calls_for_client(db: Session, client_id: int) -> list[ServiceCall]:
-    return list_service_calls(db, ServiceCallQuery(client_id=client_id, administrative_status="open", limit=50))
+    return list_service_calls(
+        db,
+        ServiceCallQuery(client_id=client_id, administrative_status="open", limit=50),
+    )
 
 
-def effective_service_events(events: Sequence[ServiceEvent]) -> list[EffectiveServiceEvent]:
+def effective_service_events(
+    events: Sequence[ServiceEvent],
+) -> list[EffectiveServiceEvent]:
     by_id: dict[int, EffectiveServiceEvent] = {}
     roots: dict[int, EffectiveServiceEvent] = {}
     call_by_id: dict[int, int] = {}
@@ -126,8 +145,10 @@ def effective_service_events(events: Sequence[ServiceEvent]) -> list[EffectiveSe
             if event.supersedes_event_id is not None:
                 raise ValueError("Evento original nao pode substituir outro evento.")
             effective = EffectiveServiceEvent(
-                source_event_id=event.id, leaf_event_id=event.id,
-                event_type=event.event_type, occurred_on=event.occurred_on,
+                source_event_id=event.id,
+                leaf_event_id=event.id,
+                event_type=event.event_type,
+                occurred_on=event.occurred_on,
                 description=event.description,
             )
             roots[event.id] = effective
@@ -141,7 +162,8 @@ def effective_service_events(events: Sequence[ServiceEvent]) -> list[EffectiveSe
         if current.leaf_event_id != event.supersedes_event_id:
             raise ValueError("Correcao deve apontar para a folha atual.")
         effective = EffectiveServiceEvent(
-            source_event_id=parent.source_event_id, leaf_event_id=event.id,
+            source_event_id=parent.source_event_id,
+            leaf_event_id=event.id,
             event_type=event.corrected_event_type or parent.event_type,
             occurred_on=event.corrected_occurred_on or parent.occurred_on,
             description=event.corrected_description if event.corrected_description is not None else parent.description,
@@ -153,11 +175,16 @@ def effective_service_events(events: Sequence[ServiceEvent]) -> list[EffectiveSe
 
 
 def rebuild_current_projection(db: Session, service_call: ServiceCall) -> None:
-    events = list(db.scalars(select(ServiceEvent).where(
-        ServiceEvent.service_call_id == service_call.id).order_by(ServiceEvent.id)))
+    events = list(
+        db.scalars(
+            select(ServiceEvent).where(ServiceEvent.service_call_id == service_call.id).order_by(ServiceEvent.id)
+        )
+    )
     effective = effective_service_events(events)
-    last_execution = next((event for event in reversed(effective)
-                           if event.event_type in ("execution_started", "execution_completed")), None)
+    last_execution = next(
+        (event for event in reversed(effective) if event.event_type in ("execution_started", "execution_completed")),
+        None,
+    )
     if last_execution is None:
         service_call.execution_status = "not_started"
         service_call.technically_completed_at = None
@@ -168,11 +195,21 @@ def rebuild_current_projection(db: Session, service_call: ServiceCall) -> None:
         service_call.execution_status = "completed"
         service_call.technically_completed_at = datetime.combine(last_execution.occurred_on, time.min)
 
-    steps = list(db.scalars(select(ServiceWorkflowStep).where(
-        ServiceWorkflowStep.service_call_id == service_call.id).order_by(ServiceWorkflowStep.id)))
+    steps = list(
+        db.scalars(
+            select(ServiceWorkflowStep)
+            .where(ServiceWorkflowStep.service_call_id == service_call.id)
+            .order_by(ServiceWorkflowStep.id)
+        )
+    )
     statuses = {step.step_type: "unknown" for step in steps}
-    transitions = list(db.scalars(select(ServiceWorkflowTransition).where(
-        ServiceWorkflowTransition.service_call_id == service_call.id).order_by(ServiceWorkflowTransition.id)))
+    transitions = list(
+        db.scalars(
+            select(ServiceWorkflowTransition)
+            .where(ServiceWorkflowTransition.service_call_id == service_call.id)
+            .order_by(ServiceWorkflowTransition.id)
+        )
+    )
     for transition in transitions:
         if transition.step_type not in statuses or statuses[transition.step_type] != transition.previous_status:
             raise ValueError("Historico de etapas inconsistente.")
@@ -180,14 +217,22 @@ def rebuild_current_projection(db: Session, service_call: ServiceCall) -> None:
     for step in steps:
         step.status = statuses[step.step_type]
 
-    closed = (service_call.execution_status == "completed"
-              and len(steps) == len(STEP_TYPES)
-              and set(statuses) == set(STEP_TYPES)
-              and all(status in TERMINAL_STEP_STATUSES for status in statuses.values()))
+    closed = (
+        service_call.execution_status == "completed"
+        and len(steps) == len(STEP_TYPES)
+        and set(statuses) == set(STEP_TYPES)
+        and all(status in TERMINAL_STEP_STATUSES for status in statuses.values())
+    )
     service_call.administrative_status = "closed" if closed else "open"
     service_call.administratively_closed_at = (
-        max([service_call.technically_completed_at, *(t.created_at for t in transitions)])
-        if closed else None
+        max(
+            [
+                service_call.technically_completed_at,
+                *(t.created_at for t in transitions),
+            ]
+        )
+        if closed
+        else None
     )
     db.flush()
 
@@ -201,14 +246,23 @@ def _validate_action(db: Session, assistant_action_id: int, conversation_id: int
 
 def _mutation_result(db: Session, event: ServiceEvent) -> ServiceMutationResult:
     call = db.get(ServiceCall, event.service_call_id)
-    transitions = list(db.scalars(select(ServiceWorkflowTransition).where(
-        ServiceWorkflowTransition.service_event_id == event.id).order_by(ServiceWorkflowTransition.id)))
+    transitions = list(
+        db.scalars(
+            select(ServiceWorkflowTransition)
+            .where(ServiceWorkflowTransition.service_event_id == event.id)
+            .order_by(ServiceWorkflowTransition.id)
+        )
+    )
     return ServiceMutationResult(call, event, transitions)
 
 
 def register_event(
-    db: Session, payload: ServiceEventCreate, *, conversation_id: int,
-    assistant_action_id: int, commit: bool = True,
+    db: Session,
+    payload: ServiceEventCreate,
+    *,
+    conversation_id: int,
+    assistant_action_id: int,
+    commit: bool = True,
 ) -> ServiceMutationResult:
     existing = db.scalar(select(ServiceEvent).where(ServiceEvent.assistant_action_id == assistant_action_id))
     if existing is not None:
@@ -233,8 +287,10 @@ def register_event(
     with db.begin_nested():
         if payload.service_call_id is None:
             call = ServiceCall(
-                client_id=payload.client_id, summary=payload.summary,
-                opened_on=payload.occurred_on, conversation_id=conversation_id,
+                client_id=payload.client_id,
+                summary=payload.summary,
+                opened_on=payload.occurred_on,
+                conversation_id=conversation_id,
             )
             db.add(call)
             db.flush()
@@ -261,51 +317,80 @@ def register_event(
             outcome = "resolvido" if payload.return_result == "resolved" else "continua pendente"
             description = f"Verificacao de retorno — tarefa #{payload.return_task_id}: {outcome}.\n{description}"
         event = ServiceEvent(
-            service_call_id=call.id, assistant_action_id=assistant_action_id,
-            conversation_id=conversation_id, event_type=payload.event_type,
-            occurred_on=payload.occurred_on, description=description,
+            service_call_id=call.id,
+            assistant_action_id=assistant_action_id,
+            conversation_id=conversation_id,
+            event_type=payload.event_type,
+            occurred_on=payload.occurred_on,
+            description=description,
         )
         db.add(event)
         db.flush()
         return_task = None
         if payload.return_on is not None:
-            return_task = board_service.create_task(db, TaskCreate(
-                titulo=f"Retorno técnico — {call.summary}",
-                descricao=f"Retorno previsto para o chamado #{call.id}; evento de origem #{event.id}.",
-                status="a_fazer", client_id=call.client_id, prazo=payload.return_on,
-            ), commit=False)
-            db.add(ServiceTaskLink(
-                service_call_id=call.id, step_type=None, service_event_id=event.id,
-                task_id=return_task.id, assistant_action_id=assistant_action_id,
-            ))
+            return_task = board_service.create_task(
+                db,
+                TaskCreate(
+                    titulo=f"Retorno técnico — {call.summary}",
+                    descricao=f"Retorno previsto para o chamado #{call.id}; evento de origem #{event.id}.",
+                    status="a_fazer",
+                    client_id=call.client_id,
+                    prazo=payload.return_on,
+                ),
+                commit=False,
+            )
+            db.add(
+                ServiceTaskLink(
+                    service_call_id=call.id,
+                    step_type=None,
+                    service_event_id=event.id,
+                    task_id=return_task.id,
+                    assistant_action_id=assistant_action_id,
+                )
+            )
         if payload.return_task_id is not None:
-            link = db.scalar(select(ServiceTaskLink).where(
-                ServiceTaskLink.service_call_id == call.id,
-                ServiceTaskLink.task_id == payload.return_task_id,
-                ServiceTaskLink.step_type.is_(None),
-                ServiceTaskLink.service_event_id.is_not(None),
-            ))
+            link = db.scalar(
+                select(ServiceTaskLink).where(
+                    ServiceTaskLink.service_call_id == call.id,
+                    ServiceTaskLink.task_id == payload.return_task_id,
+                    ServiceTaskLink.step_type.is_(None),
+                    ServiceTaskLink.service_event_id.is_not(None),
+                )
+            )
             if link is None or link.task is None or link.task.status == "concluido":
                 raise ValueError("Tarefa de retorno pendente nao encontrada para este chamado.")
             if payload.return_result == "resolved":
                 completed_order = db.query(Task).filter(Task.status == "concluido").count()
-                board_service.move_task(db, link.task.id, TaskMove(
-                    status="concluido", ordem=completed_order,
-                ), commit=False)
+                board_service.move_task(
+                    db,
+                    link.task.id,
+                    TaskMove(
+                        status="concluido",
+                        ordem=completed_order,
+                    ),
+                    commit=False,
+                )
         transitions = []
         for change in payload.step_changes:
-            step = db.scalar(select(ServiceWorkflowStep).where(
-                ServiceWorkflowStep.service_call_id == call.id,
-                ServiceWorkflowStep.step_type == change.step_type,
-            ).with_for_update())
+            step = db.scalar(
+                select(ServiceWorkflowStep)
+                .where(
+                    ServiceWorkflowStep.service_call_id == call.id,
+                    ServiceWorkflowStep.step_type == change.step_type,
+                )
+                .with_for_update()
+            )
             if step is None:
                 raise ValueError("Etapa nao encontrada.")
             if step.status == change.status:
                 raise ValueError("Mudanca de etapa sem alteracao de estado.")
             transition = ServiceWorkflowTransition(
-                service_call_id=call.id, step_type=change.step_type,
-                previous_status=step.status, new_status=change.status,
-                observation=change.note, service_event_id=event.id,
+                service_call_id=call.id,
+                step_type=change.step_type,
+                previous_status=step.status,
+                new_status=change.status,
+                observation=change.note,
+                service_event_id=event.id,
                 assistant_action_id=assistant_action_id,
             )
             db.add(transition)
@@ -318,8 +403,12 @@ def register_event(
 
 
 def correct_event(
-    db: Session, payload: ServiceEventCorrectionCreate, *, conversation_id: int,
-    assistant_action_id: int, commit: bool = True,
+    db: Session,
+    payload: ServiceEventCorrectionCreate,
+    *,
+    conversation_id: int,
+    assistant_action_id: int,
+    commit: bool = True,
 ) -> ServiceMutationResult:
     existing = db.scalar(select(ServiceEvent).where(ServiceEvent.assistant_action_id == assistant_action_id))
     if existing is not None:
@@ -338,10 +427,15 @@ def correct_event(
         if parent.id not in {item.leaf_event_id for item in effective}:
             raise ValueError("Evento ja corrigido; indique a folha atual.")
         event = ServiceEvent(
-            service_call_id=call.id, assistant_action_id=assistant_action_id,
-            conversation_id=conversation_id, event_type="correction", occurred_on=payload.occurred_on,
-            description=payload.reason, supersedes_event_id=parent.id,
-            correction_reason=payload.reason, corrected_event_type=payload.corrected_event_type,
+            service_call_id=call.id,
+            assistant_action_id=assistant_action_id,
+            conversation_id=conversation_id,
+            event_type="correction",
+            occurred_on=payload.occurred_on,
+            description=payload.reason,
+            supersedes_event_id=parent.id,
+            correction_reason=payload.reason,
+            corrected_event_type=payload.corrected_event_type,
             corrected_occurred_on=payload.corrected_occurred_on,
             corrected_description=payload.corrected_description,
         )
@@ -354,11 +448,20 @@ def correct_event(
 
 
 def create_reminders(
-    db: Session, *, service_call_id: int, assistant_action_id: int,
-    reminders: Sequence[ServiceReminderCreate], commit: bool = True,
+    db: Session,
+    *,
+    service_call_id: int,
+    assistant_action_id: int,
+    reminders: Sequence[ServiceReminderCreate],
+    commit: bool = True,
 ) -> list[Task]:
-    existing_links = list(db.scalars(select(ServiceTaskLink).where(
-        ServiceTaskLink.assistant_action_id == assistant_action_id).order_by(ServiceTaskLink.id)))
+    existing_links = list(
+        db.scalars(
+            select(ServiceTaskLink)
+            .where(ServiceTaskLink.assistant_action_id == assistant_action_id)
+            .order_by(ServiceTaskLink.id)
+        )
+    )
     if existing_links:
         if any(link.service_call_id != service_call_id for link in existing_links):
             raise ValueError("Acao ja vinculada a outro chamado.")
@@ -373,20 +476,37 @@ def create_reminders(
             raise ValueError("Chamado nao encontrado.")
         tasks = []
         for reminder in reminders:
-            if reminder.step_type is not None and db.scalar(select(ServiceWorkflowStep.id).where(
-                ServiceWorkflowStep.service_call_id == call.id,
-                ServiceWorkflowStep.step_type == reminder.step_type,
-            )) is None:
+            if (
+                reminder.step_type is not None
+                and db.scalar(
+                    select(ServiceWorkflowStep.id).where(
+                        ServiceWorkflowStep.service_call_id == call.id,
+                        ServiceWorkflowStep.step_type == reminder.step_type,
+                    )
+                )
+                is None
+            ):
                 raise ValueError("Etapa nao encontrada.")
-            task = board_service.create_task(db, TaskCreate(
-                titulo=reminder.title, descricao=reminder.description,
-                status=reminder.status, client_id=call.client_id,
-                user_id=reminder.user_id, prazo=reminder.due_date,
-            ), commit=False)
-            db.add(ServiceTaskLink(
-                service_call_id=call.id, step_type=reminder.step_type,
-                task_id=task.id, assistant_action_id=assistant_action_id,
-            ))
+            task = board_service.create_task(
+                db,
+                TaskCreate(
+                    titulo=reminder.title,
+                    descricao=reminder.description,
+                    status=reminder.status,
+                    client_id=call.client_id,
+                    user_id=reminder.user_id,
+                    prazo=reminder.due_date,
+                ),
+                commit=False,
+            )
+            db.add(
+                ServiceTaskLink(
+                    service_call_id=call.id,
+                    step_type=reminder.step_type,
+                    task_id=task.id,
+                    assistant_action_id=assistant_action_id,
+                )
+            )
             tasks.append(task)
         db.flush()
     if commit:

@@ -19,14 +19,11 @@ class TaskQueryCommand(BaseModel):
 
     tool: Literal["consultar_tarefas"] = "consultar_tarefas"
     status: TaskStatus | None = Field(default=None, description="Status exato, se citado.")
-    client: str | None = Field(
-        default=None, max_length=255, description="Nome do cliente como foi falado."
-    )
-    responsible: str | None = Field(
-        default=None, max_length=120, description="Nome do responsavel como foi falado."
-    )
+    client: str | None = Field(default=None, max_length=255, description="Nome do cliente como foi falado.")
+    responsible: str | None = Field(default=None, max_length=120, description="Nome do responsavel como foi falado.")
     overdue_only: bool = Field(
-        default=False, description="Use true somente quando o usuario pedir tarefas atrasadas."
+        default=False,
+        description="Use true somente quando o usuario pedir tarefas atrasadas.",
     )
     due_before: str | None = Field(
         default=None,
@@ -35,7 +32,8 @@ class TaskQueryCommand(BaseModel):
     )
     priorities: bool = Field(default=False, description="Use true se pedir prioridades.")
     include_completed: bool = Field(
-        default=False, description="Inclua concluidas apenas se solicitado explicitamente."
+        default=False,
+        description="Inclua concluidas apenas se solicitado explicitamente.",
     )
     limit: int = Field(default=20, ge=1, le=50, description="Quantidade maxima de resultados.")
 
@@ -52,11 +50,23 @@ class EmailQueryCommand(BaseModel):
     attention_only: bool = False
     awaiting_reply: bool = False
     reference: str | None = Field(default=None, max_length=160)
-    category: Literal[
-        "customer_quote_request", "vendor_quotation", "purchase_order", "invoice_request",
-        "invoice_received", "accounts_payable", "accounts_receivable", "payment_proof",
-        "service_request", "pending_reply", "informational", "other_review",
-    ] | None = None
+    category: (
+        Literal[
+            "customer_quote_request",
+            "vendor_quotation",
+            "purchase_order",
+            "invoice_request",
+            "invoice_received",
+            "accounts_payable",
+            "accounts_receivable",
+            "payment_proof",
+            "service_request",
+            "pending_reply",
+            "informational",
+            "other_review",
+        ]
+        | None
+    ) = None
     limit: int = Field(default=20, ge=1, le=50)
 
 
@@ -64,9 +74,7 @@ class TaskCreateCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool: Literal["criar_tarefa"] = "criar_tarefa"
-    title: str | None = Field(
-        default=None, max_length=255, description="Titulo curto extraido do pedido."
-    )
+    title: str | None = Field(default=None, max_length=255, description="Titulo curto extraido do pedido.")
     description: str = Field(default="", max_length=4000)
     status: TaskStatus = "a_fazer"
     due_date: str | None = Field(
@@ -74,12 +82,8 @@ class TaskCreateCommand(BaseModel):
         max_length=80,
         description="Prazo como foi falado; preserve amanha, sexta e depois de amanha.",
     )
-    client: str | None = Field(
-        default=None, max_length=255, description="Nome do cliente como foi falado."
-    )
-    responsible: str | None = Field(
-        default=None, max_length=120, description="Nome do responsavel como foi falado."
-    )
+    client: str | None = Field(default=None, max_length=255, description="Nome do cliente como foi falado.")
+    responsible: str | None = Field(default=None, max_length=120, description="Nome do responsavel como foi falado.")
     proposal_number: int | None = Field(default=None, ge=1)
     source_email_reference: str | None = Field(default=None, max_length=160)
     estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
@@ -103,9 +107,7 @@ class ConversationCommand(BaseModel):
     message: str = Field(
         min_length=1,
         max_length=2400,
-        description=(
-            "Resposta natural em portugues, sem alegar consultas ou alteracoes que nao ocorreram."
-        ),
+        description=("Resposta natural em portugues, sem alegar consultas ou alteracoes que nao ocorreram."),
     )
 
 
@@ -125,19 +127,17 @@ class TaskDraftCorrectionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool: Literal["corrigir_tarefa"] = "corrigir_tarefa"
-    title: str | None = Field(
-        default=None, max_length=255, description="Novo titulo, somente se corrigido."
-    )
+    title: str | None = Field(default=None, max_length=255, description="Novo titulo, somente se corrigido.")
     due_date: str | None = Field(
         default=None,
         max_length=80,
         description="Novo prazo como foi falado, somente se corrigido.",
     )
-    client: str | None = Field(
-        default=None, max_length=255, description="Novo cliente, somente se corrigido."
-    )
+    client: str | None = Field(default=None, max_length=255, description="Novo cliente, somente se corrigido.")
     responsible: str | None = Field(
-        default=None, max_length=120, description="Novo responsavel, somente se corrigido."
+        default=None,
+        max_length=120,
+        description="Novo responsavel, somente se corrigido.",
     )
     clear_due_date: bool = False
     clear_client: bool = False
@@ -296,6 +296,7 @@ class AssistantReply(BaseModel):
     kind: Literal["text", "confirmation", "clarification", "success", "error"]
     message: str
     retryable: bool = False
+    spoken_message: str | None = None
     action_id: int | None = None
     confirmation_token: str | None = None
     task_id: int | None = None
@@ -306,6 +307,7 @@ class AssistantReply(BaseModel):
     proposal_url: str | None = None
     fields: dict[str, str] = Field(default_factory=dict)
     email_items: list[dict[str, object]] = Field(default_factory=list)
+    daily_brief: dict[str, object] | None = None
     consulted_interval: str | None = None
     limitations: list[str] = Field(default_factory=list)
     report_fields: dict[str, str] = Field(default_factory=dict)
