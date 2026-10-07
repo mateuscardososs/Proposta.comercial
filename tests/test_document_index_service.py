@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from docx import Document
@@ -16,7 +17,12 @@ from app.models import (
     ServiceTechnicalReport,
     User,
 )
-from app.services.document_index_service import reindex_registered_documents
+from app.services.document_index_service import (
+    LocalOCRUnavailable,
+    local_ocr_for_platform,
+    local_tesseract_ocr,
+    reindex_registered_documents,
+)
 from app.services.document_search_service import search_document_index
 
 
@@ -301,3 +307,209 @@ def test_assistant_does_not_claim_absence_when_local_ocr_is_unavailable(db, tmp_
     assert "não consegui consultar" in reply.message.lower()
     assert "ocr local não está disponível" in reply.message.lower()
     assert "não encontrei evidência suficiente" not in reply.message.lower()
+
+
+def test_platform_ocr_selection_preserves_apple_vision_and_uses_tesseract_on_windows(monkeypatch, tmp_path):
+    import app.services.document_index_service as index_service
+
+    calls: list[str] = []
+    monkeypatch.setattr(index_service, "local_vision_ocr", lambda _path: calls.append("vision") or ["mac"])
+    monkeypatch.setattr(index_service, "local_tesseract_ocr", lambda _path: calls.append("tesseract") or ["windows"])
+
+    assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Darwin") == ["mac"]
+    assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Windows") == ["windows"]
+    assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Linux") is None
+    assert calls == ["vision", "tesseract"]
+
+
+def test_windows_tesseract_uses_portuguese_and_returns_page_text(monkeypatch, tmp_path):
+    image_page = b"synthetic png bytes"
+    calls: list[list[str]] = []
+    temp_dirs: list[Path] = []
+
+    def fake_temp_dir(**_kwargs):
+        from tempfile import TemporaryDirectory
+
+        temp = TemporaryDirectory(dir=tmp_path)
+        temp_dirs.append(Path(temp.name))
+        return temp
+
+    def fake_render(_pdf_path):
+        return [image_page, image_page]
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        assert kwargs["shell"] is False
+        if "--list-langs" in args:
+            return SimpleNamespace(returncode=0, stdout=b"List of available languages (2):\neng\npor\n", stderr=b"")
+        return SimpleNamespace(returncode=0, stdout=b"Texto OCR em portugu\xc3\xaas", stderr=b"")
+
+    pages = local_tesseract_ocr(
+        tmp_path / "scan.pdf",
+        executable="C:/Program Files/Tesseract-OCR/tesseract.exe",
+        data_dir="C:/Program Files/Tesseract-OCR/tessdata",
+        which=lambda _name: "C:/Program Files/Tesseract-OCR/tesseract.exe",
+        runner=fake_run,
+        renderer=fake_render,
+        temporary_directory=fake_temp_dir,
+    )
+
+    assert pages == ["Texto OCR em português", "Texto OCR em português"]
+    assert any("por" in call for call in calls[1:])
+    assert any("--tessdata-dir" in call for call in calls)
+    assert all(not directory.exists() for directory in temp_dirs)
+
+
+def test_windows_ocr_reports_missing_executable_and_portuguese_data(tmp_path):
+    with pytest.raises(LocalOCRUnavailable, match="tesseract_missing"):
+        local_tesseract_ocr(tmp_path / "scan.pdf", executable=None)
+
+    def no_portuguese(args, **kwargs):
+        return SimpleNamespace(returncode=0, stdout=b"List of available languages (1):\neng\n", stderr=b"")
+
+    with pytest.raises(LocalOCRUnavailable, match="ocr_language_missing"):
+        local_tesseract_ocr(
+            tmp_path / "scan.pdf",
+            executable="tesseract.exe",
+            which=lambda name: name,
+            runner=no_portuguese,
+            renderer=lambda _path: [],
+        )
+
+
+def test_windows_ocr_conversion_failure_cleans_temporary_directory(tmp_path):
+    temp_dirs: list[Path] = []
+
+    def tracked_temp_dir(**_kwargs):
+        from tempfile import TemporaryDirectory
+
+        temp = TemporaryDirectory(dir=tmp_path)
+        temp_dirs.append(Path(temp.name))
+        return temp
+
+    def failed_render(_pdf_path):
+        raise RuntimeError("synthetic conversion failure")
+
+    with pytest.raises(LocalOCRUnavailable, match="ocr_render_failed"):
+        local_tesseract_ocr(
+            tmp_path / "scan.pdf",
+            executable="tesseract.exe",
+            which=lambda name: name,
+            runner=lambda *_args, **_kwargs: SimpleNamespace(
+                returncode=0, stdout=b"por", stderr=b""
+            ),
+            renderer=failed_render,
+            temporary_directory=tracked_temp_dir,
+        )
+
+    assert temp_dirs and all(not directory.exists() for directory in temp_dirs)
+
+
+def test_missing_portuguese_language_is_reported_in_document_search(db, tmp_path):
+    from PIL import Image
+
+    from app.services.document_index_service import LocalOCRUnavailable
+
+    scanned = tmp_path / "idioma-ausente.pdf"
+    Image.new("RGB", (300, 200), "white").save(scanned, "PDF")
+    client = Client(razao_social="Cliente idioma OCR sintético")
+    user = User(nome="Usuário idioma", email="ocr-lang@example.invalid", senha_hash="not-a-secret")
+    db.add_all([client, user])
+    db.flush()
+    proposal = Proposal(
+        numero=716,
+        revisao="00",
+        client_id=client.id,
+        user_id=user.id,
+        origem="upload_externo",
+        pdf_path=scanned.name,
+    )
+    db.add(proposal)
+    db.commit()
+
+    def missing_language(_path):
+        raise LocalOCRUnavailable("ocr_language_missing")
+
+    result = reindex_registered_documents(db, output_dir=tmp_path, ocr_adapter=missing_language)
+    db.commit()
+    search = search_document_index(db, query="informação sintética")
+
+    assert result.unsearchable == 1
+    assert search.ocr_unavailable_documents == 1
+    assert search.ocr_unavailable_reasons == (
+        "dados do idioma português (por) ausentes no tessdata",
+    )
+
+
+def test_assistant_explains_missing_windows_tesseract_without_claiming_empty_documents(
+    db, tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    import app.services.document_index_service as index_service
+
+    scanned = tmp_path / "sem-tesseract.pdf"
+    Image.new("RGB", (300, 200), "white").save(scanned, "PDF")
+    client = Client(razao_social="Cliente executável OCR sintético")
+    user = User(nome="Usuário executável", email="ocr-exe@example.invalid", senha_hash="not-a-secret")
+    db.add_all([client, user])
+    db.flush()
+    db.add(Proposal(
+        numero=717,
+        revisao="00",
+        client_id=client.id,
+        user_id=user.id,
+        origem="upload_externo",
+        pdf_path=scanned.name,
+    ))
+    db.commit()
+
+    monkeypatch.setattr(index_service.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        index_service,
+        "local_tesseract_ocr",
+        lambda _path: (_ for _ in ()).throw(LocalOCRUnavailable("ocr_tesseract_missing")),
+    )
+    reply = AssistantService(db, None, output_dir=tmp_path).handle_message(
+        message="O que consta no documento 717 sobre calibração?",
+        request_id="missing-tesseract-assistant-query",
+    )
+
+    assert "executável tesseract ausente" in reply.message.lower()
+    assert "não posso confirmar" in reply.message.lower()
+    assert "não encontrei evidência suficiente" not in reply.message.lower()
+
+
+def test_index_records_tesseract_output_with_page_citation(db, tmp_path, monkeypatch):
+    from PIL import Image
+
+    import app.services.document_index_service as index_service
+
+    scanned = tmp_path / "scan.pdf"
+    Image.new("RGB", (400, 250), "white").save(scanned, "PDF")
+    client = Client(razao_social="Cliente OCR Windows sintético")
+    user = User(nome="Usuário OCR", email="ocr-win@example.invalid", senha_hash="not-a-secret")
+    db.add_all([client, user])
+    db.flush()
+    proposal = Proposal(
+        numero=715,
+        revisao="00",
+        client_id=client.id,
+        user_id=user.id,
+        origem="upload_externo",
+        pdf_path=scanned.name,
+    )
+    db.add(proposal)
+    db.commit()
+    monkeypatch.setattr(index_service.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(index_service, "local_tesseract_ocr", lambda _path: ["Inspeção local página sintética"])
+
+    result = reindex_registered_documents(db, output_dir=tmp_path)
+    db.commit()
+
+    search = search_document_index(db, query="inspeção local sintética")
+    assert result.ocr_pages == 1
+    assert search.evidence[0].page == 1
+    index = db.query(index_service.DocumentTextIndex).filter_by(source_id=proposal.id).first()
+    assert index is not None
+    assert index.language == "por"

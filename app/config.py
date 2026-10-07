@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     technical_report_template_path: Path = BASE_DIR / "doc_templates" / "relatorio_tecnico_template.docx"
     technical_report_pdf_converter_image: str = ""
     output_dir: Path = BASE_DIR / "output"
+    tesseract_cmd: str = ""
+    tesseract_data_dir: str = ""
     libreoffice_cmd: str = Field(default_factory=_default_libreoffice_cmd)
     app_host: str = "127.0.0.1"
     app_port: int = 8000

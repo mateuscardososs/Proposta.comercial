@@ -984,10 +984,7 @@ class AssistantService:
                     "a ausência de outras informações não está confirmada."
                 )
             if result.ocr_unavailable_documents:
-                message += (
-                    f" OCR local não está disponível para {result.ocr_unavailable_documents} PDF(s) "
-                    "sem texto pesquisável."
-                )
+                message += self._document_ocr_limitation(result)
             spoken_message = f"Encontrei {len(items)} trecho(s) com referência de documento. "
             spoken_message += " ".join(
                 f"{item['excerpt']} Fonte: {item['document_name']}, "
@@ -1003,10 +1000,7 @@ class AssistantService:
                 "Não posso confirmar se a informação solicitada existe nos documentos."
             )
             if result.ocr_unavailable_documents:
-                message += (
-                    f" OCR local não está disponível para {result.ocr_unavailable_documents} PDF(s) "
-                    "sem texto pesquisável."
-                )
+                message += self._document_ocr_limitation(result)
             spoken_message = "Não consegui consultar os arquivos registrados; não posso confirmar essa informação."
         else:
             message = "Não encontrei evidência suficiente nos documentos consultáveis para responder."
@@ -1021,10 +1015,7 @@ class AssistantService:
                     "a ausência de outras informações não está confirmada."
                 )
             if result.ocr_unavailable_documents:
-                message += (
-                    f" OCR local não está disponível para {result.ocr_unavailable_documents} PDF(s) "
-                    "sem texto pesquisável."
-                )
+                message += self._document_ocr_limitation(result)
             spoken_message = "Não encontrei evidência suficiente nos documentos consultáveis para responder."
         if result.unreadable_documents or result.partial_documents:
             spoken_message += " A busca foi parcial, então não posso confirmar ausência de outras informações."
@@ -1042,6 +1033,16 @@ class AssistantService:
                 if result.unreadable_documents or result.partial_documents else []
             ),
         )
+
+    @staticmethod
+    def _document_ocr_limitation(result) -> str:
+        note = (
+            f" OCR local não está disponível para {result.ocr_unavailable_documents} PDF(s) "
+            "sem texto pesquisável."
+        )
+        if result.ocr_unavailable_reasons:
+            note += " Motivo identificado: " + "; ".join(result.ocr_unavailable_reasons) + "."
+        return note
 
     @staticmethod
     def _direct_board_query(message: str) -> bool:
