@@ -71,6 +71,25 @@ class DocumentSearchResult:
     unreadable_documents: int
     ocr_unavailable_documents: int = 0
     partial_documents: int = 0
+    ocr_unavailable_reasons: tuple[str, ...] = ()
+
+
+_OCR_REASON_LABELS = {
+    "ocr_tesseract_missing": "executável Tesseract ausente (configure TESSERACT_CMD ou o PATH)",
+    "pdf_text+ocr_tesseract_missing": "executável Tesseract ausente (configure TESSERACT_CMD ou o PATH)",
+    "ocr_language_missing": "dados do idioma português (por) ausentes no tessdata",
+    "pdf_text+ocr_language_missing": "dados do idioma português (por) ausentes no tessdata",
+    "ocr_converter_missing": "pypdfium2/PDFium ausente; instale o extra local de OCR para Windows",
+    "pdf_text+ocr_converter_missing": "pypdfium2/PDFium ausente; instale o extra local de OCR para Windows",
+    "ocr_render_failed": "falha na conversão local do PDF em imagem",
+    "pdf_text+ocr_render_failed": "falha na conversão local do PDF em imagem",
+    "ocr_tesseract_failed": "falha ao executar o Tesseract local",
+    "pdf_text+ocr_tesseract_failed": "falha ao executar o Tesseract local",
+    "ocr_tesseract_timeout": "tempo limite do Tesseract local excedido",
+    "ocr_page_limit": "PDF excede o limite de páginas para OCR local",
+    "ocr_unavailable": "OCR local da plataforma indisponível",
+    "pdf_text+ocr_unavailable": "OCR local da plataforma indisponível",
+}
 
 
 def _proposal_number(query: str) -> int | None:
@@ -168,7 +187,12 @@ def search_document_index(
     readable_documents = sum(index.status in {"searchable", "partial"} for index in indexes)
     partial_documents = sum(index.status == "partial" for index in indexes)
     unreadable_documents = sum(index.status not in {"searchable", "partial"} for index in indexes)
-    ocr_unavailable_documents = sum(index.extraction_method == "ocr_unavailable" for index in indexes)
+    ocr_indexes = [index for index in indexes if "ocr_" in index.extraction_method]
+    ocr_unavailable_documents = len(ocr_indexes)
+    ocr_reasons = tuple(sorted({
+        _OCR_REASON_LABELS.get(index.extraction_method, "falha no OCR local")
+        for index in ocr_indexes
+    }))
     if requested_number is not None:
         proposal_ids = set(
             db.scalars(select(Proposal.id).where(Proposal.numero == requested_number)).all()
@@ -221,4 +245,5 @@ def search_document_index(
         unreadable_documents=unreadable_documents,
         ocr_unavailable_documents=ocr_unavailable_documents,
         partial_documents=partial_documents,
+        ocr_unavailable_reasons=ocr_reasons,
     )

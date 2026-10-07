@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import platform
 import shutil
 import subprocess
-from collections.abc import Callable
+import tempfile
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,11 +26,16 @@ from app.services import pdf_import_service, proposal_file_service
 
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 OCR_TIMEOUT_SECONDS = 90
+TESSERACT_PAGE_TIMEOUT_SECONDS = 30
+TESSERACT_MAX_PAGES = 500
+TESSERACT_DPI = 200
 OCR_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ocr_pdf_vision.swift"
 
 
 class LocalOCRUnavailable(RuntimeError):
-    pass
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,143 @@ def local_vision_ocr(pdf_path: Path) -> list[str] | None:
         return None
 
 
+def _render_pdf_pages(pdf_path: Path) -> Iterator[bytes]:
+    """Render a registered PDF to in-memory PNG pages using optional local PDFium."""
+    try:
+        import pypdfium2 as pdfium  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise LocalOCRUnavailable("ocr_converter_missing") from exc
+    try:
+        with pdfium.PdfDocument(str(pdf_path)) as document:
+            if len(document) > TESSERACT_MAX_PAGES:
+                raise LocalOCRUnavailable("ocr_page_limit")
+            for page_number in range(len(document)):
+                with document.get_page(page_number) as page:
+                    bitmap = page.render(scale=TESSERACT_DPI / 72, rev_byteorder=True)
+                    try:
+                        image = bitmap.to_pil().copy()
+                        with io.BytesIO() as buffer:
+                            image.save(buffer, format="PNG")
+                            image_payload = buffer.getvalue()
+                        yield image_payload
+                    finally:
+                        bitmap.close()
+    except LocalOCRUnavailable:
+        raise
+    except Exception as exc:
+        raise LocalOCRUnavailable("ocr_render_failed") from exc
+
+
+_SETTINGS_UNSET = object()
+
+
+def local_tesseract_ocr(
+    pdf_path: Path,
+    *,
+    executable: str | None | object = _SETTINGS_UNSET,
+    data_dir: str | None | object = _SETTINGS_UNSET,
+    which: Callable[[str], str | None] = shutil.which,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    renderer: Callable[[Path], Iterator[bytes] | list[bytes]] = _render_pdf_pages,
+    temporary_directory: Callable[..., tempfile.TemporaryDirectory] = tempfile.TemporaryDirectory,
+) -> list[str]:
+    """OCR PDF pages locally with Portuguese traineddata; never installs tools."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    configured_executable = settings.tesseract_cmd if executable is _SETTINGS_UNSET else executable
+    configured_data_dir = settings.tesseract_data_dir if data_dir is _SETTINGS_UNSET else data_dir
+    if configured_executable is None:
+        raise LocalOCRUnavailable("ocr_tesseract_missing")
+    tesseract = which(str(configured_executable or "tesseract"))
+    if tesseract is None:
+        raise LocalOCRUnavailable("ocr_tesseract_missing")
+
+    language_args = ["--list-langs"]
+    if configured_data_dir:
+        language_args.extend(["--tessdata-dir", str(configured_data_dir)])
+    try:
+        language_result = runner(
+            [tesseract, *language_args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LocalOCRUnavailable("ocr_tesseract_failed") from exc
+    if language_result.returncode != 0:
+        raise LocalOCRUnavailable("ocr_tesseract_failed")
+    language_output = language_result.stdout or ""
+    if isinstance(language_output, bytes):
+        language_output = language_output.decode("utf-8", errors="replace")
+    if "por" not in {line.strip() for line in language_output.splitlines()}:
+        raise LocalOCRUnavailable("ocr_language_missing")
+
+    recognized: list[str] = []
+    deadline = time.monotonic() + OCR_TIMEOUT_SECONDS
+    try:
+        with temporary_directory(prefix="adbalancas-ocr-") as temp_name:
+            temp_root = Path(temp_name)
+            page_images = iter(renderer(pdf_path))
+            try:
+                for page_number, image_bytes in enumerate(page_images, start=1):
+                    if page_number > TESSERACT_MAX_PAGES:
+                        raise LocalOCRUnavailable("ocr_page_limit")
+                    image_path = temp_root / f"page-{page_number:04d}.png"
+                    image_path.write_bytes(image_bytes)
+                    command = [tesseract, str(image_path), "stdout", "-l", "por", "--psm", "3"]
+                    if configured_data_dir:
+                        command.extend(["--tessdata-dir", str(configured_data_dir)])
+                    remaining = min(TESSERACT_PAGE_TIMEOUT_SECONDS, deadline - time.monotonic())
+                    if remaining <= 0:
+                        raise LocalOCRUnavailable("ocr_tesseract_timeout")
+                    completed = runner(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=remaining,
+                        check=False,
+                        shell=False,
+                    )
+                    if completed.returncode != 0:
+                        raise LocalOCRUnavailable("ocr_tesseract_failed")
+                    text = completed.stdout or ""
+                    if isinstance(text, bytes):
+                        text = text.decode("utf-8", errors="replace")
+                    recognized.append(text.strip())
+            finally:
+                close = getattr(page_images, "close", None)
+                if callable(close):
+                    close()
+    except LocalOCRUnavailable:
+        raise
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LocalOCRUnavailable("ocr_tesseract_failed") from exc
+    except Exception as exc:
+        raise LocalOCRUnavailable("ocr_render_failed") from exc
+    return recognized
+
+
+def local_ocr_for_platform(pdf_path: Path, *, system: str | None = None) -> list[str] | None:
+    """Keep Apple Vision on macOS and select Tesseract only for Windows."""
+    current_platform = system or platform.system()
+    if current_platform == "Darwin":
+        return local_vision_ocr(pdf_path)
+    if current_platform == "Windows":
+        return local_tesseract_ocr(pdf_path)
+    return None
+
+
+def _ocr_language() -> str:
+    return "por" if platform.system() == "Windows" else "pt-BR"
+
+
 def _source_records(db: Session) -> list[tuple[str, int, str, str]]:
     records: list[tuple[str, int, str, str]] = []
     for source_type, model in (("proposal", Proposal), ("service_report", ServiceTechnicalReport)):
@@ -131,17 +276,24 @@ def _entries_for_file(
         pages = pdf_import_service.extract_pdf_pages(payload)
     except Exception:  # noqa: BLE001 - parser failure must result in an unsearchable, not falsely empty, file.
         pages = []
-        # pdfplumber/PyMuPDF can report a valid image-only PDF as having no text;
-        # PDFKit/Vision still gets the registered file for a local OCR attempt.
+        # Parsers can report an image-only PDF as having no text; platform-local
+        # OCR still gets the already-registered file, never an arbitrary path.
         ocr_pages = ocr_adapter(path)
         if ocr_pages is None:
-            raise LocalOCRUnavailable("Local OCR is unavailable.")
+            raise LocalOCRUnavailable("ocr_unavailable")
         chunks = [(number, None, text.strip()) for number, text in enumerate(ocr_pages, start=1) if text.strip()]
         ocr_count = len(chunks)
         unresolved = len(chunks) != len(ocr_pages) or not chunks
-        return chunks, "vision_ocr", "pt-BR", ocr_count, unresolved
+        method = "vision_ocr" if platform.system() == "Darwin" else "tesseract_ocr"
+        return chunks, method, _ocr_language(), ocr_count, unresolved
     needs_ocr = any(not text.strip() for text in pages)
-    ocr_pages: list[str] | None = ocr_adapter(path) if needs_ocr else None
+    ocr_pages: list[str] | None = None
+    ocr_failure = ""
+    if needs_ocr:
+        try:
+            ocr_pages = ocr_adapter(path)
+        except LocalOCRUnavailable as exc:
+            ocr_failure = exc.code
     ocr_count = 0
     unresolved = False
     for index, page_text in enumerate(pages):
@@ -154,8 +306,13 @@ def _entries_for_file(
                 unresolved = True
         if extracted:
             entries.append((index + 1, None, extracted))
-    method = "pdf_text+vision_ocr" if ocr_count else ("pdf_text+ocr_unavailable" if needs_ocr and ocr_pages is None else "pdf_text")
-    language = "pt-BR" if ocr_count else ""
+    if ocr_count:
+        method = "pdf_text+vision_ocr" if platform.system() == "Darwin" else "pdf_text+tesseract_ocr"
+    elif needs_ocr and ocr_pages is None:
+        method = f"pdf_text+{ocr_failure or 'ocr_unavailable'}"
+    else:
+        method = "pdf_text"
+    language = _ocr_language() if ocr_count else ""
     return entries, method, language, ocr_count, unresolved
 
 
@@ -168,7 +325,7 @@ def reindex_registered_documents(
 ) -> ReindexResult:
     """Reconcile a persistent index against only paths referenced by registered rows."""
     root = Path(output_dir)
-    ocr = ocr_adapter or local_vision_ocr
+    ocr = ocr_adapter or local_ocr_for_platform
     counters = _Counters()
     records = _source_records(db)
     counters.discovered = len(records)
@@ -289,10 +446,10 @@ def reindex_registered_documents(
                 index.status = "unsearchable"
             if index.status == "unsearchable":
                 counters.unsearchable += 1
-        except LocalOCRUnavailable:
+        except LocalOCRUnavailable as exc:
             # The file stays visible as unsearchable; never claim a no-evidence result as a confirmed absence.
             index.status = "unsearchable"
-            index.extraction_method = "ocr_unavailable"
+            index.extraction_method = exc.code[:30]
             index.language = ""
             counters.unsearchable += 1
         except Exception:  # noqa: BLE001 - never leak parser diagnostics or document content to logs.

@@ -31,6 +31,12 @@ registro remove sua projeção na próxima reconciliação. O backup do banco in
   disponibiliza a estrutura Vision; a execução usa `swift` e `scripts/ocr_pdf_vision.swift`. Se Swift/Vision
   não estiver disponível, falhar ou não reconhecer texto, o documento/página não é considerado pesquisável;
   a resposta informa a consulta parcial em vez de alegar ausência de evidência.
+- No Windows, páginas sem camada de texto são rasterizadas localmente com pypdfium2/PDFium opcional e reconhecidas
+  pelo executável Tesseract no idioma `por`. O processo recebe argumentos como lista (`shell=False`); as
+  imagens temporárias ficam numa pasta temporária e são removidas também após falhas. Há limites de 500
+  páginas, 200 DPI e 90 segundos totais por PDF. A aplicação não baixa nem instala componentes em execução.
+  Sem Tesseract, o idioma `por` ou pypdfium2/PDFium, o arquivo fica não pesquisável/parcial e a consulta informa a
+  causa detectada.
 - DOCX são pesquisados por seção de título quando o estilo existe; na ausência de título, a resposta cita
   o número do parágrafo.
 - A resposta traz trechos encontrados, sem pedir ao Gemini/Ollama para interpretar o documento. Assim,
@@ -42,9 +48,9 @@ registro remove sua projeção na próxima reconciliação. O backup do banco in
 
 ## Limites
 
-A recuperação é lexical e extrativa, não uma interpretação semântica ampla. OCR depende do macOS e da
-disponibilidade local de Apple Vision/Swift; em outros ambientes o PDF continua registrado, mas páginas
-escaneadas não são marcadas como pesquisáveis. A busca cobre somente arquivos registrados no sistema, não
+A recuperação é lexical e extrativa, não uma interpretação semântica ampla. OCR depende dos componentes
+locais da plataforma: Apple Vision/Swift no macOS e Tesseract, `por` e pypdfium2/PDFium no Windows. Em sistemas sem
+adaptador local, PDFs escaneados não são marcados como pesquisáveis. A busca cobre somente arquivos registrados no sistema, não
 pastas arbitrárias nem anexos de e-mail. O importador legado `/api/import-proposals` não mantém o PDF
 original; documentos ausentes não podem ser reconstruídos.
 
@@ -57,13 +63,43 @@ arquivos atualmente referenciados, execute `python -m scripts.reindex_registered
 uma reextração idempotente, acrescente `--force`. O comando imprime apenas totais, nunca nomes ou conteúdo.
 As consultas também reconciliam alterações detectadas nos caminhos registrados antes de responder.
 
+### Ativar OCR no Windows
+
+1. Instale o Tesseract OCR para Windows seguindo as [instruções oficiais](https://tesseract-ocr.github.io/tessdoc/Installation.html)
+   e inclua os dados de idioma português (`por.traineddata`). Se o instalador não os incluir, use o repositório
+   oficial de [dados treinados do Tesseract](https://github.com/tesseract-ocr/tessdata) e coloque `por.traineddata`
+   na pasta `tessdata` da instalação. A aplicação apenas verifica esses dados; não os baixa.
+2. No ambiente virtual do projeto, instale explicitamente o renderizador opcional:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m pip install -r requirements-ocr-windows.txt
+   ```
+
+3. Se os caminhos não estiverem no `PATH`/padrão, preencha no arquivo de ambiente local, ignorado pelo Git:
+
+   ```dotenv
+   TESSERACT_CMD="C:/Program Files/Tesseract-OCR/tesseract.exe"
+   TESSERACT_DATA_DIR="C:/Program Files/Tesseract-OCR/tessdata"
+   ```
+
+   Os campos são opcionais se o executável e os dados forem encontrados pelo ambiente. Reinicie a aplicação
+   após a configuração e deixe a reindexação normal processar os arquivos registrados. O conteúdo do PDF e
+   os diagnósticos do processo não são gravados em logs.
+
+O extra de renderização é pypdfium2, sob Apache-2.0/BSD-3-Clause, com PDFium sob licença BSD-style; consulte
+os avisos da distribuição se futuramente empacotar ou distribuir o aplicativo. No macOS, `local_ocr_for_platform`
+continua selecionando o adaptador Vision existente; Tesseract e pypdfium2 não são necessários nem chamados.
+O repositório não possui workflow de CI Windows no momento.
+
 ## Validação
 
 `tests/test_assistant_document_search.py` e `tests/test_document_index_service.py` usam somente arquivos
 sintéticos em diretórios temporários. Cobrem PDF digital, PDF escaneado com OCR local em português, DOCX,
 relatório técnico, página/seção, reindexação sem duplicação, substituição, arquivo removido, OCR ausente,
 informação não encontrada, caminho fora de `OUTPUT_DIR`, conteúdo instrucional malicioso e fluxo de voz.
-Nenhum documento real ou conteúdo de e-mail é usado.
+Os testes Windows simulam seleção de plataforma, saída do Tesseract, executável e idioma ausentes, falha de
+conversão, limpeza da pasta temporária e citação de página. Não equivalem a execução numa máquina Windows
+real. Nenhum documento real ou conteúdo de e-mail é usado.
 
 ### Validação na instância local 8013 — 2026-10-07
 

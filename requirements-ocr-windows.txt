@@ -1,0 +1,2 @@
+# Instale explicitamente no venv Windows quando for habilitar OCR de PDFs escaneados.
+pypdfium2>=4.25,<6
