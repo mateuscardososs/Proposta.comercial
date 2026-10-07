@@ -27,6 +27,7 @@ from app.assistant.contracts import (
     AssistantHistory,
     AssistantMessageRequest,
     AssistantReply,
+    AssistantReportPreviewEditRequest,
     VoiceSpeechRequest,
     VoiceStatus,
     VoiceTranscriptionResponse,
@@ -397,6 +398,25 @@ def assistant_cancel(
 ) -> AssistantReply:
     try:
         return _service(db).cancel_action(action_id, payload.confirmation_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post(
+    "/api/assistant/actions/{action_id}/report-preview",
+    response_model=AssistantReply,
+)
+def assistant_edit_report_preview(
+    action_id: int,
+    payload: AssistantReportPreviewEditRequest,
+    db: Session = Depends(get_db),
+) -> AssistantReply:
+    try:
+        return _service(db).edit_service_report_preview(
+            action_id,
+            payload.confirmation_token,
+            payload.fields,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 

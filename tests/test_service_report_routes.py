@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
-import re
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
-from app.db import Base, get_db, ensure_service_history_guards_for_engine
+from app.assistant.contracts import PrepareServiceReportCommand
+from app.assistant.service import AssistantService
+from app.db import Base, ensure_service_history_guards_for_engine, get_db
 from app.main import app
 from app.models import (
     AssistantAction,
@@ -103,7 +105,7 @@ def service_report_app(tmp_path, monkeypatch):
 
 
 def test_service_page_previews_then_confirms_report_once(service_report_app, monkeypatch):
-    client, engine, call_id, output_dir = service_report_app
+    client, engine, call_id, _output_dir = service_report_app
     pdf_conversions = []
 
     def fake_pdf(docx_path: Path, pdf_path: Path, libreoffice_cmd: str, *, docker_image: str = "") -> Path:
@@ -159,7 +161,8 @@ def test_service_page_previews_then_confirms_report_once(service_report_app, mon
         report = db.query(ServiceTechnicalReport).one()
         assert report.service_call_id == call_id
         assert report.fields_json["work_performed"] == "Ajuste revisado pela pessoa"
-        assert db.query(ServiceEvent).count() == 2
+        assert db.query(ServiceEvent).count() == 1
+        assert report.document_event_id is None
         assert db.query(AssistantAction).count() == 2
         report_id = report.id
         step = db.query(ServiceWorkflowStep).filter_by(service_call_id=call_id, step_type="report").one()
@@ -179,3 +182,56 @@ def test_incomplete_service_cannot_open_report_preview(service_report_app):
     response = client.get(f"/web/services/{call_id}/relatorio/previa")
     assert response.status_code == 409
     assert "após a conclusão explícita" in response.text
+
+
+def test_assistant_confirmation_returns_downloadable_report_files_without_service_event(service_report_app, monkeypatch):
+    client, engine, call_id, output_dir = service_report_app
+
+    def fake_pdf(docx_path: Path, pdf_path: Path, libreoffice_cmd: str, *, docker_image: str = "") -> Path:
+        del docx_path, libreoffice_cmd, docker_image
+        pdf_path.write_bytes(b"%PDF-1.4 synthetic assistant artifact")
+        return pdf_path
+
+    settings = service_report_service.ReportGenerationSettings(
+        output_dir=output_dir,
+        template_path=Path(__file__).resolve().parents[1] / "doc_templates" / "relatorio_tecnico_template.docx",
+        libreoffice_cmd="soffice",
+        timezone="America/Recife",
+    )
+    monkeypatch.setattr(service_report_service.pdf_service, "convert_docx_to_pdf", fake_pdf)
+    monkeypatch.setattr(service_report_service, "assistant_generation_settings", lambda: settings)
+
+    class Provider:
+        def interpret(self, messages, **kwargs):
+            del messages, kwargs
+            return PrepareServiceReportCommand(service_call_id=call_id)
+
+    with Session(engine, expire_on_commit=False) as db:
+        service = AssistantService(db, Provider())
+        preview = service.handle_message(
+            message=f"Prepare o relatório técnico do chamado #{call_id}",
+            request_id="assistant-report-download-route",
+        )
+
+    fields = dict(preview.report_fields)
+    fields["equipment"] = "Balança revisada pela pessoa"
+    edited = client.post(
+        f"/api/assistant/actions/{preview.action_id}/report-preview",
+        json={"confirmation_token": preview.confirmation_token, "fields": fields},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["report_fields"]["equipment"] == "Balança revisada pela pessoa"
+    assert edited.json()["confirmation_token"] != preview.confirmation_token
+    saved_response = client.post(
+        f"/api/assistant/actions/{preview.action_id}/confirm",
+        json={"confirmation_token": edited.json()["confirmation_token"]},
+    )
+    assert saved_response.status_code == 200, saved_response.text
+    saved = type("Saved", (), saved_response.json())()
+
+    assert saved.report_id is not None
+    assert client.get(saved.report_docx_url).status_code == 200
+    assert client.get(saved.report_pdf_url).content.startswith(b"%PDF-")
+    with Session(engine) as db:
+        assert db.query(ServiceEvent).filter_by(service_call_id=call_id).count() == 1
+        assert db.query(ServiceTechnicalReport).count() == 1

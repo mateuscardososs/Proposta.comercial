@@ -200,6 +200,120 @@ test("service and reminder links returned after confirmation are rendered in his
 });
 
 
+test("confirmed technical report displays DOCX and PDF downloads in chat", async () => {
+  const oldWindow = globalThis.window;
+  const oldDocument = globalThis.document;
+  const makeElement = (tagName = "div") => ({
+    tagName, children: [], classList: { toggle() {} }, listeners: {}, dataset: {},
+    addEventListener(name, callback) { this.listeners[name] = callback; },
+    append(...items) { this.children.push(...items); },
+    appendChild(item) { this.children.push(item); },
+    remove() {}, focus() {}, requestSubmit() {}, setAttribute() {},
+  });
+  const elements = new Map([
+    ["assistant-form", makeElement("form")], ["assistant-message", makeElement("textarea")],
+    ["assistant-send", makeElement("button")], ["assistant-history", makeElement("main")],
+    ["assistant-empty", makeElement("div")], ["assistant-status", makeElement("div")],
+    ["assistant-retry", makeElement("button")],
+  ]);
+  globalThis.window = {
+    location: { href: "http://127.0.0.1:8013/web/assistente" },
+    history: { replaceState() {} }, crypto: { randomUUID: () => "report-links" },
+    fetch: async () => response({ conversation_id: 7, kind: "success", message: "Relatório pronto.",
+      report_id: 5, report_docx_url: "/web/services/relatorios/5/docx", report_pdf_url: "/web/services/relatorios/5/pdf" }),
+  };
+  globalThis.document = { createElement: makeElement };
+  try {
+    const controller = bootstrapAssistantChat({ getElementById: (id) => elements.get(id) });
+    await controller.send("Gere o relatório técnico");
+    const anchors = [];
+    const walk = (item) => {
+      if (item.tagName === "a") anchors.push([item.textContent, item.href]);
+      for (const child of item.children || []) walk(child);
+    };
+    walk(elements.get("assistant-history"));
+    assert.deepEqual(anchors, [
+      ["Baixar relatório DOCX", "/web/services/relatorios/5/docx"],
+      ["Baixar relatório PDF", "/web/services/relatorios/5/pdf"],
+    ]);
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.document = oldDocument;
+  }
+});
+
+
+test("technical report preview renders editable fields and sends edit before reconfirmation", async () => {
+  const oldWindow = globalThis.window;
+  const oldDocument = globalThis.document;
+  const requests = [];
+  const makeElement = (tagName = "div") => ({
+    tagName, children: [], classList: { toggle() {} }, listeners: {}, dataset: {}, value: "",
+    addEventListener(name, callback) { this.listeners[name] = callback; },
+    append(...items) { this.children.push(...items); },
+    appendChild(item) { this.children.push(item); },
+    remove() {}, focus() {}, requestSubmit() {}, setAttribute() {},
+    querySelectorAll(selector) {
+      const results = [];
+      const walk = (item) => {
+        if (selector === "[data-report-field]" && item.dataset?.reportField) results.push(item);
+        for (const child of item.children || []) walk(child);
+      };
+      walk(this);
+      return results;
+    },
+  });
+  const fields = {
+    client_name: "Cliente sintético", client_cnpj: "", client_phone: "", client_address: "",
+    equipment: "Balança original", completion_date: "2026-10-02", reported_problem: "",
+    analysis: "", work_performed: "Reparo sintético", verification_result: "",
+  };
+  const reply = (confirmation_token) => ({ conversation_id: 7, kind: "confirmation",
+    action_id: 33, confirmation_token, service_call_id: 4, message: "Revise a prévia.",
+    report_fields: fields, report_field_labels: Object.fromEntries(Object.keys(fields).map((key) => [key, key])),
+    report_missing_fields: ["client_cnpj", "client_phone", "client_address", "reported_problem", "analysis", "verification_result"] });
+  const elements = new Map([
+    ["assistant-form", makeElement("form")], ["assistant-message", makeElement("textarea")],
+    ["assistant-send", makeElement("button")], ["assistant-history", makeElement("main")],
+    ["assistant-empty", makeElement("div")], ["assistant-status", makeElement("div")],
+    ["assistant-retry", makeElement("button")],
+  ]);
+  globalThis.window = {
+    location: { href: "http://127.0.0.1:8013/web/assistente" }, history: { replaceState() {} },
+    crypto: { randomUUID: () => "report-edit" },
+    fetch: async (url, options) => {
+      requests.push([url, options ? JSON.parse(options.body) : null]);
+      return requests.length === 1
+        ? response(reply("token-before"))
+        : response(reply("token-after"));
+    },
+  };
+  globalThis.document = { createElement: makeElement };
+  try {
+    const controller = bootstrapAssistantChat({ getElementById: (id) => elements.get(id) });
+    await controller.send("Gere relatório do chamado #4");
+    const forms = [];
+    const walk = (item) => {
+      if (item.tagName === "form" && item.className === "assistant-report-preview") forms.push(item);
+      for (const child of item.children || []) walk(child);
+    };
+    walk(elements.get("assistant-history"));
+    assert.equal(forms.length, 1);
+    const equipment = forms[0].querySelectorAll("[data-report-field]").find((input) => input.dataset.reportField === "equipment");
+    equipment.value = "Balança revisada";
+    forms[0].listeners.submit({ preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(requests[1][0], "/api/assistant/actions/33/report-preview");
+    assert.equal(requests[1][1].confirmation_token, "token-before");
+    assert.equal(requests[1][1].fields.equipment, "Balança revisada");
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.document = oldDocument;
+  }
+});
+
+
 test("email result cards show category evidence and mark uncertain classification for review", async () => {
   const oldWindow = globalThis.window;
   const oldDocument = globalThis.document;

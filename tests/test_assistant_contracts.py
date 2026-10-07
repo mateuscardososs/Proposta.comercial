@@ -3,17 +3,20 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from app.assistant.capabilities import CapabilityRegistry
 from app.assistant.contracts import (
     CancelActionCommand,
-    ConversationCommand,
     ConfirmActionCommand,
+    ConversationCommand,
+    CorrectServiceReportCommand,
+    PrepareServiceReportCommand,
     TaskDraftCorrectionCommand,
     assistant_command_adapter,
 )
-from app.assistant.capabilities import CapabilityRegistry
+from app.assistant.evidence import validate_execution_claims
+from app.assistant.gemini import _gemini_function_declarations
 from app.assistant.ollama import _ollama_tools
 from app.assistant.provider import ProviderPendingAction, ProviderToolResult
-from app.assistant.evidence import validate_execution_claims
 
 
 @pytest.mark.parametrize(
@@ -120,8 +123,31 @@ def test_service_capabilities_are_available_with_confirmation_for_writes():
     write = registry.get("service_write")
     assert write.state == "available"
     assert "confirm" in write.detail.casefold()
-    for name in ("document_write", "finance_write", "email_send", "tax_issue"):
+    document = registry.get("document_write")
+    assert document.state == "available"
+    assert "confirmação" in document.detail.casefold()
+    for name in ("finance_write", "email_send", "tax_issue"):
         assert registry.get(name).state != "available"
+
+
+def test_technical_report_tools_have_validated_arguments_and_are_allowlisted():
+    command = assistant_command_adapter.validate_python({
+        "tool": "preparar_relatorio_tecnico",
+        "service_call_id": 4,
+    })
+    correction = assistant_command_adapter.validate_python({
+        "tool": "corrigir_previa_relatorio_tecnico",
+        "equipment": "Balança sintética",
+    })
+    assert isinstance(command, PrepareServiceReportCommand)
+    assert isinstance(correction, CorrectServiceReportCommand)
+    allowed = {"preparar_relatorio_tecnico", "corrigir_previa_relatorio_tecnico"}
+    assert {item["function"]["name"] for item in _ollama_tools(allowed)} == allowed
+    assert {item["name"] for item in _gemini_function_declarations(allowed)} == allowed
+    with pytest.raises(ValidationError):
+        assistant_command_adapter.validate_python({
+            "tool": "preparar_relatorio_tecnico", "service_call_id": -1, "sql": "SELECT 1",
+        })
 
 
 @pytest.mark.parametrize(
@@ -179,6 +205,7 @@ def test_explicit_reminder_task_is_not_mistaken_for_service_write():
 
 def test_tool_arguments_cannot_override_the_authorized_discriminator():
     import httpx
+
     from app.assistant.ollama import _validated_command
 
     response = httpx.Response(200, json={"message": {"tool_calls": [{"function": {

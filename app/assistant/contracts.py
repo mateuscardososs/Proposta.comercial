@@ -240,6 +240,37 @@ class ServiceReminderDraftCommand(BaseModel):
     reminders: list[ServiceReminderItemCommand] = Field(min_length=1, max_length=5)
 
 
+class PrepareServiceReportCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["preparar_relatorio_tecnico"] = "preparar_relatorio_tecnico"
+    service_call_id: int | None = Field(default=None, ge=1)
+    client: str | None = Field(default=None, max_length=255)
+    reference: str | None = Field(default=None, max_length=255)
+
+
+class CorrectServiceReportCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["corrigir_previa_relatorio_tecnico"] = "corrigir_previa_relatorio_tecnico"
+    client_name: str | None = Field(default=None, max_length=255)
+    client_cnpj: str | None = Field(default=None, max_length=32)
+    client_phone: str | None = Field(default=None, max_length=50)
+    client_address: str | None = Field(default=None, max_length=1000)
+    equipment: str | None = Field(default=None, max_length=1000)
+    completion_date: str | None = Field(default=None, max_length=10)
+    reported_problem: str | None = Field(default=None, max_length=4000)
+    analysis: str | None = Field(default=None, max_length=4000)
+    work_performed: str | None = Field(default=None, max_length=4000)
+    verification_result: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def require_change(self) -> CorrectServiceReportCommand:
+        if not any(getattr(self, name) is not None for name in type(self).model_fields if name != "tool"):
+            raise ValueError("Informe ao menos um campo para corrigir a prévia.")
+        return self
+
+
 AssistantCommand = Annotated[
     TaskQueryCommand
     | EmailQueryCommand
@@ -252,7 +283,9 @@ AssistantCommand = Annotated[
     | ServiceQueryCommand
     | ServiceEventDraftCommand
     | ServiceDraftCorrectionCommand
-    | ServiceReminderDraftCommand,
+    | ServiceReminderDraftCommand
+    | PrepareServiceReportCommand
+    | CorrectServiceReportCommand,
     Field(discriminator="tool"),
 ]
 assistant_command_adapter = TypeAdapter(AssistantCommand)
@@ -275,6 +308,18 @@ class AssistantReply(BaseModel):
     email_items: list[dict[str, object]] = Field(default_factory=list)
     consulted_interval: str | None = None
     limitations: list[str] = Field(default_factory=list)
+    report_fields: dict[str, str] = Field(default_factory=dict)
+    report_field_labels: dict[str, str] = Field(default_factory=dict)
+    report_missing_fields: list[str] = Field(default_factory=list)
+    report_candidates: list[dict[str, object]] = Field(default_factory=list)
+    report_id: int | None = None
+    report_docx_url: str | None = None
+    report_pdf_url: str | None = None
+
+
+class AssistantReportPreviewEditRequest(BaseModel):
+    confirmation_token: str = Field(min_length=20, max_length=100)
+    fields: dict[str, str]
 
 
 class AssistantMessageView(BaseModel):

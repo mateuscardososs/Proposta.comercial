@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import date
-import os
-from pathlib import Path
 import hashlib
+import os
 import zipfile
+from datetime import date
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -290,7 +290,8 @@ def test_generation_requires_confirmation_and_persists_review_snapshot_idempoten
     assert report.report.fields_json["reported_problem"] == "Oscilação confirmada pelo técnico"
     assert report.report.source_event_ids == [1]
     assert db.query(ServiceTechnicalReport).count() == 1
-    assert db.query(ServiceEvent).count() == event_count == 2
+    assert db.query(ServiceEvent).count() == event_count == 1
+    assert report.report.document_event_id is None
     assert db.query(AssistantAction).count() == action_count == 2
     with zipfile.ZipFile(report.docx_path) as archive:
         docx_text = archive.read("word/document.xml").decode("utf-8")

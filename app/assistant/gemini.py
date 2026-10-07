@@ -53,6 +53,9 @@ _SYSTEM_INSTRUCTION = (
     "Nunca afirme que consultou, criou ou alterou dados sem a ferramenta/resultado correspondente. "
     "Criar tarefa, evento de servico e lembrete prepara rascunho para confirmacao; nunca confirme "
     "automaticamente. Ao corrigir rascunho pendente, use a ferramenta de correcao apropriada. "
+    "Relatório técnico só pode ser preparado para chamado concluído via preparar_relatorio_tecnico, "
+    "revisto e confirmado explicitamente; correção da prévia invalida a confirmação anterior. "
+    "O backend existente gera DOCX/PDF após confirmar e não altera eventos técnicos. "
     "Confirmacao e cancelamento exigem intencao explicita do usuario. Nao exclua nem altere registros "
     "existentes, e nao realize atendimento externo, envio, emissao fiscal, pagamento ou outra "
     "operacao indisponivel. Para servicos, diferencie eventos tecnicos de etapas administrativas. "
@@ -417,6 +420,12 @@ def _pending_action_instruction(pending_action: ProviderPendingAction | None) ->
         return (
             "ESTADO_PENDENTE=Existe correcao de evento de servico pendente. Preserve o evento original; "
             "use corrigir_registro_servico para a correcao e confirme antes de gravar.\n"
+        )
+    if pending_action.action_type == "generate_service_report":
+        return (
+            "ESTADO_PENDENTE=Existe uma prévia editável de relatório técnico. Se o usuário corrigir qualquer campo, "
+            "chame corrigir_previa_relatorio_tecnico; isso invalida a confirmação anterior. Só confirme ou cancele "
+            "com intenção explícita. Não diga que gerou DOCX/PDF antes do resultado confirmado.\n"
         )
     return (
         "ESTADO_PENDENTE=Existe rascunho de evento de servico. Se PEDIDO_ATUAL corrigir evento, data, "

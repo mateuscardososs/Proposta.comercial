@@ -131,7 +131,7 @@ def test_gemini_and_ollama_expose_identical_complete_tool_contracts():
 
     expected_names = {name for name, _description, _contract in TOOL_DEFINITIONS}
     assert set(ollama_tools) == set(gemini_tools) == expected_names
-    assert len(expected_names) == 12
+    assert len(expected_names) == 14
     assert all(isinstance(schema, dict) and schema.get("type") == "object" for schema in gemini_tools.values())
     service_fields = {
         "equipment", "reported_problem", "analysis", "work_performed", "return_on",

@@ -684,7 +684,7 @@ class ServiceWorkflowTransition(Base):
     previous_status: Mapped[str] = mapped_column(String(30), nullable=False)
     new_status: Mapped[str] = mapped_column(String(30), nullable=False)
     observation: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    service_event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    service_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     assistant_action_id: Mapped[int] = mapped_column(
         ForeignKey("assistant_actions.id", ondelete="RESTRICT"),
         nullable=False,
@@ -697,7 +697,7 @@ class ServiceWorkflowTransition(Base):
         foreign_keys=[service_call_id],
         overlaps="service_event",
     )
-    service_event: Mapped[ServiceEvent] = relationship(
+    service_event: Mapped[ServiceEvent | None] = relationship(
         foreign_keys=[service_event_id, service_call_id, assistant_action_id],
         overlaps="service_call,workflow_transitions",
     )
@@ -759,7 +759,7 @@ class ServiceTechnicalReport(Base):
         ForeignKey("assistant_actions.id", ondelete="RESTRICT"), nullable=False
     )
     document_event_id: Mapped[int] = mapped_column(
-        ForeignKey("service_events.id", ondelete="RESTRICT"), nullable=False
+        ForeignKey("service_events.id", ondelete="RESTRICT"), nullable=True
     )
     idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
     source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -776,4 +776,4 @@ class ServiceTechnicalReport(Base):
 
     service_call: Mapped[ServiceCall] = relationship()
     assistant_action: Mapped[AssistantAction] = relationship()
-    document_event: Mapped[ServiceEvent] = relationship()
+    document_event: Mapped[ServiceEvent | None] = relationship()

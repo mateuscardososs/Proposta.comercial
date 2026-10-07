@@ -111,6 +111,62 @@
     margin-top: 10px;
   }
 
+  .assistant-report-preview {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-muted);
+  }
+
+  .assistant-report-preview label {
+    display: grid;
+    gap: 5px;
+    color: var(--text-soft);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .assistant-report-preview label:has(textarea[name="client_address"]),
+  .assistant-report-preview label:has(textarea[name="reported_problem"]),
+  .assistant-report-preview label:has(textarea[name="analysis"]),
+  .assistant-report-preview label:has(textarea[name="work_performed"]),
+  .assistant-report-preview label:has(textarea[name="verification_result"]),
+  .assistant-report-preview > button {
+    grid-column: 1 / -1;
+  }
+
+  .assistant-report-preview textarea {
+    width: 100%;
+    min-height: 38px;
+    resize: vertical;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    padding: 8px;
+    font: inherit;
+    font-weight: 400;
+  }
+
+  .assistant-report-preview .assistant-report-missing {
+    color: #8b5a12;
+  }
+
+  .assistant-report-preview .assistant-report-missing textarea {
+    border-color: #d49a32;
+    background: #fffaf0;
+  }
+
+  @media (max-width: 680px) {
+    .assistant-report-preview { grid-template-columns: 1fr; }
+    .assistant-report-preview label,
+    .assistant-report-preview > button { grid-column: 1; }
+  }
+
   .assistant-email-list {
     display: grid;
     gap: 8px;
