@@ -308,6 +308,7 @@ class AssistantReply(BaseModel):
     fields: dict[str, str] = Field(default_factory=dict)
     email_items: list[dict[str, object]] = Field(default_factory=list)
     daily_brief: dict[str, object] | None = None
+    document_items: list[dict[str, object]] = Field(default_factory=list)
     consulted_interval: str | None = None
     limitations: list[str] = Field(default_factory=list)
     report_fields: dict[str, str] = Field(default_factory=dict)

@@ -401,3 +401,8 @@ O resumo operacional diário do Assistente consulta tarefas, agenda, serviços, 
 financeiro em modo somente leitura, com status independente para cada fonte. Comportamento,
 privacidade, estados de fonte e testes estão em
 [resumo-operacional-diario.md](resumo-operacional-diario.md).
+
+A busca documental do Assistente consulta somente PDF/DOCX vinculados a propostas dentro de `OUTPUT_DIR`,
+com respostas extrativas citando arquivo e página/seção. O conteúdo não é enviado ao provedor de IA nem
+tratado como instrução. Escopo, limites do importador legado e validação estão em
+[busca-documentos.md](busca-documentos.md).

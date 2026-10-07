@@ -7,6 +7,7 @@ import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from time import monotonic
 from typing import TypeVar
 from zoneinfo import ZoneInfo
@@ -71,6 +72,7 @@ from app.models import (
 from app.schemas import ServiceTechnicalReportFields, TaskCreate
 from app.services import board_service, service_report_service
 from app.services.daily_brief_service import build_daily_brief
+from app.services.document_search_service import search_proposal_documents
 from app.services.daily_schedule_service import (
     ScheduleChangedError,
     build_daily_schedule,
@@ -134,6 +136,7 @@ class AssistantService:
         email_mailbox_key: str = "primary",
         email_freshness_seconds: int = 1800,
         today_lookahead_days: int = 7,
+        output_dir: Path | None = None,
     ) -> None:
         self.db = db
         self.provider = provider
@@ -152,6 +155,11 @@ class AssistantService:
         self.email_mailbox_key = email_mailbox_key
         self.email_freshness_seconds = max(1, email_freshness_seconds)
         self.today_lookahead_days = max(1, min(today_lookahead_days, 31))
+        if output_dir is None:
+            from app.config import get_settings
+
+            output_dir = get_settings().output_dir
+        self.output_dir = output_dir
         self.service_records = AssistantServiceRecordAdapter(
             db,
             today=lambda: self._local_now().date(),
@@ -206,8 +214,11 @@ class AssistantService:
         try:
             direct_control = self._direct_control_command(clean_message)
             command = direct_control
+            if command is None and self._direct_document_query(clean_message):
+                reply = self._execute_document_query(conversation.id, clean_message)
             if command is None and self._direct_daily_brief_request(clean_message):
-                reply = self._execute_daily_brief(conversation.id)
+                if reply is None:
+                    reply = self._execute_daily_brief(conversation.id)
             if (
                 command is None
                 and reply is None
@@ -892,6 +903,104 @@ class AssistantService:
             attention_only=attention_only,
             awaiting_reply=awaiting_reply,
             category=category,
+        )
+
+    @staticmethod
+    def _direct_document_query(message: str) -> bool:
+        normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", normalize_text(message)).split())
+        refers_to_document = any(
+            term in normalized.split()
+            for term in ("proposta", "propostas", "documento", "documentos", "arquivo", "arquivos", "pdf", "docx")
+        ) or "no arquivo" in normalized or "na proposta" in normalized
+        asks_about_content = any(
+            cue in normalized
+            for cue in (
+                "qual",
+                "quanto",
+                "o que",
+                "como",
+                "quais",
+                "me diga",
+                "me fale",
+                "o que consta",
+                "o que diz",
+                "informa",
+                "menciona",
+                "mencione",
+                "fala",
+                "especifica",
+                "contem",
+                "explica",
+                "aborda",
+                "indica",
+                "resuma",
+                "resume",
+                "compare",
+                "procure",
+                "busque",
+                "pesquise",
+                "consulte",
+                "verifique",
+            )
+        )
+        return refers_to_document and asks_about_content
+
+    def _execute_document_query(self, conversation_id: int, query: str) -> AssistantReply:
+        result = search_proposal_documents(
+            self.db,
+            output_dir=self.output_dir,
+            query=query,
+        )
+        items = [evidence.as_dict() for evidence in result.evidence]
+        if items:
+            lines = ["Encontrei estes trechos nos documentos registrados:"]
+            for item in items:
+                source = str(item["document_name"])
+                if item.get("page") is not None:
+                    source += f", página {item['page']}"
+                else:
+                    source += f", seção {item.get('section') or 'não identificada'}"
+                lines.append(f"• “{item['excerpt']}”\n  Fonte: {source}.")
+            message = "\n\n".join(lines)
+            if result.unreadable_documents:
+                message += (
+                    f"\n\nA busca é parcial: {result.unreadable_documents} arquivo(s) registrado(s) "
+                    "não puderam ser consultados; a ausência de outras informações não está confirmada."
+                )
+            spoken_message = f"Encontrei {len(items)} trecho(s) com referência de documento. "
+            spoken_message += " ".join(
+                f"{item['excerpt']} Fonte: {item['document_name']}, "
+                f"{'página ' + str(item['page']) if item.get('page') is not None else 'seção ' + str(item.get('section') or 'não identificada')}."
+                for item in items[:2]
+            )
+        elif result.registered_documents == 0:
+            message = "Não encontrei documentos vinculados a propostas para consultar nesta aplicação."
+            spoken_message = "Não encontrei documentos de proposta registrados para consulta."
+        elif result.readable_documents == 0 and result.unreadable_documents:
+            message = (
+                "Não consegui consultar os arquivos de proposta registrados. "
+                "Não posso confirmar se a informação solicitada existe nos documentos."
+            )
+            spoken_message = "Não consegui consultar os arquivos registrados; não posso confirmar essa informação."
+        else:
+            message = "Não encontrei evidência suficiente nos documentos consultáveis para responder."
+            if result.unreadable_documents:
+                message += (
+                    f" A busca é parcial: {result.unreadable_documents} arquivo(s) registrado(s) "
+                    "não puderam ser consultados."
+                )
+            spoken_message = "Não encontrei evidência suficiente nos documentos consultáveis para responder."
+        return AssistantReply(
+            conversation_id=conversation_id,
+            kind="text",
+            message=message,
+            spoken_message=spoken_message,
+            document_items=items,
+            limitations=(
+                ["A busca foi parcial porque há arquivos registrados que não puderam ser consultados."]
+                if result.unreadable_documents
+                else []
+            ),
         )
 
     @staticmethod

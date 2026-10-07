@@ -176,6 +176,7 @@ def _service(
         email_mailbox_key=settings.email_sync_mailbox_key,
         email_freshness_seconds=settings.email_sync_interval_seconds * 2,
         today_lookahead_days=settings.today_lookahead_days,
+        output_dir=settings.output_dir,
     )
 
 
