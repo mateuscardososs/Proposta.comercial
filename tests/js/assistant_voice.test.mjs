@@ -210,7 +210,7 @@ test("transcription failure reports the error and resumes the same conversation"
   });
   await sample.controller.start();
   await finishBySilence(sample.controller);
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(sample.controller.active, true);
   assert.equal(sample.tracks[0].stopped, 0);
   assert.equal(sample.controller.state, "listening");

@@ -396,3 +396,8 @@ O serviço Compose de PostgreSQL mantém o mesmo volume, mas publica a porta em
 `127.0.0.1:5433`; a 5432 do host estava ocupada por outro PostgreSQL local e não foi alterada.
 Não inicie o container antigo `adbalancas-app-8013` enquanto o processo nativo estiver usando a
 porta 8013.
+
+O resumo operacional diário do Assistente consulta tarefas, agenda, serviços, cache de e-mail e
+financeiro em modo somente leitura, com status independente para cada fonte. Comportamento,
+privacidade, estados de fonte e testes estão em
+[resumo-operacional-diario.md](resumo-operacional-diario.md).

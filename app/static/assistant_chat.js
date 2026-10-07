@@ -317,6 +317,81 @@ export function bootstrapAssistantChat(root = document) {
       }
       article.appendChild(list);
     }
+    if (details.daily_brief && Array.isArray(details.daily_brief.sources)) {
+      const brief = document.createElement("div");
+      brief.className = "assistant-email-list assistant-daily-brief";
+      const heading = document.createElement("strong");
+      const appTimezone = details.daily_brief.timezone || undefined;
+      const queriedAt = details.daily_brief.queried_at
+        ? new Date(details.daily_brief.queried_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: appTimezone })
+        : "horário indisponível";
+      heading.textContent = `Detalhamento consultado em ${queriedAt}`;
+      brief.appendChild(heading);
+      const items = Array.isArray(details.daily_brief.items) ? details.daily_brief.items : [];
+      if (items.length) {
+        const ordered = document.createElement("section");
+        ordered.className = "assistant-email-card";
+        const orderedTitle = document.createElement("strong");
+        orderedTitle.textContent = "Itens priorizados por prazo e status";
+        ordered.appendChild(orderedTitle);
+        const sourceNames = {
+          tasks: "Tarefa",
+          services: "Serviço",
+          schedule: "Agenda",
+          payables: "Conta a pagar",
+          receivables: "Conta a receber",
+        };
+        for (const item of items) {
+          const row = document.createElement("p");
+          const link = document.createElement("a");
+          link.href = item.href || "/";
+          link.textContent = `${sourceNames[item.source] || "Item"}: ${item.title || "Sem título"}`;
+          row.appendChild(link);
+          const metadata = [item.status, item.priority, item.due_date, item.client, item.supplier_or_client]
+            .filter(Boolean).join(" · ");
+          if (metadata) row.append(` — ${metadata}`);
+          ordered.appendChild(row);
+          if (item.start && item.end) {
+            const block = document.createElement("small");
+            const start = new Date(item.start).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: appTimezone });
+            const end = new Date(item.end).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: appTimezone });
+            const duration = item.duration_minutes ? ` · ${item.duration_minutes} min` : "";
+            const estimate = item.duration_is_estimate ? " · duração estimada" : "";
+            block.textContent = `${start}–${end}${duration}${estimate}`;
+            ordered.appendChild(block);
+          }
+          if (item.reason) {
+            const reason = document.createElement("small");
+            reason.textContent = item.reason;
+            ordered.appendChild(reason);
+          }
+        }
+        brief.appendChild(ordered);
+      }
+      for (const source of details.daily_brief.sources) {
+        const card = document.createElement("section");
+        card.className = "assistant-email-card";
+        const title = document.createElement("strong");
+        const sourceLink = document.createElement("a");
+        sourceLink.href = source.href || "/";
+        sourceLink.textContent = `${source.label || "Fonte"} · ${source.count ?? 0}`;
+        title.appendChild(sourceLink);
+        card.appendChild(title);
+        const state = document.createElement("p");
+        const stateLabel = {
+          success: "Atualizada",
+          empty: "Consulta concluída, sem itens",
+          partial: "Parcial ou possivelmente desatualizada",
+          failed: "Falha na consulta",
+          unavailable: "Indisponível",
+          not_configured: "Disponibilidade não configurada",
+        }[source.state] || source.state || "Estado desconhecido";
+        state.textContent = `${stateLabel}. ${source.detail || ""}`;
+        card.appendChild(state);
+        brief.appendChild(card);
+      }
+      article.appendChild(brief);
+    }
     history.appendChild(article);
     history.scrollTop = history.scrollHeight;
   }
