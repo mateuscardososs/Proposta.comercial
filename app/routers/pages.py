@@ -7,10 +7,10 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
-from sqlalchemy import and_, func, not_, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from app.assistant.email.classification import OPERATIONAL_CATEGORIES
+from app.assistant.email import classification as _email_classification
 from app.assistant.email.contracts import EmailMessageRecord
 from app.assistant.email.extraction import extract_operational_fields
 from app.config import get_settings
@@ -20,7 +20,6 @@ from app.models import (
     ClientCampaignContact,
     EmailActionDraft,
     EmailSyncState,
-    EmailTaskLink,
     InboxEmail,
     Proposal,
     ServiceCall,
@@ -40,6 +39,8 @@ from app.services import (
 )
 from app.services.daily_schedule_service import build_daily_schedule
 from app.services.email_review_service import ensure_email_action_draft
+from app.services.message_workbench_service import get_message_workbench
+from app.services import message_workbench_service as _message_workbench_service
 from app.services.promotion_campaign_service import promotion_form_token
 from app.services.today_service import get_today_agenda
 from app.utils.currency import format_brl
@@ -52,6 +53,11 @@ settings = get_settings()
 ProposalCreate = proposal_form.ProposalCreate
 ProposalItemCreate = proposal_form.ProposalItemCreate
 ScheduleItemCreate = proposal_form.ScheduleItemCreate
+OPERATIONAL_CATEGORIES = _email_classification.OPERATIONAL_CATEGORIES
+EmailTaskLink = _message_workbench_service.EmailTaskLink
+and_ = _message_workbench_service.and_
+not_ = _message_workbench_service.not_
+or_ = _message_workbench_service.or_
 decimal_from_str = proposal_form.decimal_from_str
 
 
@@ -136,71 +142,15 @@ def index(request: Request, db: Session = Depends(get_db)) -> object:
 
 @router.get("/web/mensagens", name="web_messages")
 def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
-    state = (
-        db.query(EmailSyncState)
-        .filter_by(
-            provider=settings.email_provider,
-            mailbox_key=settings.email_sync_mailbox_key,
-        )
-        .one_or_none()
+    workbench = get_message_workbench(
+        db, provider=settings.email_provider, mailbox_key=settings.email_sync_mailbox_key,
     )
-    base_query = db.query(InboxEmail).filter_by(
-        provider=settings.email_provider,
-        mailbox_key=settings.email_sync_mailbox_key,
-    )
-    operational_filter = and_(
-        InboxEmail.category.in_(OPERATIONAL_CATEGORIES),
-        InboxEmail.confidence_band.in_(("medium", "high")),
-    )
-    informational_filter = InboxEmail.category == "informational"
-    review_filter = not_(or_(operational_filter, informational_filter))
-
-    def latest_messages(query):
-        return (
-            query.order_by(InboxEmail.received_at.desc(), InboxEmail.id.desc())
-            .limit(100)
-            .all()
-        )
-
-    operational_messages = latest_messages(base_query.filter(operational_filter))
-    informational_messages = latest_messages(base_query.filter(informational_filter))
-    review_messages = latest_messages(base_query.filter(review_filter))
-    messages = operational_messages + informational_messages + review_messages
-    message_references = list({message.reference for message in messages})
-    task_links = (
-        db.query(EmailTaskLink)
-        .filter(
-            EmailTaskLink.provider == settings.email_provider,
-            EmailTaskLink.mailbox_key == settings.email_sync_mailbox_key,
-            EmailTaskLink.reference.in_(message_references),
-            EmailTaskLink.task_id.is_not(None),
-        )
-        .all()
-        if message_references else []
-    )
-    task_ids_by_reference = {link.reference: link.task_id for link in task_links}
-    for message in messages:
-        message.task_id = task_ids_by_reference.get(message.reference)
-    action_drafts = (
-        db.query(EmailActionDraft)
-        .filter(EmailActionDraft.inbox_email_id.in_([message.id for message in messages]))
-        .order_by(EmailActionDraft.id.asc())
-        .all()
-        if messages
-        else []
-    )
-    action_drafts_by_email = {
-        draft.inbox_email_id: draft
-        for draft in action_drafts
-        if draft.status in {"pending", "confirmed", "cancelled", "linked", "linked_deleted"}
-    }
-    message_summary = {
-        "new": base_query.filter(InboxEmail.seen.is_(False)).count(),
-        "priority": base_query.filter(InboxEmail.priority.in_(("high", "critical"))).count(),
-        "review": base_query.filter(review_filter).count(),
-        "operational": base_query.filter(operational_filter).count(),
-        "informational": base_query.filter(informational_filter).count(),
-    }
+    state = workbench["sync_state"]
+    operational_messages = workbench["operational_messages"]
+    informational_messages = workbench["informational_messages"]
+    review_messages = workbench["review_messages"]
+    action_drafts_by_email = workbench["action_drafts_by_email"]
+    message_summary = workbench["message_summary"]
     if settings.email_provider == "synthetic":
         provider_configured = True
     elif settings.email_provider == "imap_yahoo":
