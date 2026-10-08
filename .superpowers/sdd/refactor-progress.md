@@ -14,3 +14,10 @@ Retomada 2026-10-08: branch/HEAD e mudanças preservados; 8013 sem listener, PID
 Validação integrada: 749 Python passed, 13 skipped; 36 JS passed; 223 ocorrências Ruff preexistentes (sem novas), lint novo/selecionado, compile e diff-check passaram. OpenAPI/DDL/auth hashes idênticos. 586 funções de testes originais preservadas.
 Revisão final: Approved, sem achados pendentes. Relatório docs/refatoracao-segura.md registra escopo parcial e áreas mantidas/restantes.
 Repetição final após fortalecer teste de clonagem: 749 passed,13 skipped,6026 warnings,45.89s. Documentação finalizada na retomada; sem commits.
+Task 5: complete — 11 intenções puras extraídas, aliases históricos intactos; 151 testes focados antes/depois (43 novos), revisão spec PASS/quality APPROVE; 62 métodos restantes idênticos. Plano docs/superpowers/plans/2026-10-08-refatoracao-intencoes.md.
+HEAD avançou externamente para b2825e6 (etapas1–4); preservado. Nenhum commit pelo agente.
+Validação etapa5: 792passed13skipped6026warnings86.11s;36JS via Node24.15.0 existente fora do PATH; lint novo/fatal, compile/diffcheck passam; global mesmas223ocorrências; hashes OpenAPI/DDL/auth idênticos. Revisão consolidada final APPROVE, sem achados pendentes; 8013 não reiniciada.
+Etapas 6–8: plano docs/superpowers/plans/2026-10-08-refatoracao-apresentacao-fila-templates.md. Task6 em execução; tasks7–8 pendentes. Baseline792/13+36JS, HEADb2825e6 e alterações anteriores preservados.
+Task6 complete: apresentação diária/agenda separada;95passedbefore/after (7novos), outros60métodos ASTiguais; revisão specPASS/qualityApprove. Sugestão baixa: teste de ordem não instrumenta mensagem/snapshot; ordem atual verificada por AST. Sem commits.
+Task7 em execução: serviço de consulta da fila de mensagens; preservar3grupos/limites100/contagens/links/drafts e POSTs.
+Task9 planejada após templates: separar handlers web de clientes/propostas e renderer comum; plano docs/superpowers/plans/2026-10-08-refatoracao-rotas-web.md. Login/Usuários mantidos, APIs/geradores intocados.

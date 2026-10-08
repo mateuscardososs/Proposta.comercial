@@ -1,4 +1,4 @@
-# Refatoração segura — 7 de outubro de 2026
+# Refatoração segura — 7 e 8 de outubro de 2026
 
 ## Escopo e preservação
 
@@ -12,6 +12,10 @@ O HEAD inicial era `f82f6f1`. Durante o trabalho, um commit externo `823df11`
 incorporou as alterações de autenticação que já estavam presentes. Ele foi
 preservado; os hashes dos três arquivos de autenticação permanecem iguais à
 linha de base registrada.
+
+Na continuação de 08/10, outro commit externo, `b2825e6`, incorporou as quatro
+etapas anteriores. Também foi preservado; não foi criado pelo agente. A etapa 5
+permanece como alteração local sobre esse commit.
 
 O [plano e a linha de base](superpowers/plans/2026-10-07-refatoracao-segura.md)
 contêm a tabela de rastreabilidade entre funcionalidades, módulos e testes.
@@ -34,6 +38,7 @@ e transportes simulados. Não houve chamadas reais ao Gemini, Yahoo, SMTP ou voz
 |---|---|---|
 | Protocolo de Gemini/Ollama | Refatorada e validada nos testes focados | `tool_protocol.py` concentra catálogo, declarações e projeção; `response_policy.py` concentra fundamentação, escopo e reparo. Gemini não importa mais o adaptador Ollama. Transporte, prompts específicos e erros continuam nos respectivos provedores. |
 | Preparação de respostas do Assistente | Refatorada e validada nos testes focados | `service_reports.py` prepara prévias e tokens; `email/query_presentation.py` prepara intervalo e apresentação; `evidence.py` concentra validação de alegações. Orquestrador conserva commits, claims e recuperação. |
+| Reconhecimento determinístico de intenções | Refatorado e validado nos testes focados | `intent_routing.py` concentra 11 funções puras. Aliases históricos continuam na classe; ordem de decisão, execução de ferramentas, confirmações e transações ficam no orquestrador. |
 | Indexação/OCR | Refatorada e validada com OCR simulado | `local_pdf_ocr.py` concentra subprocessos e renderização. Indexador conserva caminhos autorizados, fingerprint, páginas, reconciliação e persistência. Mac/Windows reais não foram testados nesta rodada. |
 | Formulário de propostas | Refatorado e validado nos testes focados | `routers/proposal_form.py` prepara defaults, prefill e parsing. O router conserva validação antecipada, redirects e ordem dos serviços. Construtor de payload de clonagem reutilizado após caracterização de equivalência. |
 | Tarefas, Hoje, agenda, financeiro e promoções | Mantidas: serviços já separados por responsabilidade | Preservadas consultas determinísticas, snapshots, confirmação, transições e transportes. Cobertura na suíte existente; nenhuma alteração de regra de negócio. |
@@ -49,7 +54,7 @@ repositório ou a atualização operacional estejam concluídos**.
 | Módulo original | Linhas antes | Linhas depois |
 |---|---:|---:|
 | `assistant/ollama.py` | 1171 | 524 |
-| `assistant/service.py` | 3665 | 3323 |
+| `assistant/service.py` | 3665 | 2961 |
 | `services/document_index_service.py` | 467 | 309 |
 | `routers/pages.py` | 867 | 700 |
 
@@ -57,6 +62,11 @@ Essas reduções representam código realocado por responsabilidade, não remoç
 de funcionalidades. O corpo de sete helpers compartilhados permaneceu idêntico
 por comparação AST; 66 métodos do orquestrador permaneceram intactos, inclusive
 confirmações, commits e recuperação.
+
+Na etapa 5, outros 11 métodos estáticos foram extraídos com corpo/assinatura
+idênticos. Os 62 métodos restantes, incluindo `handle_message`, não sofreram
+alteração em relação à etapa 4. O novo módulo tem 401 linhas e importa somente
+contratos, normalização e `re`: nenhuma consulta, provedor concreto ou I/O.
 
 Os aliases históricos mantêm importação e identidade. Globals privados das
 funções extraídas pertencem agora aos módulos de destino; novos testes que
@@ -86,6 +96,11 @@ opt-in nem enfraquecidos asserts para contornar falhas.
 
 ## Questões preexistentes, não corrigidas oportunisticamente
 
+O [registro separado de defeitos](refatoracao-defeitos-pendentes.md) distingue
+reprodução sintética de observações apenas no código. RF-01 foi reproduzido em
+SQLite em memória: falha da fonte de tarefas ainda pode ser descrita como quadro
+vazio pelo resumo atual; nenhuma alteração funcional foi misturada à extração.
+
 - Propostas e relatórios têm políticas diferentes diante de commit ambíguo:
   propostas limpam arquivos na exceção; relatórios reconciliam o resultado antes
   de removê-los. Unificar essas políticas alteraria comportamento.
@@ -93,14 +108,19 @@ opt-in nem enfraquecidos asserts para contornar falhas.
   worker de e-mail faz uma consulta imediata antes de esperar o intervalo.
 - A linha de base do lint contém 223 ocorrências; não houve autofix global.
 - APIs de testes emitem depreciações preexistentes, registradas no plano.
+- Caracterização das intenções encontrou limites anteriores: “corrija” não
+  corresponde ao detector que usa `corrig*`; “urgentes” não ativa o filtro que
+  reconhece “urgente”; “e-mails não lidos” isolado não aciona o detector;
+  “segunda via” satisfaz a detecção de data por substring. Esses comportamentos
+  foram preservados e não devem ser apresentados como correções funcionais.
 
 ## Validação e situação operacional
 
 ### Resultados automatizados
 
-| Verificação | Linha de base | Resultado após as quatro extrações |
+| Verificação | Linha de base | Resultado após as cinco etapas |
 |---|---|---|
-| Suíte Python completa, integrações simuladas | 722 passaram, 13 pulados | **749 passaram, 13 pulados**, 45,89 s na repetição final |
+| Suíte Python completa, integrações simuladas | 722 passaram, 13 pulados | **792 passaram, 13 pulados**, 86,11 s após a etapa 5 |
 | JavaScript (`node:test`) | 36 passaram | **36 passaram**, sem falhas ou skips |
 | Ruff global | 223 ocorrências | **223 ocorrências**, mesma distribuição por código |
 | Ruff completo nos arquivos novos | Não aplicável | Passou |
@@ -123,6 +143,17 @@ formulário 15 antes/15 depois. A correção de exportações de compatibilidade
 também passou por 113 testes focados. Os conjuntos se sobrepõem e **não devem ser
 somados** como testes diferentes.
 
+Etapa 5: 151 testes focados passaram antes e depois (2082 avisos preexistentes),
+incluindo **43 casos novos** de intenções. Na primeira escrita dos testes, duas
+expectativas não refletiam o vocabulário existente; foram corrigidas ainda antes
+de modificar produção. Não foi enfraquecido teste anterior. A revisão independente
+da etapa aprovou código e especificação; corrigiu-se a contagem inicialmente
+reportada como 41, sem mudança no total de 151 passes.
+
+O executável `node` não estava no PATH da retomada. Sem instalar nada ou carregar
+configuração privada, os 36 testes JS foram repetidos com a instalação existente:
+`/Users/mateuscardoso/.nvm/versions/node/v24.15.0/bin/node --test tests/js/*.test.mjs`.
+
 ### Comandos de validação
 
 Executados no ambiente virtual do projeto. O override do carregamento padrão
@@ -133,6 +164,7 @@ PYTHONPATH=. APP_ENV_FILE=/dev/null RUN_GEMINI_SMOKE_TEST=0 RUN_OLLAMA_INTEGRATI
 node --test tests/js/*.test.mjs
 .venv/bin/ruff check app scripts tests --statistics
 .venv/bin/ruff check app/assistant/tool_protocol.py app/assistant/response_policy.py app/assistant/email/query_presentation.py app/assistant/service_reports.py app/services/local_pdf_ocr.py app/routers/proposal_form.py tests/test_assistant_tool_protocol.py tests/test_proposal_form.py
+.venv/bin/ruff check app/assistant/intent_routing.py tests/test_assistant_intent_routing.py
 .venv/bin/ruff check --select E9,F app/assistant/evidence.py app/assistant/gemini.py app/assistant/ollama.py app/assistant/service.py app/services/document_index_service.py app/routers/pages.py tests/test_assistant_email_service.py tests/test_assistant_service_report.py tests/test_document_index_service.py
 .venv/bin/python -m compileall -q app scripts tests
 git diff --check
@@ -140,7 +172,8 @@ git diff --check
 
 ### Limitações e instância principal
 
-- Revisão independente final aprovada, sem achados pendentes. A observação menor
+- Revisão independente final aprovada novamente após a etapa 5, sem achados
+  críticos, importantes ou menores pendentes. A observação menor anterior
   sobre o teste de clonagem foi resolvida com valores esperados independentes;
   os 15 testes focados e o lint passaram novamente. Isso não substitui os testes
   operacionais/manuais que permanecem fora desta rodada.
