@@ -79,6 +79,28 @@ def _completed_call(db, client_name: str, summary: str = "Manutenção sintétic
     return call
 
 
+def test_report_source_refresh_preserves_reviewed_fields(db):
+    call = _completed_call(db, "Fonte sintética")
+    assistant = AssistantService(db, None, now=_now)
+    conversation = AssistantConversation()
+    db.add(conversation)
+    db.flush()
+    first = assistant._prepare_service_report(
+        conversation.id, "source-refresh", PrepareServiceReportCommand(service_call_id=call.id)
+    )
+    action = db.get(AssistantAction, first.action_id)
+    corrected = assistant._update_service_report_preview(action, {"equipment": "Equipamento revisado"})
+    old_fingerprint = action.arguments_json["source_fingerprint"]
+    call.client.razao_social = "Fonte atualizada sintética"
+    db.flush()
+    refreshed = assistant._update_service_report_preview(action, {})
+    assert refreshed.kind == "confirmation"
+    assert refreshed.report_fields["equipment"] == "Equipamento revisado"
+    assert refreshed.confirmation_token != corrected.confirmation_token
+    assert action.arguments_json["source_fingerprint"] != old_fingerprint
+    assert action.arguments_json["source_fingerprint"] == service_report_service.build_preview(db, call.id).source_fingerprint
+
+
 def test_report_request_with_multiple_matching_calls_asks_which_without_preparing(db):
     first = _completed_call(db, "Alfa Serviços", "Revisão da balança")
     second = _completed_call(db, "Alfa Serviços", "Troca do indicador")

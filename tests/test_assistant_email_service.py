@@ -65,6 +65,32 @@ def service(db, provider, reader):
     )
 
 
+def test_partial_category_query_does_not_assert_absence(db):
+    class PartialReader(FilteredEmptyReader):
+        def query(self, query):
+            return super().query(query).model_copy(update={"state": "partial", "partial": True})
+
+    execution = service(db, None, PartialReader())._execute_email_query(
+        1, EmailQueryCommand(period="today", category="invoice_received")
+    )
+    assert "não posso concluir" in execution.reply.message
+    assert execution.result.state == "partial"
+
+
+def test_email_visual_limit_and_historical_lookup_short_circuit(db):
+    reader = CountingReader(messages=synthetic_messages(NOW))
+    assistant = service(db, None, reader)
+    execution = assistant._execute_email_query(1, EmailQueryCommand(period="today", limit=1))
+    assert len(execution.reply.email_items) <= 1
+    assert reader.queries[0].limit == 100
+    calls = []
+    assistant._has_historical_email_evidence = lambda conversation_id: calls.append(conversation_id) or True
+    assistant._conversation_reply(1, ConversationCommand(message="Podemos conversar."), current_message="Olá")
+    assert calls == []
+    assistant._conversation_reply(1, ConversationCommand(message="Resultado anterior apresentado."), current_message="Olá")
+    assert calls == [1]
+
+
 def test_email_query_executes_reader_before_natural_reply_and_persists_visual_items(db):
     reader = CountingReader(messages=synthetic_messages(NOW))
     provider = QueueProvider(
