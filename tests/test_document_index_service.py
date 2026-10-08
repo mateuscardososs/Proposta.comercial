@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+import subprocess
+import tempfile
+import time
 
 import pytest
 from docx import Document
@@ -403,6 +406,68 @@ def test_windows_ocr_conversion_failure_cleans_temporary_directory(tmp_path):
         )
 
     assert temp_dirs and all(not directory.exists() for directory in temp_dirs)
+
+
+@pytest.mark.parametrize("failure,code", [
+    ("deadline", "ocr_tesseract_timeout"),
+    ("subprocess", "ocr_tesseract_failed"),
+    ("limit", "ocr_page_limit"),
+])
+def test_local_ocr_failure_codes_close_renderer_and_temporary_directory(
+    monkeypatch, tmp_path, failure, code
+):
+    closed = []
+    directories = []
+    calls = []
+    ticks = iter([0, 91] if failure == "deadline" else [0] + [1] * 501)
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+
+    def renderer(_path):
+        try:
+            for _ in range(501 if failure == "limit" else 1):
+                yield b"synthetic PNG"
+        finally:
+            closed.append(True)
+
+    def directory(**kwargs):
+        assert kwargs == {"prefix": "adbalancas-ocr-"}
+        temporary = tempfile.TemporaryDirectory(dir=tmp_path)
+        directories.append(Path(temporary.name))
+        return temporary
+
+    def runner(args, **kwargs):
+        calls.append((args, kwargs))
+        assert kwargs["shell"] is False
+        if "--list-langs" in args:
+            assert kwargs["timeout"] == 10
+            return SimpleNamespace(returncode=0, stdout="por\n")
+        assert kwargs["timeout"] == 30
+        if failure == "subprocess":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return SimpleNamespace(returncode=0, stdout=" texto \n")
+
+    with pytest.raises(LocalOCRUnavailable) as caught:
+        local_tesseract_ocr(
+            tmp_path / "synthetic.pdf", executable="tesseract", data_dir=None,
+            which=lambda name: name, runner=runner, renderer=renderer,
+            temporary_directory=directory,
+        )
+    assert caught.value.code == code
+    assert str(caught.value) == code
+    assert closed == [True]
+    assert directories and all(not path.exists() for path in directories)
+    assert len(calls) == (501 if failure == "limit" else 2 if failure == "subprocess" else 1)
+
+
+def test_local_ocr_extraction_preserves_exception_and_callable_identity():
+    from app.services import document_index_service, local_pdf_ocr
+
+    assert document_index_service.LocalOCRUnavailable is local_pdf_ocr.LocalOCRUnavailable
+    assert document_index_service.local_tesseract_ocr is local_pdf_ocr.local_tesseract_ocr
+    assert document_index_service.local_vision_ocr is local_pdf_ocr.local_vision_ocr
+    assert document_index_service.OCR_TIMEOUT_SECONDS == 90
+    assert document_index_service.TESSERACT_PAGE_TIMEOUT_SECONDS == 30
+    assert document_index_service.TESSERACT_MAX_PAGES == 500
 
 
 def test_missing_portuguese_language_is_reported_in_document_search(db, tmp_path):

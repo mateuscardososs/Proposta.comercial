@@ -14,16 +14,6 @@ from app.assistant.contracts import (
     AssistantCommand,
     assistant_command_adapter,
 )
-from app.assistant.ollama import (
-    CONTEXT_CHARACTER_BUDGET,
-    DEFAULT_TOOL_NAMES,
-    _ollama_tools,
-    _prompt_tool_results,
-    _repair_hint,
-    _repair_reason,
-    _validate_conversation_grounding,
-    _validate_tool_scope,
-)
 from app.assistant.provider import (
     ProviderAuthenticationError,
     ProviderInferenceTrace,
@@ -37,7 +27,19 @@ from app.assistant.provider import (
     ProviderToolResult,
     ProviderUnavailableError,
 )
+from app.assistant.response_policy import (
+    _repair_hint,
+    _repair_reason,
+    _validate_conversation_grounding,
+    _validate_tool_scope,
+)
 from app.assistant.technical_knowledge import references_for
+from app.assistant.tool_protocol import (
+    CONTEXT_CHARACTER_BUDGET,
+    DEFAULT_TOOL_NAMES,
+    _prompt_tool_results,
+    function_declarations,
+)
 
 logger = logging.getLogger(__name__)
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -294,17 +296,17 @@ class GeminiProvider:
 
 
 def _gemini_function_declarations(allowed_tools: set[str]) -> list[dict[str, object]]:
-    ollama_declarations = _ollama_tools(allowed_tools)
+    declarations = function_declarations(allowed_tools)
     return [
         {
-            "name": declaration["function"]["name"],
-            "description": declaration["function"]["description"],
+            "name": declaration["name"],
+            "description": declaration["description"],
             "parameters": _google_schema(
-                declaration["function"]["parameters"],
-                declaration["function"]["parameters"].get("$defs", {}),
+                declaration["parameters"],
+                declaration["parameters"].get("$defs", {}),
             ),
         }
-        for declaration in ollama_declarations
+        for declaration in declarations
     ]
 
 
