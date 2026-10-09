@@ -20,4 +20,8 @@ Validação etapa5: 792passed13skipped6026warnings86.11s;36JS via Node24.15.0 ex
 Etapas 6–8: plano docs/superpowers/plans/2026-10-08-refatoracao-apresentacao-fila-templates.md. Task6 em execução; tasks7–8 pendentes. Baseline792/13+36JS, HEADb2825e6 e alterações anteriores preservados.
 Task6 complete: apresentação diária/agenda separada;95passedbefore/after (7novos), outros60métodos ASTiguais; revisão specPASS/qualityApprove. Sugestão baixa: teste de ordem não instrumenta mensagem/snapshot; ordem atual verificada por AST. Sem commits.
 Task7 em execução: serviço de consulta da fila de mensagens; preservar3grupos/limites100/contagens/links/drafts e POSTs.
+Task7 complete:41passedbefore/after (7novos), revisão specPASS/qualityAPPROVED; blocoSQL/contexto/postsASTiguais; SELECT-only/semnewdirtydeleted emGET. Minor: estado deoutroprovider não fixture, apenasoutramailbox; isolamentoSQL provider preservado porAST. Task8 em execução.
+Follow-up minorTask7: fixture deestado de outroprovider agora inclui mesma mailbox; aguardavalidação focada/full após task9, sem alteração produção.
+Task8 complete:4componentesJinja,43Pythonbefore/after+36JS;4hashesHTMLoriginais iguais, fontes reconstruídos byteexact(base45654bytes/proposal34758bytes), revisãoAPPROVED. Sem teste visualmanual. Task9 em execução.
+HEAD externo8116be0 incorporouetapas5–7 e passouaterupstreamorigin; preservado, sem gitcommit/push do agente.
 Task9 planejada após templates: separar handlers web de clientes/propostas e renderer comum; plano docs/superpowers/plans/2026-10-08-refatoracao-rotas-web.md. Login/Usuários mantidos, APIs/geradores intocados.

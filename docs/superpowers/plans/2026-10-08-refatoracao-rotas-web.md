@@ -29,7 +29,7 @@ Manter nomes, decorators, argumentos, URLs, response types, exceções, ordenaç
 - [ ] Executar `test_web_page_contracts.py`, `test_proposal_form.py`, `test_proposal_origin.py`, `test_authentication.py`, `test_template_characterization.py`, `test_today_routes.py` antes da extração. Guardar tabela de rotas/OpenAPI do código anterior sem startup.
 - [ ] Mover corpos/decorators literalmente e incluir routers nas posições anteriores. Sem wrappers para operações; aliases preservam entrada antiga.
 - [ ] Rodar mesmo conjunto depois, comparar AST de handlers/helper renderer e tabela de rotas/OpenAPI. Conferir argumentos de dependências com mesma identidade `get_db`.
-- [ ] Ruff completo novos arquivos, E9/F pages, compile/diff-check e revisão independente. Registrar avisos preexistentes sem autofix global.
+- [ ] Ruff completo novos arquivos e E9/F pages, compile/diff-check e revisão independente. Se B008/estilo anteriores forem movidos junto aos handlers literais, registrar essa transferência (não ocultar nem alterar assinaturas para fazer lint passar). E9/F deve passar; lint global comparativo não deve ganhar novos achados. Sem autofix global.
 
 Launcher obrigatório, adaptar apenas lista de testes:
 

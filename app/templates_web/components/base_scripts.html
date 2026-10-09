@@ -1,0 +1,133 @@
+  <script>
+    (function () {
+      const token = document.querySelector('meta[name="csrf-token"]')?.content;
+      if (!token) return;
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init = {}) => {
+        const method = String(init.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+        const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+        if (url.origin === window.location.origin && !["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+          const headers = new Headers(input instanceof Request ? input.headers : undefined);
+          new Headers(init.headers || {}).forEach((value, key) => headers.set(key, value));
+          headers.set("X-CSRF-Token", token);
+          init = { ...init, headers };
+        }
+        return originalFetch(input, init);
+      };
+    })();
+
+    (function () {
+      const toggleBtn = document.getElementById("menuToggle");
+      const nav = document.getElementById("siteNav");
+      const frame = document.getElementById("appFrame");
+      const label = document.getElementById("menuToggleLabel");
+      const overlay = document.getElementById("navOverlay");
+
+      if (!toggleBtn || !nav) return;
+
+      function isMobileNav() {
+        return window.matchMedia("(max-width: 1024px)").matches;
+      }
+
+      function closeNav() {
+        nav.classList.remove("is-open");
+        if (overlay) overlay.hidden = true;
+        nav.removeAttribute("role");
+        nav.removeAttribute("aria-modal");
+        toggleBtn.setAttribute("aria-expanded", "false");
+        if (label) label.textContent = "Abrir navegação";
+      }
+
+      function openNav() {
+        nav.classList.add("is-open");
+        if (overlay) overlay.hidden = false;
+        nav.setAttribute("role", "dialog");
+        nav.setAttribute("aria-modal", "true");
+        toggleBtn.setAttribute("aria-expanded", "true");
+        if (label) label.textContent = "Fechar navegação";
+        const firstLink = nav.querySelector("a");
+        if (firstLink) firstLink.focus();
+      }
+
+      function syncNavForViewport() {
+        if (!isMobileNav()) {
+          closeNav();
+          const collapsed = localStorage.getItem("adbalancas-nav-collapsed") === "true";
+          frame.classList.toggle("is-collapsed", collapsed);
+          toggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        }
+      }
+
+      toggleBtn.addEventListener("click", () => {
+        const isOpen = nav.classList.contains("is-open");
+        if (isOpen) closeNav();
+        else if (isMobileNav()) openNav();
+        else {
+          const collapsed = frame.classList.toggle("is-collapsed");
+          localStorage.setItem("adbalancas-nav-collapsed", collapsed ? "true" : "false");
+          toggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        }
+      });
+
+      nav.addEventListener("click", (ev) => { if (ev.target.closest("a") && isMobileNav()) closeNav(); });
+      if (overlay) overlay.addEventListener("click", () => { closeNav(); toggleBtn.focus(); });
+      document.addEventListener("keydown", (ev) => {
+        if (!nav.classList.contains("is-open")) return;
+        if (ev.key === "Escape") { closeNav(); toggleBtn.focus(); return; }
+        if (ev.key === "Tab") {
+          const links = Array.from(nav.querySelectorAll("a[href]"));
+          if (!links.length) return;
+          const first = links[0], last = links[links.length - 1];
+          if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+          else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+        }
+      });
+
+      window.addEventListener("resize", syncNavForViewport);
+      syncNavForViewport();
+    })();
+
+    (function () {
+      const button = document.getElementById("backButton");
+      if (!button) return;
+      button.addEventListener("click", () => {
+        if (window.history.length > 1 && document.referrer.startsWith(window.location.origin)) window.history.back();
+        else window.location.assign(button.dataset.fallback || "/");
+      });
+    })();
+
+    (function () {
+      const sections = Array.from(document.querySelectorAll(".mobile-collapsible"));
+      if (!sections.length) return;
+
+      function isTabletOrMobile() {
+        return window.matchMedia("(max-width: 1024px)").matches;
+      }
+
+      function collapse(section, collapsed) {
+        const toggle = section.querySelector(".collapse-toggle");
+        section.classList.toggle("is-collapsed", collapsed);
+        if (toggle) toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      }
+
+      sections.forEach((section) => {
+        const toggle = section.querySelector(".collapse-toggle");
+        if (!toggle) return;
+        toggle.addEventListener("click", () => {
+          const collapsed = section.classList.contains("is-collapsed");
+          collapse(section, !collapsed);
+        });
+      });
+
+      function syncCollapsibleViewport() {
+        const small = isTabletOrMobile();
+        sections.forEach((section) => {
+          const defaultCollapsed = section.getAttribute("data-collapsed-mobile") === "true";
+          collapse(section, small ? defaultCollapsed : false);
+        });
+      }
+
+      window.addEventListener("resize", syncCollapsibleViewport);
+      syncCollapsibleViewport();
+    })();
+  </script>
