@@ -56,7 +56,11 @@ def test_groups_limits_full_counts_order_and_origin_isolation(db, monkeypatch):
     other_mailbox.mailbox_key = "elsewhere"
     db.add_all([other_provider, other_mailbox])
     state = EmailSyncState(provider="synthetic", mailbox_key="workbench", paused=True)
-    db.add_all([state, EmailSyncState(provider="synthetic", mailbox_key="elsewhere")])
+    db.add_all([
+        state,
+        EmailSyncState(provider="synthetic", mailbox_key="elsewhere"),
+        EmailSyncState(provider="disabled", mailbox_key="workbench", paused=False),
+    ])
     db.commit()
     context = _context(db, monkeypatch)
     assert context["sync_state"].id == state.id
