@@ -1,4 +1,5 @@
 from datetime import datetime, time
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from app.models import (
     Task,
     WorkAvailabilityWindow,
 )
+from app.routers import pages
 
 
 def test_today_shows_no_time_as_free_until_availability_is_configured(db):
@@ -28,8 +30,10 @@ def test_today_shows_no_time_as_free_until_availability_is_configured(db):
     assert db.query(DailyScheduleSnapshot).count() == 0
 
 
-def test_today_renders_estimated_blocks_and_fixed_commitment_gaps_without_saving(db):
-    today = datetime.now(ZoneInfo("America/Recife")).date()
+def test_today_renders_estimated_blocks_and_fixed_commitment_gaps_without_saving(db, monkeypatch):
+    reference = datetime(2026, 10, 8, 0, 0, tzinfo=ZoneInfo("America/Recife"))
+    monkeypatch.setattr(pages, "datetime", SimpleNamespace(now=lambda zone: reference.astimezone(zone)))
+    today = reference.date()
     db.add_all(
         [
             Task(titulo="Tarefa bloco sintética", status="a_fazer"),
@@ -54,6 +58,7 @@ def test_today_renders_estimated_blocks_and_fixed_commitment_gaps_without_saving
     assert 'data-today-section="time-blocks"' in response.text
     assert "Tarefa bloco sintética" in response.text
     assert "60 min · estimativa" in response.text
+    assert "00:01–01:01" in response.text
     assert db.query(DailyScheduleSnapshot).count() == 0
     assert db.query(Task).one().status == "a_fazer"
 

@@ -22,10 +22,10 @@ task_agenda_result(plan: TaskDayPlan, schedule: DailySchedule, today: date, dura
 
 `_execute_daily_brief` mantém chamada a `build_daily_brief` e passa o mesmo resultado ao apresentador. `_execute_task_agenda` mantém a ordem: buscar plano → calcular agenda → apresentar mensagem → consultar durações → construir evidência/resposta. Não adiantar consultas nem alterar `schedule.snapshot()`. Helpers movidos literalmente, sem normalizar mensagens. Não mover `_prepare_daily_schedule_snapshot`, confirmações, commit ou geração de documentos.
 
-- [ ] Caracterizar saídas completas ou trechos/argumentos independentes relevantes ANTES: resumo vazio, sem disponibilidade, fonte parcial/indisponível, singular/plural, cliente/prazo, blocos fixos e estimados; agenda vazia e não alocada, cliente pendente, payload completo das tarefas/durações. Somente fixtures/banco sintético.
-- [ ] Rodar novos testes + `test_assistant_daily_brief.py`, `test_assistant_service.py`, `test_daily_schedule_service.py` antes.
-- [ ] Extrair somente apresentação, mantendo assinaturas dos métodos públicos e consultas em `service.py`.
-- [ ] Rodar mesmo conjunto depois; AST dos métodos não tocados deve continuar idêntica. Ruff completo dos arquivos novos, E9/F no existente; compile/diff; revisão independente.
+- [x] Caracterizar saídas completas ou trechos/argumentos independentes relevantes ANTES: resumo vazio, sem disponibilidade, fonte parcial/indisponível, singular/plural, cliente/prazo, blocos fixos e estimados; agenda vazia e não alocada, cliente pendente, payload completo das tarefas/durações. Somente fixtures/banco sintético.
+- [x] Rodar novos testes + `test_assistant_daily_brief.py`, `test_assistant_service.py`, `test_daily_schedule_service.py` antes.
+- [x] Extrair somente apresentação, mantendo assinaturas dos métodos públicos e consultas em `service.py`.
+- [x] Rodar mesmo conjunto depois; AST dos métodos não tocados deve continuar idêntica. Ruff completo dos arquivos novos, E9/F no existente; compile/diff; revisão independente.
 
 ## Etapa 7 — consulta da fila de e-mails
 
@@ -39,10 +39,10 @@ get_message_workbench(db: Session, *, provider: str, mailbox_key: str) -> dict[s
 
 Retorna `sync_state`, três listas, `message_summary` e `action_drafts_by_email`. Extrair bloco de consultas de `messages_page` (state até message_summary) literalmente. Preservar provider/mailbox, três filtros com lógica SQL atual (inclusive NULL), ordem `received_at DESC, id DESC`, 100 mensagens por grupo, contagens de todos os registros, vínculos não nulos, escolha do último draft elegível por id ASC e atributo de apresentação `task_id`. Não fazer commit/flush explícito, reclassificar, sincronizar ou criar rascunhos. Não alterar rotas POST de review/pause/confirm; confirmação e configuração de provedor continuam no router. Manter labels/sugestões e HTML. Imports históricos ainda usados ou com consumidores devem permanecer compatíveis.
 
-- [ ] Caracterizar pelo router original: separação operational/informational/review, fornecedor/categoria/baixa confiança, provider e mailbox isolados, 101 registros por grupo versus contagem completa, empates de data, latest draft elegível, links não nulos e nenhuma gravação por visualizar. Os cinco estados válidos de draft são todos elegíveis hoje; não inserir estado inválido violando o CHECK para inventar um caso inelegível. Preservar o filtro mesmo assim.
-- [ ] Rodar novos testes + `test_today_routes.py`, `test_assistant_email_review.py`, `test_assistant_email_sync.py` antes.
-- [ ] Extrair para serviço e reduzir router a consulta/flags/contexto/render; não introduzir consulta paralela nem mudar o formato do contexto.
-- [ ] Rodar mesmo conjunto depois; lint novo/fatal existente; compile/diff; revisão independente. Não chamar Yahoo.
+- [x] Caracterizar pelo router original: separação operational/informational/review, fornecedor/categoria/baixa confiança, provider e mailbox isolados, 101 registros por grupo versus contagem completa, empates de data, latest draft elegível, links não nulos e nenhuma gravação por visualizar. Os cinco estados válidos de draft são todos elegíveis hoje; não inserir estado inválido violando o CHECK para inventar um caso inelegível. Preservar o filtro mesmo assim.
+- [x] Rodar novos testes + `test_today_routes.py`, `test_assistant_email_review.py`, `test_assistant_email_sync.py` antes.
+- [x] Extrair para serviço e reduzir router a consulta/flags/contexto/render; não introduzir consulta paralela nem mudar o formato do contexto.
+- [x] Rodar mesmo conjunto depois; lint novo/fatal existente; compile/diff; revisão independente. Não chamar Yahoo.
 
 ## Etapa 8 — componentes Jinja sem mudança visual
 
@@ -56,18 +56,18 @@ Exemplo da técnica (o bloco original inclui sua indentação; o include não ac
 {% include "components/base_styles.html" %}
 ```
 
-- [ ] ANTES, criar caracterização de HTML integral com hashes de saídas determinísticas (SHA256), request/session sintéticos e contexto completo: shell sem sessão e com sessão/CSRF/nav ativa, proposta nova e revisão com warning/dados. Obter hashes do código anterior, não gerá-los dinamicamente do código sob teste.
-- [ ] Rodar caracterização e `test_today_routes.py`, `test_dashboard_routes.py`, `test_proposal_form.py`, `test_authentication.py` antes.
-- [ ] Extrair blocos sem reescrever conteúdo, usando `apply_patch`; preservar newline final do componente e do include para saídas integrais idênticas.
-- [ ] Rodar novamente, e suíte JS existente. Conferir includes via compilação Jinja e hashes integrais. Sem afirmar validação manual de navegador.
-- [ ] Revisão independente das mudanças/templates/testes; nenhuma alteração em assets/voz/login.
+- [x] ANTES, criar caracterização de HTML integral com hashes de saídas determinísticas (SHA256), request/session sintéticos e contexto completo: shell sem sessão e com sessão/CSRF/nav ativa, proposta nova e revisão com warning/dados. Obter hashes do código anterior, não gerá-los dinamicamente do código sob teste.
+- [x] Rodar caracterização e `test_today_routes.py`, `test_dashboard_routes.py`, `test_proposal_form.py`, `test_authentication.py` antes.
+- [x] Extrair blocos sem reescrever conteúdo, usando `apply_patch`; preservar newline final do componente e do include para saídas integrais idênticas.
+- [x] Rodar novamente, e suíte JS existente. Conferir includes via compilação Jinja e hashes integrais. Sem afirmar validação manual de navegador.
+- [x] Revisão independente das mudanças/templates/testes; nenhuma alteração em assets/voz/login.
 
 ## Fechamento
 
-- [ ] Suíte Python completa, 36 JS, compilação, lint novo e global comparativo, diff-check.
-- [ ] Comparar OpenAPI, DDL PostgreSQL compilado e hashes de autenticação com baseline. Não conectar ao PostgreSQL real.
-- [ ] Revisão consolidada; atualizar relatório com todas as áreas auditadas: refatorada/coesa/motivo concreto de preservação/trabalho restante.
-- [ ] Confirmar processo da 8013 sem disparar startup. O bloqueio de runtime é operacional: startup executa ajustes no banco e leitura Yahoo. Não confundir isso com bloqueio para continuar refatoração no checkout.
+- [x] Suíte Python completa, 36 JS, compilação, lint novo e global comparativo, diff-check.
+- [x] Comparar OpenAPI, DDL PostgreSQL compilado e hashes de autenticação com baseline. Não conectar ao PostgreSQL real.
+- [x] Revisão consolidada; atualizar relatório com todas as áreas auditadas: refatorada/coesa/motivo concreto de preservação/trabalho restante.
+- [x] Confirmar processo da 8013 sem disparar startup. O bloqueio de runtime é operacional: startup executa ajustes no banco e leitura Yahoo. Não confundir isso com bloqueio para continuar refatoração no checkout.
 
 Launcher obrigatório (substituir apenas a lista de arquivos de teste):
 
@@ -76,3 +76,13 @@ PYTHONPATH=. APP_ENV_FILE=/dev/null RUN_GEMINI_SMOKE_TEST=0 RUN_OLLAMA_INTEGRATI
 ```
 
 Baseline desta continuação: 792 Python passed, 13 skipped; 36 JS passed; Ruff global 223 ocorrências. HEAD b2825e6, etapas 5 e documentação ainda com mudanças locais; preservar integralmente.
+
+## Fechamento verificado
+
+Etapas 6, 7 e 8 aprovadas por revisão independente. Conjuntos focados antes/depois: 95, 41 e 43 testes; 36 JS. Apresentação preserva mensagens/fala e ordem das consultas; fila executa SELECT-only; quatro hashes integrais e reconstrução byte a byte dos templates permaneceram iguais.
+
+Validação integrada após a etapa 9: 812 passed, 13 skipped, 6731 warnings, 48,84 s; 36 JS. Primeira tentativa completa falhou num teste antigo dependente do relógio real (45 minutos livres para bloco de 60). Foi fixado o relógio somente do teste, sem enfraquecer asserts e com verificação extra do intervalo após compromisso. Conjunto corretivo 32 passed.
+
+Compilação Python/Jinja/sintaxe JS e diff-check aprovados. Ruff global: mesmas 223 ocorrências; I001 novo nos testes OCR corrigido no próprio bloco; 11 B008 apenas transferidos aos routers filhos. OpenAPI/DDL/auth hashes idênticos; 97 rotas/34 tabelas. Revisão consolidada aprovada sem regressões bloqueantes; sugestão menor de instrumentar mensagem/snapshot no teste de ordem registrada, não necessária para a extração literal atual.
+
+Ativação operacional bloqueada: 8013 sem listener; startup executa alterações de compatibilidade/backfill e leitura IMAP imediata. Nenhum restart, operação PostgreSQL, consulta Yahoo, chamada Gemini ou envio. Commits externos 8116be0 e95bc5c3 preservados; nenhum commit/push/merge pelo agente.
