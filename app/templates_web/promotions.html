@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <div><span class="eyebrow">Comunicação · marketing</span>
+    <h1 class="page-title">Promoções</h1>
+    <p class="page-subtitle">Prepare campanhas revisáveis com imagem e e-mail. Nenhuma mensagem é enviada durante a geração ou revisão; o período pode ser informado, aproximado ou omitido.</p>
+    <div class="meta-line"><span class="badge primary">Rascunhos com confirmação</span><span class="badge">{{ contacts|length }} contato(s) elegível(is)</span></div>
+  </div>
+</section>
+
+{% if send_enabled %}
+<div class="alert alert-warning" role="status">O provedor SMTP está configurado. Ainda assim, nenhuma campanha será enviada sem confirmação explícita nesta tela.</div>
+{% else %}
+<div class="alert alert-info" role="status"><strong>Envio desativado.</strong> {{ send_unavailable_reason }} Rascunhos, prévias e seleção de destinatários continuam disponíveis.</div>
+{% endif %}
+{% if not generation_enabled %}<div class="alert alert-warning" role="status">Geração Gemini indisponível porque a chave não está configurada. Nenhuma chave é exibida; configure GEMINI_API_KEY localmente.</div>{% endif %}
+
+<section class="card">
+  <div class="card-head"><div><h2 class="card-title">Nova campanha</h2><p class="card-subtitle">Descreva livremente o objetivo, público e fatos que podem ser divulgados. Datas são opcionais; não informe condições que não deseja publicar.</p></div></div>
+  <form method="post" action="/web/promocoes" enctype="multipart/form-data">
+    <input type="hidden" name="request_key" value="{{ request_key }}">
+    <input type="hidden" name="form_token" value="{{ form_token }}">
+    <div class="field"><label for="campaignDescription">Descrição da campanha</label><textarea id="campaignDescription" name="description" rows="5" required maxlength="12000" placeholder="Ex.: Convide clientes da região a conhecerem nossos serviços de manutenção preventiva. Se quiser, inclua datas ou condições autorizadas; não são obrigatórias."></textarea><small>Não serão inventados preço, desconto, garantia, datas ou condições. A descrição e eventual referência visual serão enviadas à API Gemini para geração.</small></div>
+    <div class="field mt-12"><label for="referenceImage">Referência visual opcional (PNG/JPEG, até {{ max_reference_image_mb }} MB)</label><input id="referenceImage" type="file" name="reference_image" accept="image/png,image/jpeg"><small>A imagem só será usada nesta solicitação à Gemini e não será armazenada como anexo de referência.</small></div>
+    <div class="card-head mt-12"><div><h3 class="card-title">Destinatários autorizados</h3><p class="card-subtitle">Selecione quem receberá esta campanha. Só aparecem contatos com e-mail válido e autorização registrada.</p></div><strong id="recipientCount" class="badge">0 selecionados</strong></div>
+    <div class="table-wrap"><table><thead><tr><th>Selecionar</th><th>Cliente</th><th>Contato</th><th>E-mail</th><th>Consentimento</th></tr></thead><tbody>
+      {% for contact in contacts %}<tr><td><input type="checkbox" name="contact_ids" value="{{ contact.id }}" data-email="{{ contact.email|lower }}" aria-label="Selecionar {{ contact.client.razao_social }}"></td><td>{{ contact.client.razao_social }}</td><td>{{ contact.name or "-" }}</td><td>{{ contact.email }}</td><td>{{ contact.consent_source }} · {{ contact.consented_at.strftime('%d/%m/%Y') }}</td></tr>
+      {% else %}<tr><td colspan="5"><div class="empty-state compact">Ainda não há contatos com autorização. Cadastre o endereço, a origem e a data no cadastro de cada cliente.</div></td></tr>{% endfor %}
+    </tbody></table></div>
+    <div class="actions mt-12"><button class="btn btn-primary" type="submit">Gerar prévia da campanha</button><span class="muted">A geração não envia mensagens.</span></div>
+  </form>
+</section>
+
+<section class="card"><div class="card-head"><div><h2 class="card-title">Campanhas recentes</h2><p class="card-subtitle">Histórico de rascunhos e resultados por destinatário.</p></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Criada</th><th>Descrição</th><th>Estado</th><th>Versão</th><th>Ação</th></tr></thead><tbody>
+    {% for campaign in campaigns %}<tr><td>{{ campaign.created_at.strftime('%d/%m/%Y %H:%M') }}</td><td>{{ campaign.description[:100] }}</td><td><span class="badge">{{ campaign.status|replace('_', ' ')|title }}</span></td><td>{{ campaign.revision }}</td><td><a class="btn btn-ghost" href="/web/promocoes/{{ campaign.id }}">Abrir revisão</a></td></tr>
+    {% else %}<tr><td colspan="5"><div class="empty-state compact">Nenhuma campanha iniciada.</div></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const checkboxes = Array.from(document.querySelectorAll('input[name="contact_ids"]'));
+  const count = document.getElementById("recipientCount");
+  function updateRecipientCount() {
+    const uniqueEmails = new Set(checkboxes.filter((item) => item.checked).map((item) => item.dataset.email));
+    count.textContent = `${uniqueEmails.size} destinatário(s) incluído(s)`;
+  }
+  checkboxes.forEach((item) => item.addEventListener("change", updateRecipientCount));
+  updateRecipientCount();
+</script>
+{% endblock %}

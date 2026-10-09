@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session, joinedload
 from app.models import Client, Lancamento, LancamentoHistorico, Proposal
 from app.schemas import LancamentoCreate, LancamentoMove, LancamentoUpdate
 
-
 TIPOS = {"receber", "pagar"}
 
 
@@ -134,7 +133,14 @@ def get_lancamento(
     return entry
 
 
-def create_lancamento(db: Session, payload: LancamentoCreate) -> Lancamento:
+def create_lancamento(
+    db: Session,
+    payload: LancamentoCreate,
+    *,
+    commit: bool = True,
+    action: str = "manual_ui_create",
+    observation: str = "",
+) -> Lancamento:
     client_id = payload.client_id if payload.tipo == "receber" else None
     fornecedor = _supplier_for(payload.tipo, payload.fornecedor)
     _validate_references(db, client_id, payload.proposal_id)
@@ -164,9 +170,11 @@ def create_lancamento(db: Session, payload: LancamentoCreate) -> Lancamento:
             "arquivado_em": None,
         },
         event_type="created",
-        action="manual_ui_create",
+        action=action,
+        observation=observation,
     )
-    db.commit()
+    if commit:
+        db.commit()
     return get_lancamento(db, entry.id)
 
 

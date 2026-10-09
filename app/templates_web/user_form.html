@@ -21,10 +21,10 @@
 <section class="page-header">
   <div><span class="eyebrow">Administração · registro interno</span>
   <h1 class="page-title">Novo usuario interno</h1>
-  <p class="page-subtitle">Cadastre um responsável interno para associação operacional; este registro não cria autenticação.</p>
+  <p class="page-subtitle">Cadastre uma conta interna. Usuários ativos têm acesso equivalente às áreas operacionais.</p>
   <div class="meta-line">
     <span class="badge primary">Cadastro rapido</span>
-    <span class="badge">Senha inicial pode ser alterada depois</span>
+    <span class="badge">Senha protegida com Argon2id</span>
   </div></div>
 </section>
 
@@ -51,9 +51,9 @@
 
     <div class="form-grid-3">
       <div class="field">
-        <label>Senha inicial</label>
-        <input type="password" id="senha" name="senha" value="123456">
-        <p class="hint">Padrao atual: 123456.</p>
+        <label>Senha</label>
+        <input type="password" id="senha" name="senha" minlength="12" autocomplete="new-password" required>
+        <p class="hint">Use pelo menos 12 caracteres. Não há senha padrão.</p>
       </div>
       <div class="field align-end">
         <label class="checkbox-inline">

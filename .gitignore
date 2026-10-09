@@ -4,8 +4,10 @@ __pycache__
 *.pyc
 *.pyo
 .env
+.env.gemini.local
 .env.yahoo.local
 output/
 *.pdf
 *.docx
+!doc_templates/relatorio_tecnico_template.docx
 .models/

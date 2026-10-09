@@ -1,13 +1,13 @@
 # Registro e acompanhamento de servicos — especificacao
 
 **Data:** 2026-10-02
-**Estado:** desenho aprovado; implementacao ainda nao iniciada
+**Estado:** desenho inicial aprovado; ciclo de acompanhamento estendido nesta entrega
 
 ## Objetivo
 
 Adicionar ao sistema da AD Balancas um registro operacional por chamado, com historico de eventos e acompanhamento independente da execucao tecnica e das etapas administrativas. O mesmo fluxo sera usado por texto e por voz, preservando confirmacao, historico, idempotencia e as restricoes das integracoes existentes.
 
-Esta primeira versao registra e consulta fatos. Ela nao gera relatorios ou propostas, nao emite nota fiscal, nao altera contas, nao envia mensagens e nao modifica e-mails.
+O fluxo registra e consulta fatos. A preparacao de proposta continua no formulario e no gerador DOCX/PDF ja existente, aberto somente por escolha do usuario. Nao ha modelo proprio de relatorio tecnico. O assistente nao gera ou envia documentos automaticamente, nao emite nota fiscal, nao altera contas, nao envia mensagens e nao modifica e-mails.
 
 ## Auditoria do fluxo atual
 
@@ -112,6 +112,20 @@ Uma retificacao administrativa tambem e append-only: ela cria uma nova transicao
 `ServiceTaskLink` associa um chamado e, opcionalmente, uma etapa ou evento a uma tarefa real. Lembretes continuam sendo `Task` e serao criados exclusivamente por `board_service`.
 
 Um lembrete nunca sera criado automaticamente. A oferta do assistente produz um segundo rascunho, com titulo, prazo, responsavel e etapa vinculada, que exige confirmacao independente. Uma confirmacao repetida devolve o resultado existente sem criar outra tarefa.
+
+### Retornos tecnicos e dados do evento
+
+O rascunho conversacional pode conter equipamento, problema relatado, analise, servico executado e data de retorno. Valores individuais so sao aceitos quando ancorados no texto falado/digitado; o restante da descricao original e preservado. A confirmacao mostra os campos identificados e explicita os que nao foram informados.
+
+Uma data de retorno confirmada cria, na mesma transacao e pela camada `board_service`, uma tarefa aberta vinculada ao evento de origem por `ServiceTaskLink.service_event_id`. A repeticao da confirmacao reconcilia o evento existente e nao cria nova tarefa. Consultas de retorno selecionam apenas tarefas incompletas ligadas a evento de servico; lembretes administrativos antigos sem evento nao sao reinterpretados como retorno.
+
+O resultado da verificacao exige que o retorno tenha sido apresentado anteriormente na conversa. O rascunho registra a verificacao como um novo evento `note`. Se o usuario confirmar que foi resolvido, a tarefa vinculada passa a `concluido` na mesma transacao; se continuar pendente, permanece aberta. A acao e o evento append-only preservam a trilha do resultado.
+
+Os campos adicionais sao armazenados como narrativa estruturada na descricao do evento e os retornos usam os campos ja existentes de tarefa/vinculo; nao ha alteracao de schema nem migracao de banco nesta etapa.
+
+### Preparacao documental apos conclusao
+
+Depois de `execution_completed` confirmado, a resposta pode oferecer a rota `/web/proposals/new?client_id=...`. O formulario existente exige preenchimento/revisao antes de salvar e gerar DOCX/PDF. O assistente nao cria a proposta durante a confirmacao do evento. Nao existe template/fluxo de relatorio tecnico DOCX no projeto atual; o Assistente explicita esse limite, sem substituir o relatorio por uma proposta.
 
 ## Fluxo conversacional
 

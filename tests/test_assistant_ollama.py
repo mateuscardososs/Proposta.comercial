@@ -15,9 +15,9 @@ from app.assistant.contracts import (
 from app.assistant.ollama import OllamaProvider
 from app.assistant.provider import (
     ProviderMessage,
+    ProviderModelUnavailableError,
     ProviderPendingAction,
     ProviderResponseError,
-    ProviderModelUnavailableError,
     ProviderTimeoutError,
     ProviderToolResult,
     ProviderUnavailableError,
@@ -837,9 +837,11 @@ def test_ollama_accepts_one_validated_single_tool_call():
         "corrigir_tarefa",
         "confirmar_acao",
         "cancelar_acao",
-        "fora_do_escopo",
-        "responder_conversa",
-    }
+            "fora_do_escopo",
+            "responder_conversa",
+            "preparar_relatorio_tecnico",
+            "corrigir_previa_relatorio_tecnico",
+        }
 
 
 def test_ollama_repairs_a_text_response_once_by_requiring_a_tool_call():

@@ -62,6 +62,57 @@
       <p class="message-reason">{{ message.classification_reason }}</p>
       <details class="message-evidence"><summary>Ver prioridade</summary><p class="message-reason"><strong>Prioridade {{ message.priority }}.</strong> Prioridade alta depende de prazo, urgência ou impacto operacional explícito.</p></details>
       {% if message.task_id %}<p class="message-reason"><a href="/web/board/{{ message.task_id }}/edit">Tarefa #{{ message.task_id }} criada a partir desta mensagem</a>{% if message.review_status == "pending" %}; revisar categoria ou vínculo do cliente{% endif %}</p>{% endif %}
+      {% if message.category in ["customer_quote_request", "vendor_quotation", "purchase_order", "invoice_request", "invoice_received", "accounts_payable", "accounts_receivable", "payment_proof", "service_request", "pending_reply"] %}
+        {% set action_draft = action_drafts_by_email.get(message.id) %}
+        {% set extracted = action_draft.payload.get("extracted_fields", {}) if action_draft else (message.extracted_fields or {}) %}
+        <section class="message-action-preview" aria-label="Prévia de pendência revisável">
+          <h4>Prévia para conferência</h4>
+          <dl class="sync-status">
+            <div><dt>Categoria</dt><dd>{{ category_labels.get(message.category, message.category) }}</dd></div>
+            <div><dt>Remetente</dt><dd>{{ message.sender or "Não identificado" }}</dd></div>
+            <div><dt>Cliente/fornecedor</dt><dd>{{ extracted.get("party_name") or "Não identificado" }}{% if not extracted.get("party_role") %} · confirme o papel{% elif extracted.get("party_role") == "supplier" %} · fornecedor{% else %} · cliente{% endif %}</dd></div>
+            <div><dt>Valor</dt><dd>{{ format_brl(extracted.get("amount")) if extracted.get("amount") else "Não informado" }}</dd></div>
+            {% if extracted.get("issue_date") %}<div><dt>Emissão</dt><dd>{{ extracted.get("issue_date")[8:10] }}/{{ extracted.get("issue_date")[5:7] }}/{{ extracted.get("issue_date")[:4] }}</dd></div>{% endif %}
+            <div><dt>{{ "Prazo informado" if message.category == "customer_quote_request" else "Vencimento" }}</dt><dd>{% if extracted.get("due_date") %}{{ extracted.get("due_date")[8:10] }}/{{ extracted.get("due_date")[5:7] }}/{{ extracted.get("due_date")[:4] }}{% else %}Não identificado{% endif %}</dd></div>
+            <div><dt>Nota fiscal</dt><dd>{{ extracted.get("invoice_number") or "Não identificado" }}</dd></div>
+            <div><dt>Ação sugerida</dt><dd>{{ action_suggestions.get(message.category, "Revisar manualmente; nenhuma ação será executada automaticamente.") }}</dd></div>
+          </dl>
+          {% if extracted.get("missing_fields") %}<p class="message-reason"><strong>Campos ausentes:</strong> {{ extracted.get("missing_fields")|join(", ") }}.</p>{% endif %}
+          {% if extracted.get("uncertainty") %}<ul class="message-reason">{% for note in extracted.get("uncertainty") %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}
+          {% if action_draft %}
+            {% if action_draft.status == "pending" and action_draft.action_type.startswith("task_") %}
+              <form method="post" action="/web/mensagens/action-drafts/{{ action_draft.id }}/confirm" class="review-form">
+                <label>Título da tarefa<input name="task_title" maxlength="255" required value="{{ action_draft.payload.get('task_title', '') }}"></label>
+                <label>Cliente informado (opcional)<input name="client_name" maxlength="255" value="{{ action_draft.payload.get('client_name') or '' }}"></label>
+                <p class="message-reason">A tarefa será criada em “A fazer”. Cliente sem correspondência única ficará sem vínculo definitivo e marcado para revisão. A mensagem de origem será vinculada.</p>
+                <div class="actions"><button class="btn btn-primary" type="submit">Confirmar e criar tarefa</button><button class="btn btn-ghost" type="submit" formnovalidate formaction="/web/mensagens/action-drafts/{{ action_draft.id }}/cancel">Cancelar rascunho</button></div>
+              </form>
+            {% elif action_draft.status == "pending" and action_draft.action_type == "payable_entry" %}
+              <form method="post" action="/web/mensagens/action-drafts/{{ action_draft.id }}/confirm" class="review-form">
+                <label>Descrição<input name="description" maxlength="255" required value="{{ action_draft.payload.get('description', '') }}"></label>
+                <label>Fornecedor<input name="supplier" maxlength="255" required value="{{ action_draft.payload.get('supplier') or '' }}"></label>
+                <label>Valor<input name="amount" inputmode="decimal" required value="{{ extracted.get('amount') or '' }}" placeholder="Informe o valor confirmado"></label>
+                <label>Data de emissão<input name="issue_date" type="date" required value="{{ extracted.get('issue_date') or '' }}"></label>
+                <label>Vencimento<input name="due_date" type="date" required value="{{ extracted.get('due_date') or '' }}"></label>
+                <label class="checkbox-field"><input name="confirm_payable" type="checkbox" value="yes" required> Confirmo que os dados correspondem a uma conta a pagar e autorizo criar um lançamento pendente para conferência.</label>
+                <div class="actions"><button class="btn btn-primary" type="submit">Confirmar e criar lançamento</button><button class="btn btn-ghost" type="submit" formnovalidate formaction="/web/mensagens/action-drafts/{{ action_draft.id }}/cancel">Cancelar rascunho</button></div>
+              </form>
+            {% elif action_draft.status == "confirmed" and action_draft.task_id %}
+              <p class="message-reason"><a href="/web/board/{{ action_draft.task_id }}/edit">Tarefa criada após confirmação</a></p>
+            {% elif action_draft.status == "confirmed" and action_draft.lancamento_id %}
+              <p class="message-reason"><a href="/web/contas-a-pagar/{{ action_draft.lancamento_id }}/edit">Lançamento pendente criado após confirmação</a></p>
+            {% elif action_draft.status == "linked" and action_draft.task_id %}
+              <p class="message-reason"><a href="/web/board/{{ action_draft.task_id }}/edit">Tarefa já vinculada a esta mensagem</a></p>
+            {% elif action_draft.status == "linked_deleted" %}
+              <p class="message-reason">Já houve uma tarefa vinculada que foi removida; não será recriada automaticamente.</p>
+            {% elif action_draft.status == "cancelled" %}
+              <span class="badge">Rascunho cancelado</span>
+            {% endif %}
+          {% elif message.category == "vendor_quotation" %}
+            <p class="message-reason">Cotação de fornecedor: fica para conferência e não gera tarefa de orçamento do cliente.</p>
+          {% endif %}
+        </section>
+      {% endif %}
       {% if message.review_status == "pending" %}
       <details class="message-evidence"><summary>Revisar classificação local</summary><form method="post" action="/web/mensagens/{{ message.id }}/review" class="review-form">
         <label>Revisar categoria

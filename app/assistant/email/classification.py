@@ -6,6 +6,7 @@ from datetime import date
 
 from app.assistant.dates import normalize_text
 from app.assistant.email.contracts import EmailMessageRecord, EmailMessageResult
+from app.assistant.email.extraction import extract_operational_fields
 
 
 @dataclass(frozen=True)
@@ -378,6 +379,7 @@ def to_result(
         destination=classification.destination,  # type: ignore[arg-type]
         classification_reason="; ".join(classification.reasons) or "nenhum indício operacional identificado",
         auto_task_eligible=classification.auto_task_eligible,
+        extracted_fields=extract_operational_fields(message, classification.category),
     )
 
 

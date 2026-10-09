@@ -73,6 +73,7 @@ class EmailMessageResult(BaseModel):
     destination: Literal["task", "service", "accounts_payable", "accounts_receivable", "review", "classification_only"] = "review"
     classification_reason: str = ""
     auto_task_eligible: bool = False
+    extracted_fields: dict[str, object] = Field(default_factory=dict)
 
 
 class EmailQueryResult(BaseModel):

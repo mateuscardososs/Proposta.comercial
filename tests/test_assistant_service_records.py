@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 import json
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -10,17 +10,39 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.assistant.contracts import (
-    ConversationCommand, ServiceDraftCorrectionCommand, ServiceEventDraftCommand,
-    ServiceQueryCommand, ServiceReminderDraftCommand, ServiceReminderItemCommand,
+    ConversationCommand,
+    ServiceDraftCorrectionCommand,
+    ServiceEventDraftCommand,
+    ServiceQueryCommand,
+    ServiceReminderDraftCommand,
+    ServiceReminderItemCommand,
     ServiceStepChangeCommand,
-    TaskCreateCommand, assistant_command_adapter,
+    TaskCreateCommand,
+    assistant_command_adapter,
 )
 from app.assistant.evidence import validate_execution_claims
-from app.assistant.ollama import OllamaProvider, _prompt_tool_results, _validate_tool_scope
-from app.assistant.provider import ProviderMessage, ProviderPendingAction, ProviderToolResult
+from app.assistant.ollama import (
+    OllamaProvider,
+    _prompt_tool_results,
+    _validate_tool_scope,
+)
+from app.assistant.provider import (
+    ProviderMessage,
+    ProviderPendingAction,
+    ProviderToolResult,
+)
 from app.assistant.service import AssistantService
 from app.db import Base, ensure_service_history_guards_for_engine
-from app.models import AssistantAction, AssistantMessage, Client, ServiceCall, ServiceEvent, ServiceWorkflowTransition, ServiceTaskLink, Task
+from app.models import (
+    AssistantAction,
+    AssistantMessage,
+    Client,
+    ServiceCall,
+    ServiceEvent,
+    ServiceTaskLink,
+    ServiceWorkflowTransition,
+    Task,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -126,6 +148,157 @@ def test_confirmed_service_action_is_idempotent(db):
     assert db.query(ServiceEvent).count() == db.query(ServiceCall).count() == 1
 
 
+def test_service_details_and_return_date_are_previewed_then_saved_idempotently(db):
+    client(db)
+    assistant = service(db, ServiceEventDraftCommand(
+        client="Alfa", event_type="execution_completed", execution_completed_explicitly=True,
+        summary="balança Toledo", equipment="balança Toledo",
+        reported_problem="visor apagado", analysis="cabo de alimentação solto",
+        work_performed="reconectei o cabo de alimentação", return_on="amanhã",
+    ))
+    draft = assistant.handle_message(
+        message=("Terminei o conserto da balança Toledo na Alfa. O problema era visor apagado; "
+                 "analisei e encontrei cabo de alimentação solto, reconectei o cabo de alimentação e volto amanhã."),
+        request_id="service-rich-draft",
+    )
+    assert draft.kind == "confirmation"
+    assert draft.fields["equipamento"] == "balança Toledo"
+    assert draft.fields["problema"] == "visor apagado"
+    assert draft.fields["analise"] == "cabo de alimentação solto"
+    assert draft.fields["servico_executado"] == "reconectei o cabo de alimentação"
+    assert draft.fields["retorno"] == "03/10/2026"
+    assert db.query(ServiceCall).count() == db.query(ServiceEvent).count() == db.query(Task).count() == 0
+
+    first = assistant.confirm_action(draft.action_id, draft.confirmation_token)
+    second = assistant.confirm_action(draft.action_id, draft.confirmation_token)
+    assert first == second
+    assert db.query(ServiceCall).one().execution_status == "completed"
+    event = db.query(ServiceEvent).one()
+    assert "Equipamento: balança Toledo" in event.description
+    assert "Problema relatado: visor apagado" in event.description
+    assert "Análise: cabo de alimentação solto" in event.description
+    assert "Serviço executado: reconectei o cabo de alimentação" in event.description
+    task = db.query(Task).one()
+    assert task.prazo == date(2026, 10, 3)
+    assert task.titulo == "Retorno técnico — balança Toledo"
+    link = db.query(ServiceTaskLink).one()
+    assert link.service_event_id == event.id and link.step_type is None
+
+
+def test_return_date_clarification_and_draft_correction_replace_old_confirmation(db):
+    client(db)
+    assistant = service(db,
+        ServiceEventDraftCommand(client="Alfa", event_type="inspection", summary="Balança", description="Inspeção"),
+        ServiceEventDraftCommand(return_on="depois de amanhã"),
+    )
+    first = assistant.handle_message(
+        message="Fiz inspeção na Alfa; preciso voltar.", request_id="return-date-missing",
+    )
+    assert first.kind == "clarification" and "data" in first.message.lower()
+    revised = assistant.handle_message(
+        message="Na verdade, o retorno é depois de amanhã.", request_id="return-date-correction",
+        conversation_id=first.conversation_id,
+    )
+    assert revised.kind == "confirmation"
+    assert revised.fields["retorno"] == "04/10/2026"
+    assistant.confirm_action(revised.action_id, revised.confirmation_token)
+    assert db.query(Task).one().prazo == date(2026, 10, 4)
+
+
+def test_return_query_and_confirmed_check_result_use_real_linked_task(db):
+    client(db)
+    seed = service(db, ServiceEventDraftCommand(
+        client="Alfa", event_type="inspection", summary="Balança", description="Inspeção",
+        return_on="amanhã",
+    ))
+    draft = seed.handle_message(message="Fiz inspeção na Alfa; volto amanhã.", request_id="return-seed")
+    seed.confirm_action(draft.action_id, draft.confirmation_token)
+    task = db.query(Task).one()
+    call = db.query(ServiceCall).one()
+    event_count_before_query = db.query(ServiceEvent).count()
+    task_status_before_query = task.status
+    db.add(AssistantMessage(
+        conversation_id=draft.conversation_id, role="assistant", kind="text",
+        content="Retorno devido", details_json={"service_calls": [{"id": call.id}]},
+    ))
+    db.commit()
+
+    query = service(db, ConversationCommand(message="Há um retorno técnico pendente para a Alfa."))
+    query_reply = query.handle_message(
+        message="Quais serviços precisam de retorno?", request_id="return-query",
+        conversation_id=draft.conversation_id,
+    )
+    assert query_reply.kind == "text", query_reply.message
+    result = query.provider.calls[-1]["tool_results"][0]
+    assert result.payload["service_calls"][0]["return_tasks"][0]["task_id"] == task.id
+    assert query.provider.calls[-1]["allowed_tools"] == {"responder_conversa"}
+    assert task.status == task_status_before_query == "a_fazer"
+    assert db.query(ServiceEvent).count() == event_count_before_query == 1
+
+    recorder = service(db, ServiceEventDraftCommand(
+        client="Alfa", service_call_id=call.id, event_type="note", description="Retorno resolvido",
+        return_task_id=task.id, return_result="resolved",
+    ))
+    check_draft = recorder.handle_message(
+        message=f"Verifiquei o retorno do chamado #{call.id}; resolvido.",
+        request_id="return-check", conversation_id=draft.conversation_id,
+    )
+    assert check_draft.kind == "confirmation", check_draft.message
+    assert task.status == "a_fazer"
+    success = recorder.confirm_action(check_draft.action_id, check_draft.confirmation_token)
+    repeated = recorder.confirm_action(check_draft.action_id, check_draft.confirmation_token)
+    assert success == repeated
+    assert task.status == "concluido"
+    events = db.query(ServiceEvent).order_by(ServiceEvent.id).all()
+    assert len(events) == 2 and "Verificacao de retorno" in events[-1].description
+    assert "resolvido" in events[-1].description
+
+
+def test_service_completion_offers_existing_proposal_flow_without_creating_document(db):
+    client(db)
+    assistant = service(db, ServiceEventDraftCommand(
+        client="Alfa", event_type="execution_completed", execution_completed_explicitly=True,
+        summary="Balança", description="Consertei a balança", work_performed="consertei a balança",
+    ))
+    draft = assistant.handle_message(
+        message="Terminei o conserto da balança na Alfa: consertei a balança.", request_id="proposal-offer",
+    )
+    reply = assistant.confirm_action(draft.action_id, draft.confirmation_token)
+    assert reply.proposal_url == f"/web/proposals/new?client_id={db.query(Client).one().id}"
+    assert "não gerei nem enviei documentos" in reply.message
+    assert db.query(ServiceCall).one().execution_status == "completed"
+
+
+def test_confirmed_return_result_still_pending_preserves_open_task(db):
+    client(db)
+    seed = service(db, ServiceEventDraftCommand(
+        client="Alfa", event_type="inspection", summary="Balança", description="Inspeção",
+        return_on="amanhã",
+    ))
+    draft = seed.handle_message(message="Fiz inspeção na Alfa; retorno amanhã.", request_id="pending-return-seed")
+    seed.confirm_action(draft.action_id, draft.confirmation_token)
+    call = db.query(ServiceCall).one()
+    task = db.query(Task).one()
+    query = service(db, ConversationCommand(message="A Alfa ainda tem retorno pendente."))
+    query.handle_message(
+        message="Quais serviços precisam de retorno?", request_id="pending-return-query",
+        conversation_id=draft.conversation_id,
+    )
+    recorder = service(db, ServiceEventDraftCommand(
+        client="Alfa", service_call_id=call.id, return_task_id=task.id,
+        return_result="still_pending", description="O problema continua pendente",
+    ))
+    check = recorder.handle_message(
+        message=f"Verifiquei o retorno da Alfa, mas continua com defeito no chamado #{call.id}.",
+        request_id="pending-return-check", conversation_id=draft.conversation_id,
+    )
+    assert check.kind == "confirmation", check.message
+    recorder.confirm_action(check.action_id, check.confirmation_token)
+    assert task.status == "a_fazer"
+    assert db.query(ServiceEvent).count() == 2
+    assert "continua pendente" in db.query(ServiceEvent).order_by(ServiceEvent.id.desc()).first().description
+
+
 def test_administrative_steps_append_each_confirmed_transition(db):
     client(db)
     assistant = service(
@@ -155,7 +328,7 @@ def test_correction_is_append_only_and_reprojects_service(db):
                                  description="Consertei a balança", summary="Balança"),
         ServiceDraftCorrectionCommand(event_id=1, event_type="inspection", description="Foi só inspeção"),
     )
-    draft = assistant.handle_message(message="Terminei o conserto da balança na Alfa.", request_id="correction-original")
+    draft = assistant.handle_message(message="Terminei o conserto da balança na Alfa e consertei a balança.", request_id="correction-original")
     assistant.confirm_action(draft.action_id, draft.confirmation_token)
     correction = assistant.handle_message(
         message="Corrigindo: foi apenas inspeção, não consertei.", request_id="correction-fix",
@@ -178,7 +351,7 @@ def test_correcting_unconfirmed_event_invalidates_old_confirmation(db):
                                  description="Consertei a balança", summary="Balança"),
         ServiceDraftCorrectionCommand(event_type="inspection"),
     )
-    original = assistant.handle_message(message="Terminei o conserto da balança na Alfa.", request_id="draft-before-correction")
+    original = assistant.handle_message(message="Terminei o conserto da balança na Alfa e consertei a balança.", request_id="draft-before-correction")
     revised = assistant.handle_message(
         message="Na verdade, foi só inspeção.", request_id="draft-correction",
         conversation_id=original.conversation_id,
@@ -390,11 +563,17 @@ def test_missing_client_clarification_keeps_finished_work_context(db):
     assistant = service(db,
         ServiceEventDraftCommand(event_type="execution_completed", execution_completed_explicitly=True),
         ServiceEventDraftCommand(client="Alfa"),
+        ServiceEventDraftCommand(work_performed="Substituí o cabo de alimentação"),
     )
     question = assistant.handle_message(message="Terminei o conserto.", request_id="context-first")
     assert question.kind == "clarification"
     draft = assistant.handle_message(message="Foi na Alfa.", request_id="context-second", conversation_id=question.conversation_id)
-    assert draft.kind == "confirmation"
+    assert draft.kind == "clarification" and "o que foi executado" in draft.message.lower()
+    draft = assistant.handle_message(
+        message="Substituí o cabo de alimentação.", request_id="context-third",
+        conversation_id=question.conversation_id,
+    )
+    assert draft.kind == "confirmation", draft.message
     assert draft.fields["evento"] == "Execução concluída"
     assert db.query(ServiceEvent).count() == 0
 

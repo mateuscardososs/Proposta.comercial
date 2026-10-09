@@ -48,11 +48,13 @@ class Base(DeclarativeBase):
 def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
     inspector = inspect(target_engine)
     table_names = set(inspector.get_table_names())
+    _relax_service_report_event_links(target_engine, table_names)
     if "tasks" in table_names:
         task_columns = {str(column["name"]) for column in inspector.get_columns("tasks")}
         task_additions = (
             ("client_name", "VARCHAR(255)", None),
             ("client_link_status", "VARCHAR(30)", "'unlinked'"),
+            ("estimated_duration_minutes", "INTEGER", None),
         )
         for column_name, column_type, default_value in task_additions:
             if column_name in task_columns:
@@ -66,13 +68,20 @@ def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
         for column_name, column_type, sqlite_default, postgres_default in (
             ("awaiting_reply", "VARCHAR(20)", "'unknown'", "'unknown'"),
             ("sent_coverage", "BOOLEAN", "0", "FALSE"),
+            ("extracted_fields", "JSON", None, None),
         ):
             if column_name in email_columns:
                 continue
             if target_engine.dialect.name == "postgresql":
-                statement = f"ALTER TABLE inbox_emails ADD COLUMN IF NOT EXISTS {column_name} {column_type} NOT NULL DEFAULT {postgres_default}"
+                if postgres_default is None:
+                    statement = f"ALTER TABLE inbox_emails ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+                else:
+                    statement = f"ALTER TABLE inbox_emails ADD COLUMN IF NOT EXISTS {column_name} {column_type} NOT NULL DEFAULT {postgres_default}"
             else:
-                statement = f"ALTER TABLE inbox_emails ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {sqlite_default}"
+                if sqlite_default is None:
+                    statement = f"ALTER TABLE inbox_emails ADD COLUMN {column_name} {column_type}"
+                else:
+                    statement = f"ALTER TABLE inbox_emails ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {sqlite_default}"
             with target_engine.begin() as conn:
                 conn.execute(text(statement))
     if "email_sync_states" in table_names:
@@ -117,6 +126,72 @@ def ensure_schema_compatibility_for_engine(target_engine: Engine) -> None:
             conn.execute(text(statement))
 
 
+def _relax_service_report_event_links(target_engine: Engine, table_names: set[str]) -> None:
+    """Allow document/admin history to exist without fabricating a technical event."""
+    requirements = {
+        "service_workflow_transitions": {"service_event_id"},
+        "service_technical_reports": {"document_event_id"},
+    }
+    required_changes: list[tuple[str, str]] = []
+    current_inspector = inspect(target_engine)
+    for table_name, column_names in requirements.items():
+        if table_name not in table_names:
+            continue
+        for column in current_inspector.get_columns(table_name):
+            if column["name"] in column_names and not column["nullable"]:
+                required_changes.append((table_name, str(column["name"])))
+    if not required_changes:
+        return
+
+    if target_engine.dialect.name == "postgresql":
+        with target_engine.begin() as connection:
+            for table_name, column_name in required_changes:
+                connection.execute(text(
+                    f'ALTER TABLE "{table_name}" ALTER COLUMN "{column_name}" DROP NOT NULL'
+                ))
+        return
+
+    if target_engine.dialect.name != "sqlite":
+        raise RuntimeError("Migração de vínculos opcionais de relatório não suportada neste banco.")
+
+    # SQLite cannot alter nullability in place. Rebuild only the two affected tables,
+    # copying every column verbatim. Foreign keys are re-enabled and checked before return.
+    metadata = Base.metadata
+    with target_engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        connection.commit()
+        transaction = connection.begin()
+        try:
+            for table_name in dict.fromkeys(table for table, _ in required_changes):
+                old_table = f"_compat_old_{table_name}"
+                if old_table in inspect(connection).get_table_names():
+                    raise RuntimeError(f"Migração SQLite interrompida: tabela temporária {old_table} existe.")
+                table = metadata.tables[table_name]
+                names = [column.name for column in table.columns]
+                quoted_names = ", ".join(f'"{name}"' for name in names)
+                connection.exec_driver_sql(f'ALTER TABLE "{table_name}" RENAME TO "{old_table}"')
+                for index in inspect(connection).get_indexes(old_table):
+                    index_name = index.get("name")
+                    if index_name:
+                        connection.exec_driver_sql(f'DROP INDEX "{index_name}"')
+                table.create(connection)
+                connection.exec_driver_sql(
+                    f'INSERT INTO "{table_name}" ({quoted_names}) '
+                    f'SELECT {quoted_names} FROM "{old_table}"'
+                )
+                connection.exec_driver_sql(f'DROP TABLE "{old_table}"')
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            raise
+        finally:
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            connection.commit()
+        violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError("Migração SQLite deixou violações de chave estrangeira.")
+
+
 def ensure_schema_compatibility() -> None:
     ensure_schema_compatibility_for_engine(engine)
     ensure_service_history_guards_for_engine(engine)
@@ -124,9 +199,11 @@ def ensure_schema_compatibility() -> None:
 
 def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
     tables = set(inspect(target_engine).get_table_names())
-    service_tables = {"service_events", "service_workflow_transitions"}.intersection(tables)
+    service_tables = {"service_events", "service_workflow_transitions", "service_technical_reports"}.intersection(tables)
     finance_tables = {"lancamento_historicos"}.intersection(tables)
-    if not service_tables and not finance_tables:
+    schedule_tables = {"daily_schedule_snapshots"}.intersection(tables)
+    campaign_history_tables = {"promotion_campaign_events", "campaign_contact_consent_events"}.intersection(tables)
+    if not service_tables and not finance_tables and not schedule_tables and not campaign_history_tables:
         return
 
     if target_engine.dialect.name == "sqlite":
@@ -138,6 +215,14 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
             for operation in ("UPDATE", "DELETE"):
                 trigger = f"lancamento_historicos_reject_{operation.lower()}"
                 conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON lancamento_historicos BEGIN SELECT RAISE(ABORT, 'financial history is immutable'); END"))
+            for table in schedule_tables:
+                for operation in ("UPDATE", "DELETE"):
+                    trigger = f"{table}_reject_{operation.lower()}"
+                    conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'daily schedule history is immutable'); END"))
+            for table in campaign_history_tables:
+                for operation in ("UPDATE", "DELETE"):
+                    trigger = f"{table}_reject_{operation.lower()}"
+                    conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'promotion history is immutable'); END"))
     elif target_engine.dialect.name == "postgresql":
         with target_engine.begin() as conn:
             conn.execute(
@@ -167,18 +252,58 @@ def ensure_service_history_guards_for_engine(target_engine: Engine) -> None:
                 )
                 conn.execute(text("DROP TRIGGER IF EXISTS lancamento_historicos_reject_mutation ON lancamento_historicos"))
                 conn.execute(text("CREATE TRIGGER lancamento_historicos_reject_mutation BEFORE UPDATE OR DELETE ON lancamento_historicos FOR EACH ROW EXECUTE FUNCTION reject_financial_history_mutation()"))
+            if schedule_tables:
+                conn.execute(
+                    text("""
+                    CREATE OR REPLACE FUNCTION reject_daily_schedule_mutation()
+                    RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RAISE EXCEPTION 'daily schedule history is immutable';
+                    END;
+                    $$
+                    """)
+                )
+                for table in schedule_tables:
+                    trigger = f"{table}_reject_mutation"
+                    conn.execute(text(f"DROP TRIGGER IF EXISTS {trigger} ON {table}"))
+                    conn.execute(text(f"CREATE TRIGGER {trigger} BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION reject_daily_schedule_mutation()"))
+            if campaign_history_tables:
+                conn.execute(
+                    text("""
+                    CREATE OR REPLACE FUNCTION reject_promotion_history_mutation()
+                    RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RAISE EXCEPTION 'promotion history is immutable';
+                    END;
+                    $$
+                    """)
+                )
+                for table in campaign_history_tables:
+                    trigger = f"{table}_reject_mutation"
+                    conn.execute(text(f"DROP TRIGGER IF EXISTS {trigger} ON {table}"))
+                    conn.execute(text(f"CREATE TRIGGER {trigger} BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION reject_promotion_history_mutation()"))
 
 
 @event.listens_for(Session, "before_flush")
 def _reject_service_history_mutation(session: Session, flush_context, instances) -> None:
-    from .models import LancamentoHistorico, ServiceEvent, ServiceWorkflowTransition
+    from .models import (
+        LancamentoHistorico,
+        CampaignContactConsentEvent,
+        PromotionCampaignEvent,
+        ServiceEvent,
+        ServiceTechnicalReport,
+        ServiceWorkflowTransition,
+    )
 
     del flush_context, instances
-    historical = (ServiceEvent, ServiceWorkflowTransition)
+    historical = (ServiceEvent, ServiceWorkflowTransition, ServiceTechnicalReport)
+    campaign_history = (CampaignContactConsentEvent, PromotionCampaignEvent)
     if any(isinstance(obj, LancamentoHistorico) for obj in session.deleted):
         raise ValueError("Histórico financeiro imutável: exclusão não permitida.")
     if any(isinstance(obj, historical) for obj in session.deleted):
         raise ValueError("Historico de servico imutavel: exclusao nao permitida.")
+    if any(isinstance(obj, campaign_history) for obj in session.deleted):
+        raise ValueError("Histórico de campanhas imutável: exclusão não permitida.")
     for obj in session.dirty:
         state = inspect(obj)
         if isinstance(obj, LancamentoHistorico) and state.persistent and any(
@@ -188,6 +313,10 @@ def _reject_service_history_mutation(session: Session, flush_context, instances)
             raise ValueError("Histórico financeiro imutável: alteração não permitida.")
         if isinstance(obj, historical) and state.persistent and any(state.attrs[column.key].history.has_changes() for column in state.mapper.column_attrs):
             raise ValueError("Historico de servico imutavel: alteracao nao permitida.")
+        if isinstance(obj, campaign_history) and state.persistent and any(
+            state.attrs[column.key].history.has_changes() for column in state.mapper.column_attrs
+        ):
+            raise ValueError("Histórico de campanhas imutável: alteração não permitida.")
 
 
 def get_db() -> Generator[Session, None, None]:
