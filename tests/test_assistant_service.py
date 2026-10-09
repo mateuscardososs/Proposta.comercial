@@ -1143,7 +1143,6 @@ def test_cancel_can_discard_a_draft_that_needs_clarification(db):
     assert cancelled.message == "Criacao cancelada. Nenhuma tarefa foi adicionada ao quadro."
     assert db.query(AssistantAction).one().status == "cancelled"
     assert db.query(Task).count() == 0
-    assert db.query(Task).count() == 0
 
 
 def test_repeated_message_request_reuses_same_pending_action(db):

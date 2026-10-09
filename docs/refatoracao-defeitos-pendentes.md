@@ -49,3 +49,16 @@ aguardar o intervalo. Por isso a instância 8013 não foi iniciada neste trabalh
 Uma restauração precisa de procedimento que trate esses efeitos explicitamente,
 sem desligar autenticação ou descartar estado. Nenhuma configuração ou migração
 operacional foi alterada para contornar essa condição.
+
+## RF-05 — token de confirmação após conflito de criação do rascunho
+
+Identificado por inspeção do caminho anterior à extração, **sem reprodução em
+banco operacional**. Em `_prepare_task`, se o flush causar `IntegrityError`, o
+fluxo faz rollback e recupera a ação pelo request id; a resposta pode receber o
+token recém-gerado sem atualizar o hash da ação recuperada. Assim, esse token
+pode não autorizar a confirmação da ação existente.
+
+O comportamento foi preservado literalmente em `task_drafts.py`. Corrigir em
+tarefa funcional separada, com conflito simulado e confirmação/retry concorrente,
+preservando a unicidade da ação e evitando nova gravação de tarefa. Não contornar
+o hash nem aceitar tokens sem validação.
