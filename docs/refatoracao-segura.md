@@ -1,4 +1,4 @@
-# Refatoração segura — 7 e 8 de outubro de 2026
+# Refatoração segura — 7 a 9 de outubro de 2026
 
 ## Escopo e preservação
 
@@ -15,9 +15,10 @@ linha de base registrada.
 
 Na continuação de 08/10, commits externos `b2825e6`, `8116be0` e `95bc5c3`
 incorporaram as etapas anteriores e foram preservados. Eles não foram criados
-pelo agente. No fechamento, HEAD é `95bc5c3`; a branch acompanha
-`origin/refactor/safe-modularization` e está um commit à frente. As alterações
-locais finais são documentação e ajustes de testes, sem integração Git pelo agente.
+pelo agente. Na retomada, o commit externo `ba245e2` incorporou o fechamento
+anterior. HEAD permanece `ba245e2`; a branch acompanha
+`origin/refactor/safe-modularization` e está dois commits à frente. As alterações
+locais finais são as etapas 10–11, documentação e testes, sem integração Git pelo agente.
 
 O [plano e a linha de base](superpowers/plans/2026-10-07-refatoracao-segura.md)
 contêm a tabela de rastreabilidade entre funcionalidades, módulos e testes.
@@ -42,6 +43,8 @@ e transportes simulados. Não houve chamadas reais ao Gemini, Yahoo, SMTP ou voz
 | Preparação de respostas do Assistente | Refatorada e validada nos testes focados | `service_reports.py` prepara prévias e tokens; `email/query_presentation.py` prepara intervalo e apresentação; `evidence.py` concentra validação de alegações. Orquestrador conserva commits, claims e recuperação. |
 | Resumo operacional e apresentação da agenda | Refatorada e validada | `day_presentation.py` recebe resultados já consultados e produz texto, fala e evidência. Consultas e sua ordem continuam no serviço; não salva agenda. |
 | Reconhecimento determinístico de intenções | Refatorado e validado nos testes focados | `intent_routing.py` concentra 11 funções puras. Aliases históricos continuam na classe; ordem de decisão, execução de ferramentas, confirmações e transações ficam no orquestrador. |
+| Rascunhos de tarefas | Refatorados e validados | `task_drafts.py` concentra preparação, correção, esclarecimento e apresentação do rascunho. Mesma sessão e callbacks; confirmação, execução, commit, cancelamento e recuperação permanecem no orquestrador. |
+| Resolução de clientes e responsáveis | Refatorada e validada | `entity_resolution.py` conserva consultas, normalização, correspondências, opções e filtro de responsáveis ativos. Resolução estrita de serviços continua distinta do vínculo opcional de tarefas; não cadastra entidades. |
 | Indexação/OCR | Refatorada e validada com OCR simulado | `local_pdf_ocr.py` concentra subprocessos e renderização. Indexador conserva caminhos autorizados, fingerprint, páginas, reconciliação e persistência. Mac/Windows reais não foram testados nesta rodada. |
 | Formulário de propostas | Refatorado e validado nos testes focados | `routers/proposal_form.py` prepara defaults, prefill e parsing. O router conserva validação antecipada, redirects e ordem dos serviços. Construtor de payload de clonagem reutilizado após caracterização de equivalência. |
 | Rotas web de Clientes e Propostas | Refatoradas e validadas | `web_clients.py` e `web_proposals.py` têm handlers literais; `web_rendering.py` mantém o contexto compartilhado. `pages.router` conserva ordem, nomes e tags; aliases preservam entradas usadas pelos testes. APIs e geradores intocados. |
@@ -49,7 +52,7 @@ e transportes simulados. Não houve chamadas reais ao Gemini, Yahoo, SMTP ou voz
 | Tarefas, Hoje, agenda, financeiro e promoções | Mantidas: serviços já separados por responsabilidade | Preservadas consultas determinísticas, snapshots, confirmação, transições e transportes. Cobertura na suíte existente; nenhuma alteração de regra de negócio. |
 | STT/TTS e captura de voz | Mantidos: componentes separados | Adaptadores locais, política, filas e máquina de estados JS preservados. Sem microfone real nesta rodada. |
 | Login e proteção de recursos | Não refatorados por decisão explícita do usuário | Arquivos e contratos preservados; testes sintéticos continuam na suíte. Ativação e login real da 8013 não são declarados validados. |
-| Núcleo transacional da conversa e persistência de serviços/documentos | Mantido por unidade de responsabilidade; não refatorado integralmente | O protocolo de requests, leases, tokens, confirmação, commit e reconciliação permanece no mesmo dono de sessão. Os adapters agora separam preparação/apresentação. Os serviços documentais têm políticas de recuperação diferentes; não criar helper genérico sem benefício demonstrado. O orquestrador ainda tem 2788 linhas; esta entrega não afirma modularização integral dele. |
+| Núcleo transacional da conversa e persistência de serviços/documentos | Mantido por unidade de responsabilidade; não refatorado integralmente | O protocolo de requests, leases, tokens, confirmação, commit e reconciliação permanece no mesmo dono de sessão. Os adapters agora separam preparação/apresentação/resolução. Os serviços documentais têm políticas de recuperação diferentes; não criar helper genérico sem benefício demonstrado. O orquestrador ainda tem 2451 linhas; esta entrega não afirma modularização integral dele. |
 | Templates e navegação | Refatorados e validados por equivalência de HTML | Quatro componentes Jinja separam estilos/scripts do shell e formulário. Fontes reconstruídos são byte a byte idênticos; quatro hashes integrais e testes JS preservados. Sem redesenho e sem teste visual manual. |
 | Modelos, banco, jobs e inicialização | Não refatorados: restrição operacional | Não alterar schema, configuração, volumes ou efeitos de startup. Reiniciar a aplicação pode executar compatibilidade de banco, backfill, arquivamento e IMAP. |
 
@@ -59,7 +62,7 @@ repositório ou a atualização operacional estejam concluídos**.
 | Módulo original | Linhas antes | Linhas depois |
 |---|---:|---:|
 | `assistant/ollama.py` | 1171 | 524 |
-| `assistant/service.py` | 3665 | 2788 |
+| `assistant/service.py` | 3665 | 2451 |
 | `services/document_index_service.py` | 467 | 309 |
 | `routers/pages.py` | 867 | 344 |
 | `templates_web/base.html` | 1269 | 104 |
@@ -82,6 +85,15 @@ pelos parâmetros; contexto e POSTs permaneceram idênticos. Na etapa 9, os 23
 ASTs das funções originais do router foram conferidos entre os módulos de
 destino e os handlers retidos; tabela de rotas e OpenAPI permaneceram iguais.
 
+Nas etapas 10–11, quatro métodos de rascunho e quatro resolvers foram movidos
+literalmente, com wrappers de assinatura preservada. Contra a linha de base
+anterior a essas duas etapas, somente o inicializador e esses oito wrappers
+mudaram; os outros **53 métodos** têm AST idêntica. Os módulos novos têm 350 e
+98 linhas. A resolução continua na mesma sessão usada pelos adapters existentes.
+Um alerta inicial sobre dois métodos de relatório foi identificado como
+truncamento do relatório de AST, não alteração de código; a comparação por
+hashes compactos confirmou a equivalência.
+
 Os includes Jinja recompõem exatamente os fontes anteriores: base com 45.654
 bytes e formulário com 34.758 bytes. Os novos componentes conservam CSS/JS
 literalmente, sem novos requests de assets ou alterações de CSRF e eventos.
@@ -98,6 +110,13 @@ efetivamente usados pela suíte foram preservados.
 Nenhum arquivo existente nem teste foi excluído. Código extraído permanece nos
 novos módulos, com pontos de importação compatíveis. Não foram removidos testes
 opt-in nem enfraquecidos asserts para contornar falhas.
+
+Foi removida somente uma asserção consecutiva duplicada no teste
+`test_cancel_can_discard_a_draft_that_needs_clarification`: havia duas consultas
+idênticas `Task.count() == 0`, sem operação entre elas, em banco sintético sem
+escritor concorrente. A primeira asserção, o teste e a verificação do cancelamento
+permanecem. Não havia comportamento único coberto pela segunda consulta. O teste
+e os novos módulos passaram em 25 casos focados e na suíte completa.
 
 - `scripts/ocr_pdf_vision.swift`: chamado pelo adaptador e referenciado na
   documentação de busca documental; não é sobra de implementação.
@@ -136,9 +155,9 @@ vazio pelo resumo atual; nenhuma alteração funcional foi misturada à extraç�
 
 ### Resultados automatizados
 
-| Verificação | Linha de base | Resultado após as nove etapas |
+| Verificação | Linha de base | Resultado após as onze etapas |
 |---|---|---|
-| Suíte Python completa, integrações simuladas | 722 passaram, 13 pulados | **812 passaram, 13 pulados**, 48,84 s no fechamento |
+| Suíte Python completa, integrações simuladas | 722 passaram, 13 pulados | **836 passaram, 13 pulados**, 50,90 s no fechamento |
 | JavaScript (`node:test`) | 36 passaram | **36 passaram**, sem falhas ou skips |
 | Ruff global | 223 ocorrências | **223 ocorrências**, mesma distribuição por código |
 | Ruff completo nos arquivos novos | Não aplicável | Passou nos módulos puros/helpers/testes; routers web têm 11 B008 transferidos das assinaturas existentes |
@@ -150,7 +169,7 @@ vazio pelo resumo atual; nenhuma alteração funcional foi misturada à extraç�
 
 Os 13 skips são 10 testes de provedores reais opt-in, dois de conversores Docker
 opt-in e um dependente de LibreOffice indisponível. Não foram transformados em
-mocks para fabricar aprovação. Os avisos passaram de 6001 para 6731 por execução
+mocks para fabricar aprovação. Os avisos passaram de 6001 para 6857 por execução
 dos cenários adicionais; são depreciações de `utcnow`, `on_event`, Jinja e AnyIO.
 O lint global continua reprovando por problemas anteriores; não se declara lint
 global limpo. Houve um I001 novo nos imports dos testes OCR; foi corrigido
@@ -187,6 +206,12 @@ acrescentando a verificação `00:01–01:01` após compromisso. O conjunto de a
 fila e OCR passou (32 testes); a repetição completa passou com 812/13. Nenhuma
 regra de agendamento foi flexibilizada para fazer a suíte passar.
 
+Etapas 10–11: 130 e 125 testes focados passaram antes e depois, respectivamente.
+Incluem 7 novos casos de rascunhos e 17 de resolução. Cobrem ambiguidades,
+remoções/correções, expiração de confirmação antiga, mesmo rascunho, cliente
+opcional, propostas incompatíveis e ausência de Task antes da confirmação.
+Os conjuntos se sobrepõem e não representam 255 testes exclusivos.
+
 ### Comandos de validação
 
 Executados no ambiente virtual do projeto. O override do carregamento padrão
@@ -198,6 +223,7 @@ node --test tests/js/*.test.mjs
 .venv/bin/ruff check app scripts tests --statistics
 .venv/bin/ruff check app/assistant/tool_protocol.py app/assistant/response_policy.py app/assistant/email/query_presentation.py app/assistant/service_reports.py app/services/local_pdf_ocr.py app/routers/proposal_form.py tests/test_assistant_tool_protocol.py tests/test_proposal_form.py
 .venv/bin/ruff check app/assistant/intent_routing.py tests/test_assistant_intent_routing.py
+.venv/bin/ruff check app/assistant/task_drafts.py app/assistant/entity_resolution.py tests/test_assistant_task_drafts.py tests/test_assistant_entity_resolution.py
 .venv/bin/ruff check app/assistant/day_presentation.py app/services/message_workbench_service.py app/routers/web_rendering.py tests/test_assistant_day_presentation.py tests/test_message_workbench_service.py tests/test_template_characterization.py tests/test_web_page_contracts.py
 .venv/bin/ruff check --select E9,F app/routers/web_clients.py app/routers/web_proposals.py tests/test_agenda_routes.py
 .venv/bin/ruff check --select E9,F app/assistant/evidence.py app/assistant/gemini.py app/assistant/ollama.py app/assistant/service.py app/services/document_index_service.py app/routers/pages.py tests/test_assistant_email_service.py tests/test_assistant_service_report.py tests/test_document_index_service.py
@@ -207,6 +233,10 @@ git diff --check
 
 ### Limitações e instância principal
 
+- Revisão consolidada das etapas 10–11 aprovada, com comparação AST independente
+  dos oito métodos extraídos e dos outros 53 métodos preservados. Não encontrou
+  regressão crítica ou importante. RF-05 foi confirmado como comportamento
+  preexistente, registrado separadamente; não foi corrigido oportunisticamente.
 - Revisão independente final aprovada novamente após as nove etapas, sem
   regressão crítica ou importante. Sugestão menor não bloqueante: o teste de
   ordem do apresentador não instrumenta mensagem/snapshot; a sequência atual
@@ -228,6 +258,8 @@ git diff --check
   (falha de conexão, sem resposta HTTP). A instância está fora do ar nessa
   verificação. Nenhum processo foi encerrado pela refatoração; a causa da parada
   não foi determinada. O resultado HTTP 200 acima é histórico, não estado atual.
+- **Rechecagem em 09/10/2026:** continua sem listener na 8013; `/healthz`
+  retornou HTTP 000/erro de conexão (curl código 7). O código novo não está ativo.
 - **Não houve reinício nem ativação do código novo.** `app/main.py` executa
   compatibilidade de schema e backfill na inicialização; o worker Yahoo consulta
   imediatamente antes de aguardar. Reiniciar nas condições atuais violaria as
