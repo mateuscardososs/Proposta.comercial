@@ -24,4 +24,9 @@ Task7 complete:41passedbefore/after (7novos), revisão specPASS/qualityAPPROVED;
 Follow-up minorTask7: fixture deestado de outroprovider agora inclui mesma mailbox; aguardavalidação focada/full após task9, sem alteração produção.
 Task8 complete:4componentesJinja,43Pythonbefore/after+36JS;4hashesHTMLoriginais iguais, fontes reconstruídos byteexact(base45654bytes/proposal34758bytes), revisãoAPPROVED. Sem teste visualmanual. Task9 em execução.
 HEAD externo8116be0 incorporouetapas5–7 e passouaterupstreamorigin; preservado, sem gitcommit/push do agente.
+Task9 complete:48before/after,23ASTsoriginais/rotetabela/OpenAPI iguais, settings/get_dbidentity; revisãoApproved. Clients/proposals/render separado;User/loginintocados.11B008relocated.
+Checkpoint final tasks1–9 código/revisões concluídos. HEAD externo95bc5c3 preservado (etapas8/9), branchahead1origin. No commits/push/merge peloagente.
+Primeirafull1fail811pass13skip por teste antigo relógio23:13/45minlivres vs60minestimados; fixapenas relógiofixtureeassertgapadicional,32focusedpass. Repeatfull812passed13skipped6731warnings48.84s;36JS;compile/Jinja/JSsyntax/diffcheckpass.
+Ruffglobal223baseline (novoI001testOCRresolvido, 11B008relocated); hashOpenAPI/DDL/authsame,97routes34tables;586testfunctionsnão removidas. Minorotherproviderstate resolvido/passed; minorordempresentationinstrumentationdeferredno prodchange/currentASTsame.
+Revisão consolidadaApprove sem regressãoCritical/Important. RF01 baselinefalseempty em fontefailed registrado separado; semcorreção funcional nesta refatoração. 8013off/initblocked; no restart/data/privateconfig/liveproviderchanges.
 Task9 planejada após templates: separar handlers web de clientes/propostas e renderer comum; plano docs/superpowers/plans/2026-10-08-refatoracao-rotas-web.md. Login/Usuários mantidos, APIs/geradores intocados.

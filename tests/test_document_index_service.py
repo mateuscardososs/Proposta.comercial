@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from pathlib import Path
-from types import SimpleNamespace
 import subprocess
 import tempfile
 import time
+from datetime import date, datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from docx import Document
