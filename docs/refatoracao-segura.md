@@ -16,9 +16,14 @@ linha de base registrada.
 Na continuação de 08/10, commits externos `b2825e6`, `8116be0` e `95bc5c3`
 incorporaram as etapas anteriores e foram preservados. Eles não foram criados
 pelo agente. Na retomada, o commit externo `ba245e2` incorporou o fechamento
-anterior. HEAD permanece `ba245e2`; a branch acompanha
-`origin/refactor/safe-modularization` e está dois commits à frente. As alterações
-locais finais são as etapas 10–11, documentação e testes, sem integração Git pelo agente.
+anterior. Em 09/10, o commit externo `b32c784` incorporou as etapas 10–11.
+Foi preservado, sem commit/push pelo agente durante a refatoração.
+
+O usuário encerrou novas refatorações e autorizou explicitamente commit, push
+e merge em 09/10. As etapas 12–13 já presentes no disco foram fechadas com
+validação antes da publicação, sem novas extrações. A autorização substitui
+somente a restrição anterior de integração Git/ativação; segredos e dados
+continuam protegidos.
 
 O [plano e a linha de base](superpowers/plans/2026-10-07-refatoracao-segura.md)
 contêm a tabela de rastreabilidade entre funcionalidades, módulos e testes.
@@ -46,13 +51,15 @@ e transportes simulados. Não houve chamadas reais ao Gemini, Yahoo, SMTP ou voz
 | Rascunhos de tarefas | Refatorados e validados | `task_drafts.py` concentra preparação, correção, esclarecimento e apresentação do rascunho. Mesma sessão e callbacks; confirmação, execução, commit, cancelamento e recuperação permanecem no orquestrador. |
 | Resolução de clientes e responsáveis | Refatorada e validada | `entity_resolution.py` conserva consultas, normalização, correspondências, opções e filtro de responsáveis ativos. Resolução estrita de serviços continua distinta do vínculo opcional de tarefas; não cadastra entidades. |
 | Indexação/OCR | Refatorada e validada com OCR simulado | `local_pdf_ocr.py` concentra subprocessos e renderização. Indexador conserva caminhos autorizados, fingerprint, páginas, reconciliação e persistência. Mac/Windows reais não foram testados nesta rodada. |
+| Apresentação da busca documental | Refatorada e validada | `document_presentation.py` concentra respostas, citações, fala e limitações. Busca autorizada continua no Assistente, antes da apresentação; sem novo acesso a arquivos. |
+| Extração textual DOCX | Refatorada e validada | `docx_text.py` lê texto/seções ZIP/XML; os wrappers públicos validam o pacote antes. Exceção compartilhada em `document_errors.py`, aliases preservados; upload, limites e persistência intocados. |
 | Formulário de propostas | Refatorado e validado nos testes focados | `routers/proposal_form.py` prepara defaults, prefill e parsing. O router conserva validação antecipada, redirects e ordem dos serviços. Construtor de payload de clonagem reutilizado após caracterização de equivalência. |
 | Rotas web de Clientes e Propostas | Refatoradas e validadas | `web_clients.py` e `web_proposals.py` têm handlers literais; `web_rendering.py` mantém o contexto compartilhado. `pages.router` conserva ordem, nomes e tags; aliases preservam entradas usadas pelos testes. APIs e geradores intocados. |
 | Consulta da fila de e-mails | Refatorada e validada | `message_workbench_service.py` concentra consultas locais por provider/mailbox, filtros, listas, contagens e vínculos. GET comprovado como SELECT-only; POSTs de revisão/confirmar permanecem iguais. |
 | Tarefas, Hoje, agenda, financeiro e promoções | Mantidas: serviços já separados por responsabilidade | Preservadas consultas determinísticas, snapshots, confirmação, transições e transportes. Cobertura na suíte existente; nenhuma alteração de regra de negócio. |
 | STT/TTS e captura de voz | Mantidos: componentes separados | Adaptadores locais, política, filas e máquina de estados JS preservados. Sem microfone real nesta rodada. |
 | Login e proteção de recursos | Não refatorados por decisão explícita do usuário | Arquivos e contratos preservados; testes sintéticos continuam na suíte. Ativação e login real da 8013 não são declarados validados. |
-| Núcleo transacional da conversa e persistência de serviços/documentos | Mantido por unidade de responsabilidade; não refatorado integralmente | O protocolo de requests, leases, tokens, confirmação, commit e reconciliação permanece no mesmo dono de sessão. Os adapters agora separam preparação/apresentação/resolução. Os serviços documentais têm políticas de recuperação diferentes; não criar helper genérico sem benefício demonstrado. O orquestrador ainda tem 2451 linhas; esta entrega não afirma modularização integral dele. |
+| Núcleo transacional da conversa e persistência de serviços/documentos | Mantido por unidade de responsabilidade; não refatorado integralmente | O protocolo de requests, leases, tokens, confirmação, commit e reconciliação permanece no mesmo dono de sessão. Os adapters agora separam preparação/apresentação/resolução. Os serviços documentais têm políticas de recuperação diferentes; não criar helper genérico sem benefício demonstrado. O orquestrador ainda tem 2373 linhas; novas extrações foram encerradas pelo usuário. |
 | Templates e navegação | Refatorados e validados por equivalência de HTML | Quatro componentes Jinja separam estilos/scripts do shell e formulário. Fontes reconstruídos são byte a byte idênticos; quatro hashes integrais e testes JS preservados. Sem redesenho e sem teste visual manual. |
 | Modelos, banco, jobs e inicialização | Não refatorados: restrição operacional | Não alterar schema, configuração, volumes ou efeitos de startup. Reiniciar a aplicação pode executar compatibilidade de banco, backfill, arquivamento e IMAP. |
 
@@ -62,7 +69,8 @@ repositório ou a atualização operacional estejam concluídos**.
 | Módulo original | Linhas antes | Linhas depois |
 |---|---:|---:|
 | `assistant/ollama.py` | 1171 | 524 |
-| `assistant/service.py` | 3665 | 2451 |
+| `assistant/service.py` | 3665 | 2373 |
+| `services/proposal_file_service.py` | 593 | 535 |
 | `services/document_index_service.py` | 467 | 309 |
 | `routers/pages.py` | 867 | 344 |
 | `templates_web/base.html` | 1269 | 104 |
@@ -155,9 +163,9 @@ vazio pelo resumo atual; nenhuma alteração funcional foi misturada à extraç�
 
 ### Resultados automatizados
 
-| Verificação | Linha de base | Resultado após as onze etapas |
+| Verificação | Linha de base | Resultado no fechamento autorizado |
 |---|---|---|
-| Suíte Python completa, integrações simuladas | 722 passaram, 13 pulados | **836 passaram, 13 pulados**, 50,90 s no fechamento |
+| Suíte Python completa, integrações simuladas | 722 passaram, 13 pulados | **860 passaram, 13 pulados**, 110,96 s no fechamento |
 | JavaScript (`node:test`) | 36 passaram | **36 passaram**, sem falhas ou skips |
 | Ruff global | 223 ocorrências | **223 ocorrências**, mesma distribuição por código |
 | Ruff completo nos arquivos novos | Não aplicável | Passou nos módulos puros/helpers/testes; routers web têm 11 B008 transferidos das assinaturas existentes |
@@ -212,6 +220,15 @@ remoções/correções, expiração de confirmação antiga, mesmo rascunho, cli
 opcional, propostas incompatíveis e ausência de Task antes da confirmação.
 Os conjuntos se sobrepõem e não representam 255 testes exclusivos.
 
+Etapa 12: 76 testes focados antes/depois; dez casos novos de apresentação.
+Etapa 13: 94 testes antes, com 14 casos novos; a interrupção encerrou novas
+extrações. O controlador validou o delta existente com a suíte completa acima
+e 77 testes focados (extração/upload/apresentação), depois repetiu o conjunto
+DOCX após explicitar aliases de compatibilidade (67 passaram). A coleta final
+confirmou 24 casos novos exclusivos entre os dois arquivos. Revisão independente
+aprovada: corpos AST equivalentes, validação antes de leitura, classe de erro
+única e nenhum contrato de persistência alterado.
+
 ### Comandos de validação
 
 Executados no ambiente virtual do projeto. O override do carregamento padrão
@@ -233,6 +250,9 @@ git diff --check
 
 ### Limitações e instância principal
 
+- Etapas 12–13 aprovadas na revisão final antes da publicação Git autorizada.
+  A ativação operacional precisa de verificação separada de backup, administrador,
+  startup e health check; commit/merge não comprovam aplicação em execução.
 - Revisão consolidada das etapas 10–11 aprovada, com comparação AST independente
   dos oito métodos extraídos e dos outros 53 métodos preservados. Não encontrou
   regressão crítica ou importante. RF-05 foi confirmado como comportamento

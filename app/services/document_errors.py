@@ -1,0 +1,2 @@
+class ProposalFileValidationError(ValueError):
+    pass
