@@ -9,6 +9,29 @@ fica desativado até receber configuração local e passar por teste explícito 
 Não fazem parte desta entrega: envio, exclusão, movimentação, alteração de flags, abertura de links,
 download de anexos, execução de anexos ou criação automática de tarefas.
 
+## Pendências revisáveis e confirmação
+
+A etapa posterior da inbox mantém a classificação e a fila existentes e acrescenta uma prévia
+estruturada para categorias operacionais. O extrator determinístico guarda apenas contraparte,
+valor, prazo/vencimento, data de emissão, número de nota, marcadores de evidência, campos ausentes
+e incertezas; não persiste o corpo integral nem trechos usados como evidência. Datas sem marcador
+contextual não viram vencimento, valores sem símbolo/moeda explícita não são inferidos e múltiplas
+opções ficam em branco para revisão.
+
+Pedido de orçamento de cliente pode originar um rascunho de tarefa. Cotação recebida do fornecedor
+segue como conferência, nunca como pedido de orçamento do cliente. Conta a pagar ou nota recebida
+pode originar proposta de lançamento; receber uma nota, sozinho, não prova que há valor a pagar.
+Nenhuma tarefa ou lançamento é criado na sincronização ou ao abrir a fila. O usuário revê os campos
+e confirma explicitamente; valor, fornecedor, emissão e vencimento são obrigatórios antes de criar
+conta a pagar pendente. A confirmação é idempotente e mantém a origem no registro de revisão/link.
+Lançamentos passam pelo serviço financeiro existente e recebem histórico de criação. Nenhum status
+de pagamento, baixa, emissão ou envio é executado.
+
+Para mensagens sincronizadas antes da extração estruturada, a migração de inicialização cria apenas
+pré-vias de revisão a partir do resumo que já está armazenado. A tela marca a extração como limitada
+porque o corpo antigo não é retido; não se faz uma releitura manual do Yahoo para preencher campos.
+O IMAP continua somente leitura.
+
 ## Causa da alegação sem evidência
 
 A proteção anterior verificava consultas de tarefas e alguns verbos de alteração. E-mail não era uma

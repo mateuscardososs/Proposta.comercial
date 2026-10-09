@@ -19,14 +19,11 @@ class TaskQueryCommand(BaseModel):
 
     tool: Literal["consultar_tarefas"] = "consultar_tarefas"
     status: TaskStatus | None = Field(default=None, description="Status exato, se citado.")
-    client: str | None = Field(
-        default=None, max_length=255, description="Nome do cliente como foi falado."
-    )
-    responsible: str | None = Field(
-        default=None, max_length=120, description="Nome do responsavel como foi falado."
-    )
+    client: str | None = Field(default=None, max_length=255, description="Nome do cliente como foi falado.")
+    responsible: str | None = Field(default=None, max_length=120, description="Nome do responsavel como foi falado.")
     overdue_only: bool = Field(
-        default=False, description="Use true somente quando o usuario pedir tarefas atrasadas."
+        default=False,
+        description="Use true somente quando o usuario pedir tarefas atrasadas.",
     )
     due_before: str | None = Field(
         default=None,
@@ -35,7 +32,8 @@ class TaskQueryCommand(BaseModel):
     )
     priorities: bool = Field(default=False, description="Use true se pedir prioridades.")
     include_completed: bool = Field(
-        default=False, description="Inclua concluidas apenas se solicitado explicitamente."
+        default=False,
+        description="Inclua concluidas apenas se solicitado explicitamente.",
     )
     limit: int = Field(default=20, ge=1, le=50, description="Quantidade maxima de resultados.")
 
@@ -52,11 +50,23 @@ class EmailQueryCommand(BaseModel):
     attention_only: bool = False
     awaiting_reply: bool = False
     reference: str | None = Field(default=None, max_length=160)
-    category: Literal[
-        "customer_quote_request", "vendor_quotation", "purchase_order", "invoice_request",
-        "invoice_received", "accounts_payable", "accounts_receivable", "payment_proof",
-        "service_request", "pending_reply", "informational", "other_review",
-    ] | None = None
+    category: (
+        Literal[
+            "customer_quote_request",
+            "vendor_quotation",
+            "purchase_order",
+            "invoice_request",
+            "invoice_received",
+            "accounts_payable",
+            "accounts_receivable",
+            "payment_proof",
+            "service_request",
+            "pending_reply",
+            "informational",
+            "other_review",
+        ]
+        | None
+    ) = None
     limit: int = Field(default=20, ge=1, le=50)
 
 
@@ -64,9 +74,7 @@ class TaskCreateCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool: Literal["criar_tarefa"] = "criar_tarefa"
-    title: str | None = Field(
-        default=None, max_length=255, description="Titulo curto extraido do pedido."
-    )
+    title: str | None = Field(default=None, max_length=255, description="Titulo curto extraido do pedido.")
     description: str = Field(default="", max_length=4000)
     status: TaskStatus = "a_fazer"
     due_date: str | None = Field(
@@ -74,14 +82,11 @@ class TaskCreateCommand(BaseModel):
         max_length=80,
         description="Prazo como foi falado; preserve amanha, sexta e depois de amanha.",
     )
-    client: str | None = Field(
-        default=None, max_length=255, description="Nome do cliente como foi falado."
-    )
-    responsible: str | None = Field(
-        default=None, max_length=120, description="Nome do responsavel como foi falado."
-    )
+    client: str | None = Field(default=None, max_length=255, description="Nome do cliente como foi falado.")
+    responsible: str | None = Field(default=None, max_length=120, description="Nome do responsavel como foi falado.")
     proposal_number: int | None = Field(default=None, ge=1)
     source_email_reference: str | None = Field(default=None, max_length=160)
+    estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 
 class UnsupportedCommand(BaseModel):
@@ -102,9 +107,7 @@ class ConversationCommand(BaseModel):
     message: str = Field(
         min_length=1,
         max_length=2400,
-        description=(
-            "Resposta natural em portugues, sem alegar consultas ou alteracoes que nao ocorreram."
-        ),
+        description=("Resposta natural em portugues, sem alegar consultas ou alteracoes que nao ocorreram."),
     )
 
 
@@ -124,23 +127,22 @@ class TaskDraftCorrectionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool: Literal["corrigir_tarefa"] = "corrigir_tarefa"
-    title: str | None = Field(
-        default=None, max_length=255, description="Novo titulo, somente se corrigido."
-    )
+    title: str | None = Field(default=None, max_length=255, description="Novo titulo, somente se corrigido.")
     due_date: str | None = Field(
         default=None,
         max_length=80,
         description="Novo prazo como foi falado, somente se corrigido.",
     )
-    client: str | None = Field(
-        default=None, max_length=255, description="Novo cliente, somente se corrigido."
-    )
+    client: str | None = Field(default=None, max_length=255, description="Novo cliente, somente se corrigido.")
     responsible: str | None = Field(
-        default=None, max_length=120, description="Novo responsavel, somente se corrigido."
+        default=None,
+        max_length=120,
+        description="Novo responsavel, somente se corrigido.",
     )
     clear_due_date: bool = False
     clear_client: bool = False
     clear_responsible: bool = False
+    estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
 
     @model_validator(mode="after")
     def require_change(self) -> TaskDraftCorrectionCommand:
@@ -153,6 +155,7 @@ class TaskDraftCorrectionCommand(BaseModel):
                 self.clear_due_date,
                 self.clear_client,
                 self.clear_responsible,
+                self.estimated_duration_minutes is not None,
             )
         ):
             raise ValueError("Informe ao menos uma correcao para o rascunho.")
@@ -167,6 +170,7 @@ class ServiceQueryCommand(BaseModel):
     execution_status: ServiceExecutionStatus | None = None
     administrative_status: ServiceAdministrativeStatus | None = None
     pending_only: bool = False
+    return_tasks_only: bool = False
     limit: int = Field(default=20, ge=1, le=50)
 
 
@@ -189,6 +193,13 @@ class ServiceEventDraftCommand(BaseModel):
     event_type: ServiceEventType | None = None
     occurred_on: str | None = Field(default=None, max_length=80)
     description: str | None = Field(default=None, max_length=4000)
+    equipment: str | None = Field(default=None, max_length=255)
+    reported_problem: str | None = Field(default=None, max_length=1000)
+    analysis: str | None = Field(default=None, max_length=1000)
+    work_performed: str | None = Field(default=None, max_length=1000)
+    return_on: str | None = Field(default=None, max_length=80)
+    return_task_id: int | None = Field(default=None, ge=1)
+    return_result: Literal["resolved", "still_pending"] | None = None
     execution_completed_explicitly: bool = False
     step_changes: list[ServiceStepChangeCommand] = Field(default_factory=list, max_length=5)
 
@@ -200,6 +211,11 @@ class ServiceDraftCorrectionCommand(BaseModel):
     event_id: int | None = Field(default=None, ge=1)
     occurred_on: str | None = Field(default=None, max_length=80)
     description: str | None = Field(default=None, max_length=4000)
+    equipment: str | None = Field(default=None, max_length=255)
+    reported_problem: str | None = Field(default=None, max_length=1000)
+    analysis: str | None = Field(default=None, max_length=1000)
+    work_performed: str | None = Field(default=None, max_length=1000)
+    return_on: str | None = Field(default=None, max_length=80)
     event_type: ServiceEventType | None = None
     client: str | None = Field(default=None, max_length=255)
     cancel_step_changes: bool = False
@@ -224,6 +240,37 @@ class ServiceReminderDraftCommand(BaseModel):
     reminders: list[ServiceReminderItemCommand] = Field(min_length=1, max_length=5)
 
 
+class PrepareServiceReportCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["preparar_relatorio_tecnico"] = "preparar_relatorio_tecnico"
+    service_call_id: int | None = Field(default=None, ge=1)
+    client: str | None = Field(default=None, max_length=255)
+    reference: str | None = Field(default=None, max_length=255)
+
+
+class CorrectServiceReportCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Literal["corrigir_previa_relatorio_tecnico"] = "corrigir_previa_relatorio_tecnico"
+    client_name: str | None = Field(default=None, max_length=255)
+    client_cnpj: str | None = Field(default=None, max_length=32)
+    client_phone: str | None = Field(default=None, max_length=50)
+    client_address: str | None = Field(default=None, max_length=1000)
+    equipment: str | None = Field(default=None, max_length=1000)
+    completion_date: str | None = Field(default=None, max_length=10)
+    reported_problem: str | None = Field(default=None, max_length=4000)
+    analysis: str | None = Field(default=None, max_length=4000)
+    work_performed: str | None = Field(default=None, max_length=4000)
+    verification_result: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def require_change(self) -> CorrectServiceReportCommand:
+        if not any(getattr(self, name) is not None for name in type(self).model_fields if name != "tool"):
+            raise ValueError("Informe ao menos um campo para corrigir a prévia.")
+        return self
+
+
 AssistantCommand = Annotated[
     TaskQueryCommand
     | EmailQueryCommand
@@ -236,7 +283,9 @@ AssistantCommand = Annotated[
     | ServiceQueryCommand
     | ServiceEventDraftCommand
     | ServiceDraftCorrectionCommand
-    | ServiceReminderDraftCommand,
+    | ServiceReminderDraftCommand
+    | PrepareServiceReportCommand
+    | CorrectServiceReportCommand,
     Field(discriminator="tool"),
 ]
 assistant_command_adapter = TypeAdapter(AssistantCommand)
@@ -247,6 +296,7 @@ class AssistantReply(BaseModel):
     kind: Literal["text", "confirmation", "clarification", "success", "error"]
     message: str
     retryable: bool = False
+    spoken_message: str | None = None
     action_id: int | None = None
     confirmation_token: str | None = None
     task_id: int | None = None
@@ -254,10 +304,25 @@ class AssistantReply(BaseModel):
     task_urls: list[str] = Field(default_factory=list)
     service_call_id: int | None = None
     service_url: str | None = None
+    proposal_url: str | None = None
     fields: dict[str, str] = Field(default_factory=dict)
     email_items: list[dict[str, object]] = Field(default_factory=list)
+    daily_brief: dict[str, object] | None = None
+    document_items: list[dict[str, object]] = Field(default_factory=list)
     consulted_interval: str | None = None
     limitations: list[str] = Field(default_factory=list)
+    report_fields: dict[str, str] = Field(default_factory=dict)
+    report_field_labels: dict[str, str] = Field(default_factory=dict)
+    report_missing_fields: list[str] = Field(default_factory=list)
+    report_candidates: list[dict[str, object]] = Field(default_factory=list)
+    report_id: int | None = None
+    report_docx_url: str | None = None
+    report_pdf_url: str | None = None
+
+
+class AssistantReportPreviewEditRequest(BaseModel):
+    confirmation_token: str = Field(min_length=20, max_length=100)
+    fields: dict[str, str]
 
 
 class AssistantMessageView(BaseModel):

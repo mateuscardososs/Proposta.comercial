@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_DATA = PROJECT_ROOT.parent / "local-data" / "adbalancas-8013"
 PRIVATE_RUNTIME_DIR = LOCAL_DATA / "private"
 DATABASE_URL_FILE = PRIVATE_RUNTIME_DIR / "database-url"
+AUTH_SESSION_SECRET_FILE = PRIVATE_RUNTIME_DIR / "auth-session-secret"
 RUNTIME_SETTINGS_FILE = PRIVATE_RUNTIME_DIR / "settings.json"
 OLLAMA_URL = "http://127.0.0.1:11434"
 DEFAULT_OLLAMA_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
@@ -150,6 +151,32 @@ def read_private_database_url(path: Path = DATABASE_URL_FILE) -> str:
         raise RuntimeError("A conexao privada nao esta restrita ao loopback local.")
     if parsed.database != "propostas_db":
         raise RuntimeError("A conexao privada nao aponta para propostas_db.")
+    return value
+
+
+def save_private_auth_session_secret(secret: str, *, path: Path = AUTH_SESSION_SECRET_FILE) -> None:
+    if len(secret) < 32:
+        raise ValueError("A chave de sessão precisa ter pelo menos 32 caracteres.")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as secret_file:
+            secret_file.write(secret)
+            secret_file.flush()
+            os.fsync(secret_file.fileno())
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def read_private_auth_session_secret(path: Path = AUTH_SESSION_SECRET_FILE) -> str:
+    metadata = path.stat()
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise RuntimeError("O arquivo privado da sessão precisa ter permissão 0600.")
+    value = path.read_text(encoding="utf-8").strip()
+    if len(value) < 32:
+        raise RuntimeError("A chave privada de sessão não está configurada corretamente.")
     return value
 
 

@@ -20,6 +20,14 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
 from app.models import Client, Proposal, User
+from app.services import docx_text as _docx_text
+from app.services.docx_text import (
+    NS,
+    TAG_ATTRIBUTE,
+    extract_validated_docx_sections,
+    extract_validated_docx_text,
+)
+from app.services.document_errors import ProposalFileValidationError
 from app.services import numbering_service, pdf_import_service, pdf_service, proposal_service, storage_service
 from app.utils.currency import quantize_2
 from app.utils.formatters import decimal_from_str
@@ -30,14 +38,8 @@ DOCX_MAX_ENTRIES = 500
 DOCX_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 DOCX_TOTAL_TAG = "AD_VALOR_TOTAL"
 
-WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-NS = {"w": WORD_NS}
-TAG_ATTRIBUTE = f"{{{WORD_NS}}}val"
-
-
-class ProposalFileValidationError(ValueError):
-    pass
-
+WORD_NS = _docx_text.WORD_NS
+_xml_text = _docx_text._xml_text
 
 class ProposalFileConflictError(ProposalFileValidationError):
     pass
@@ -135,25 +137,15 @@ def validate_upload(
     return ValidatedUpload(safe_filename, suffix, payload)  # type: ignore[arg-type]
 
 
-def _xml_text(xml_bytes: bytes) -> str:
-    try:
-        root = ElementTree.fromstring(xml_bytes)
-    except ElementTree.ParseError as exc:
-        raise ProposalFileValidationError("O DOCX contém XML inválido.") from exc
-    return "\n".join(
-        text
-        for node in root.findall(".//w:t", NS)
-        if (text := (node.text or "").strip())
-    )
-
-
 def extract_docx_text(payload: bytes) -> str:
     _validate_docx_package(payload)
-    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-        names = ["word/document.xml"]
-        names.extend(sorted(name for name in archive.namelist() if re.fullmatch(r"word/header\d+\.xml", name)))
-        names.extend(sorted(name for name in archive.namelist() if re.fullmatch(r"word/footer\d+\.xml", name)))
-        return "\n".join(_xml_text(archive.read(name)) for name in names).strip()
+    return extract_validated_docx_text(payload)
+
+
+def extract_docx_sections(payload: bytes) -> list[tuple[str, str]]:
+    """Extract paragraph groups with their heading when the DOCX provides one."""
+    _validate_docx_package(payload)
+    return extract_validated_docx_sections(payload)
 
 
 def _parse_marker_total(raw_value: str) -> Decimal:

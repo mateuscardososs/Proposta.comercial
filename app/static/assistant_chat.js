@@ -157,7 +157,7 @@ export function bootstrapAssistantChat(root = document) {
       const confirm = document.createElement("button");
       confirm.type = "button";
       confirm.className = "btn btn-primary";
-      confirm.textContent = "Confirmar";
+      confirm.textContent = details.report_fields ? "Confirmar e gerar DOCX/PDF" : "Confirmar";
       const cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "btn btn-ghost";
@@ -166,6 +166,49 @@ export function bootstrapAssistantChat(root = document) {
       cancel.addEventListener("click", () => runAction(details, "cancel", controls));
       controls.append(confirm, cancel);
       article.appendChild(controls);
+    }
+    if (Array.isArray(details.report_candidates) && details.report_candidates.length) {
+      const list = document.createElement("div");
+      list.className = "assistant-confirm-actions";
+      for (const candidate of details.report_candidates) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn btn-ghost";
+        button.textContent = `Preparar chamado #${candidate.id} · ${candidate.client || "Cliente não informado"} · ${candidate.summary || "Sem resumo"}`;
+        button.addEventListener("click", () => controller.send(
+          `Prepare o relatório técnico do chamado #${candidate.id}`,
+        ));
+        list.appendChild(button);
+      }
+      article.appendChild(list);
+    }
+    if (details.action_id && details.confirmation_token && details.report_fields) {
+      const form = document.createElement("form");
+      form.className = "assistant-report-preview";
+      const missing = new Set(details.report_missing_fields || []);
+      for (const [field, value] of Object.entries(details.report_fields)) {
+        const label = document.createElement("label");
+        label.className = missing.has(field) ? "assistant-report-missing" : "";
+        const caption = document.createElement("span");
+        caption.textContent = `${details.report_field_labels?.[field] || field}${missing.has(field) ? " · revisar (sem informação registrada)" : ""}`;
+        const input = document.createElement("textarea");
+        input.name = field;
+        input.dataset.reportField = field;
+        input.value = value || "";
+        input.rows = field === "client_address" || ["reported_problem", "analysis", "work_performed", "verification_result"].includes(field) ? 3 : 1;
+        label.append(caption, input);
+        form.appendChild(label);
+      }
+      const update = document.createElement("button");
+      update.type = "submit";
+      update.className = "btn btn-ghost";
+      update.textContent = "Atualizar prévia e pedir nova confirmação";
+      form.appendChild(update);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        runReportPreviewEdit(details, form, update);
+      });
+      article.appendChild(form);
     }
     if (details.task_url) {
       const controls = document.createElement("div");
@@ -177,7 +220,7 @@ export function bootstrapAssistantChat(root = document) {
       controls.appendChild(link);
       article.appendChild(controls);
     }
-    if (details.service_url || (Array.isArray(details.task_urls) && details.task_urls.length)) {
+    if (details.service_url || details.proposal_url || (Array.isArray(details.task_urls) && details.task_urls.length)) {
       const controls = document.createElement("div");
       controls.className = "assistant-confirm-actions";
       if (details.service_url) {
@@ -187,11 +230,35 @@ export function bootstrapAssistantChat(root = document) {
         link.textContent = "Abrir chamado";
         controls.appendChild(link);
       }
+      if (details.proposal_url) {
+        const link = document.createElement("a");
+        link.className = "btn btn-ghost";
+        link.href = details.proposal_url;
+        link.textContent = "Preparar proposta";
+        controls.appendChild(link);
+      }
       for (const [index, url] of details.task_urls.entries()) {
         const link = document.createElement("a");
         link.className = "btn btn-ghost";
         link.href = url;
         link.textContent = details.task_urls.length > 1 ? `Abrir lembrete ${index + 1}` : "Abrir tarefa no quadro";
+        controls.appendChild(link);
+      }
+      article.appendChild(controls);
+    }
+    if (details.report_docx_url || details.report_pdf_url) {
+      const controls = document.createElement("div");
+      controls.className = "assistant-confirm-actions";
+      for (const [url, label] of [
+        [details.report_docx_url, "Baixar relatório DOCX"],
+        [details.report_pdf_url, "Baixar relatório PDF"],
+      ]) {
+        if (!url) continue;
+        const link = document.createElement("a");
+        link.className = "btn btn-ghost";
+        link.href = url;
+        link.textContent = label;
+        link.setAttribute("download", "");
         controls.appendChild(link);
       }
       article.appendChild(controls);
@@ -250,6 +317,81 @@ export function bootstrapAssistantChat(root = document) {
       }
       article.appendChild(list);
     }
+    if (details.daily_brief && Array.isArray(details.daily_brief.sources)) {
+      const brief = document.createElement("div");
+      brief.className = "assistant-email-list assistant-daily-brief";
+      const heading = document.createElement("strong");
+      const appTimezone = details.daily_brief.timezone || undefined;
+      const queriedAt = details.daily_brief.queried_at
+        ? new Date(details.daily_brief.queried_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: appTimezone })
+        : "horário indisponível";
+      heading.textContent = `Detalhamento consultado em ${queriedAt}`;
+      brief.appendChild(heading);
+      const items = Array.isArray(details.daily_brief.items) ? details.daily_brief.items : [];
+      if (items.length) {
+        const ordered = document.createElement("section");
+        ordered.className = "assistant-email-card";
+        const orderedTitle = document.createElement("strong");
+        orderedTitle.textContent = "Itens priorizados por prazo e status";
+        ordered.appendChild(orderedTitle);
+        const sourceNames = {
+          tasks: "Tarefa",
+          services: "Serviço",
+          schedule: "Agenda",
+          payables: "Conta a pagar",
+          receivables: "Conta a receber",
+        };
+        for (const item of items) {
+          const row = document.createElement("p");
+          const link = document.createElement("a");
+          link.href = item.href || "/";
+          link.textContent = `${sourceNames[item.source] || "Item"}: ${item.title || "Sem título"}`;
+          row.appendChild(link);
+          const metadata = [item.status, item.priority, item.due_date, item.client, item.supplier_or_client]
+            .filter(Boolean).join(" · ");
+          if (metadata) row.append(` — ${metadata}`);
+          ordered.appendChild(row);
+          if (item.start && item.end) {
+            const block = document.createElement("small");
+            const start = new Date(item.start).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: appTimezone });
+            const end = new Date(item.end).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: appTimezone });
+            const duration = item.duration_minutes ? ` · ${item.duration_minutes} min` : "";
+            const estimate = item.duration_is_estimate ? " · duração estimada" : "";
+            block.textContent = `${start}–${end}${duration}${estimate}`;
+            ordered.appendChild(block);
+          }
+          if (item.reason) {
+            const reason = document.createElement("small");
+            reason.textContent = item.reason;
+            ordered.appendChild(reason);
+          }
+        }
+        brief.appendChild(ordered);
+      }
+      for (const source of details.daily_brief.sources) {
+        const card = document.createElement("section");
+        card.className = "assistant-email-card";
+        const title = document.createElement("strong");
+        const sourceLink = document.createElement("a");
+        sourceLink.href = source.href || "/";
+        sourceLink.textContent = `${source.label || "Fonte"} · ${source.count ?? 0}`;
+        title.appendChild(sourceLink);
+        card.appendChild(title);
+        const state = document.createElement("p");
+        const stateLabel = {
+          success: "Atualizada",
+          empty: "Consulta concluída, sem itens",
+          partial: "Parcial ou possivelmente desatualizada",
+          failed: "Falha na consulta",
+          unavailable: "Indisponível",
+          not_configured: "Disponibilidade não configurada",
+        }[source.state] || source.state || "Estado desconhecido";
+        state.textContent = `${stateLabel}. ${source.detail || ""}`;
+        card.appendChild(state);
+        brief.appendChild(card);
+      }
+      article.appendChild(brief);
+    }
     history.appendChild(article);
     history.scrollTop = history.scrollHeight;
   }
@@ -269,7 +411,9 @@ export function bootstrapAssistantChat(root = document) {
     if (controller.busy) return;
     controls.querySelectorAll("button").forEach((button) => { button.disabled = true; });
     controller._setBusy(true);
-    setBusy(true, action === "confirm" ? "Salvando a tarefa..." : "Cancelando...");
+    setBusy(true, action === "confirm"
+      ? (details.report_fields ? "Gerando relatório técnico..." : "Salvando a tarefa...")
+      : "Cancelando...");
     try {
       const response = await fetchWithTimeout(window.fetch.bind(window), `/api/assistant/actions/${details.action_id}/${action}`, {
         method: "POST",
@@ -281,6 +425,33 @@ export function bootstrapAssistantChat(root = document) {
     } catch (error) {
       appendMessage("assistant", error.message, "error");
       controls.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+    } finally {
+      controller._setBusy(false);
+      input.focus();
+    }
+  }
+
+  async function runReportPreviewEdit(details, form, submitButton) {
+    if (controller.busy) return;
+    const fields = {};
+    form.querySelectorAll("[data-report-field]").forEach((input) => {
+      fields[input.dataset.reportField] = input.value;
+    });
+    submitButton.disabled = true;
+    controller._setBusy(true);
+    setBusy(true, "Atualizando prévia; será necessária nova confirmação...");
+    try {
+      const response = await fetchWithTimeout(window.fetch.bind(window),
+        `/api/assistant/actions/${details.action_id}/report-preview`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmation_token: details.confirmation_token, fields }),
+        }, 95000);
+      const payload = await responseJson(response);
+      appendMessage("assistant", payload.message, payload.kind, payload);
+    } catch (error) {
+      appendMessage("assistant", error.message, "error");
+      submitButton.disabled = false;
     } finally {
       controller._setBusy(false);
       input.focus();

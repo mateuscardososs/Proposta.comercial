@@ -1,4 +1,4 @@
-import { fetchWithTimeout, getAssistantChat, responseJson } from "/assets/assistant_chat.js?v=voice-agenda-transcript-20261003-1";
+import { fetchWithTimeout, getAssistantChat, responseJson } from "/assets/assistant_chat.js?v=daily-brief-20261007-1";
 import {
   VoiceSessionController,
   createBrowserAudio,
@@ -54,7 +54,7 @@ export async function bootstrapAssistantVoice(root = document, chat = getAssista
     const response = await fetchWithTimeout(window.fetch.bind(window), "/api/assistant/voice/speech", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: reply.message, kind: reply.kind }),
+      body: JSON.stringify({ text: reply.spoken_message || reply.message, kind: reply.kind }),
     }, 40000);
     if (!response.ok) {
       let detail = "Não foi possível gerar o áudio local.";

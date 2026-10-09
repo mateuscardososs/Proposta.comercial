@@ -47,6 +47,13 @@ class ServiceEventCreate(BaseModel):
     event_type: ServiceEventType
     occurred_on: date
     description: str = Field(min_length=1, max_length=4000)
+    equipment: str | None = Field(default=None, max_length=255)
+    reported_problem: str | None = Field(default=None, max_length=1000)
+    analysis: str | None = Field(default=None, max_length=1000)
+    work_performed: str | None = Field(default=None, max_length=1000)
+    return_on: date | None = None
+    return_task_id: int | None = Field(default=None, ge=1)
+    return_result: Literal["resolved", "still_pending"] | None = None
     step_changes: list[ServiceStepChange] = Field(default_factory=list, max_length=5)
 
 
@@ -66,11 +73,27 @@ class ServiceEventCorrectionCreate(BaseModel):
         return self
 
 
+class ServiceTechnicalReportFields(BaseModel):
+    """Human-reviewed narrative fields; they never mutate service history."""
+
+    client_name: str = Field(default="", max_length=255)
+    client_cnpj: str = Field(default="", max_length=32)
+    client_phone: str = Field(default="", max_length=50)
+    client_address: str = Field(default="", max_length=1000)
+    equipment: str = Field(default="", max_length=1000)
+    completion_date: str = Field(default="", max_length=10)
+    reported_problem: str = Field(default="", max_length=4000)
+    analysis: str = Field(default="", max_length=4000)
+    work_performed: str = Field(default="", max_length=4000)
+    verification_result: str = Field(default="", max_length=4000)
+
+
 class ServiceCallQuery(BaseModel):
     client_id: int | None = Field(default=None, ge=1)
     execution_status: ServiceExecutionStatus | None = None
     administrative_status: ServiceAdministrativeStatus | None = None
     pending_only: bool = False
+    return_tasks_only: bool = False
     limit: int = Field(default=20, ge=1, le=50)
 
 
@@ -129,7 +152,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    senha: str = Field(min_length=4, default="123456")
+    senha: str = Field(min_length=12)
 
 
 class UserRead(ORMModel, UserBase):
@@ -336,6 +359,7 @@ class TaskBase(BaseModel):
     proposal_id: int | None = None
     user_id: int | None = None
     prazo: date | None = None
+    estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 
 class TaskCreate(TaskBase):
@@ -352,6 +376,7 @@ class TaskUpdate(BaseModel):
     proposal_id: int | None = None
     user_id: int | None = None
     prazo: date | None = None
+    estimated_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
     ordem: int | None = None
 
 

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
@@ -13,8 +12,144 @@ from app.models import (
     Lancamento,
     ServiceCall,
     ServiceWorkflowStep,
-    Task,
 )
+from app.services import board_service
+
+TASK_STATUS_LABELS = {
+    "a_fazer": "A fazer",
+    "em_andamento": "Em andamento",
+    "servico_feito_falta_nota_pedido": "Serviço feito — falta nota/pedido",
+    "aguardando_cliente": "Aguardando cliente",
+    "concluido": "Concluído",
+}
+
+
+@dataclass(frozen=True)
+class TaskPlanItem:
+    task_id: int
+    title: str
+    status: str
+    status_label: str
+    priority_label: str
+    due_date: date | None
+    client_name: str | None
+    client_link_status: str
+    reason: str
+    section_key: str
+    section_label: str
+    href: str
+
+
+@dataclass(frozen=True)
+class TaskPlanSection:
+    key: str
+    label: str
+    items: tuple[TaskPlanItem, ...]
+
+
+@dataclass(frozen=True)
+class TaskDayPlan:
+    today: date
+    items: tuple[TaskPlanItem, ...]
+    sections: tuple[TaskPlanSection, ...]
+    open_count: int
+    due_today_count: int
+    overdue_count: int
+
+
+def get_task_day_plan(db: Session, *, today: date) -> TaskDayPlan:
+    """Build a read-only, complete sequence from the same tasks shown on the board."""
+    urgency_markers = (
+        "urgente",
+        "prioridade alta",
+        "alta prioridade",
+        "critico",
+        "critica",
+    )
+    section_labels = {
+        "overdue": "Atrasadas",
+        "today": "Com prazo hoje",
+        "explicit_urgency": "Urgência explícita",
+        "admin_follow_up": "Execução concluída, etapa administrativa pendente",
+        "in_progress": "Em andamento",
+        "upcoming": "Próximos prazos",
+        "no_deadline": "Sem prazo",
+        "waiting_customer": "Aguardando cliente",
+    }
+    section_order = tuple(section_labels)
+    ranked: list[tuple[tuple[int, date, int, int, int], TaskPlanItem]] = []
+    for task in board_service.get_tasks(db):
+        if task.status == "concluido":
+            continue
+        text = f"{task.titulo} {task.descricao}".casefold()
+        explicit_urgency = any(marker in text for marker in urgency_markers)
+        if task.prazo is not None and task.prazo < today:
+            key, reason = "overdue", f"Tarefa atrasada: prazo vencido em {task.prazo:%d/%m/%Y}; permanece incompleta."
+        elif task.prazo == today:
+            key, reason = "today", "Prazo explicitamente cadastrado para hoje."
+        elif explicit_urgency:
+            key, reason = "explicit_urgency", "O título ou a descrição marca urgência explicitamente; não há prazo vencido ou de hoje."
+        elif task.status == "servico_feito_falta_nota_pedido":
+            key, reason = "admin_follow_up", "O status registra execução concluída com etapa documental pendente."
+        elif task.status == "em_andamento":
+            key, reason = "in_progress", "A tarefa já está em andamento e não tem prazo vencido ou de hoje."
+        elif task.prazo is not None:
+            key, reason = "upcoming", f"Próximo prazo registrado: {task.prazo:%d/%m/%Y}."
+        elif task.status == "aguardando_cliente":
+            key, reason = "waiting_customer", "O status registra espera por retorno do cliente; não há data de retorno cadastrada."
+        else:
+            key, reason = "no_deadline", "Tarefa aberta sem prazo registrado; aparece depois das tarefas datadas e das etapas em andamento."
+
+        client_name = task.client.razao_social if task.client else task.client_name
+        link_status = (
+            "linked"
+            if task.client
+            else "pending_review"
+            if client_name
+            else task.client_link_status
+        )
+        item = TaskPlanItem(
+            task_id=task.id,
+            title=task.titulo,
+            status=task.status,
+            status_label=TASK_STATUS_LABELS.get(task.status, task.status),
+            priority_label="Urgente" if explicit_urgency else "Não definida",
+            due_date=task.prazo,
+            client_name=client_name,
+            client_link_status=link_status,
+            reason=reason,
+            section_key=key,
+            section_label=section_labels[key],
+            href=f"/web/board/{task.id}/edit",
+        )
+        ranked.append(
+            (
+                (
+                    section_order.index(key),
+                    task.prazo or date.max,
+                    0 if explicit_urgency else 1,
+                    task.ordem,
+                    task.id,
+                ),
+                item,
+            )
+        )
+
+    ranked.sort(key=lambda pair: pair[0])
+    items = tuple(item for _, item in ranked)
+    sections = tuple(
+        TaskPlanSection(key, section_labels[key], tuple(item for item in items if item.section_key == key))
+        for key in section_order
+        if any(item.section_key == key for item in items)
+    )
+    return TaskDayPlan(
+        today=today,
+        items=items,
+        sections=sections,
+        open_count=len(items),
+        due_today_count=sum(item.due_date == today for item in items),
+        overdue_count=sum(item.due_date is not None and item.due_date < today for item in items),
+    )
 
 
 @dataclass(frozen=True)
@@ -45,6 +180,7 @@ class TodayAgenda:
     through: date
     items: list[TodayItem]
     summary: TodaySummary
+    task_plan: TaskDayPlan
 
 
 def get_today_agenda(
@@ -58,49 +194,27 @@ def get_today_agenda(
     through = reference + timedelta(days=max(1, min(31, lookahead_days)))
     items: list[TodayItem] = []
 
+    task_plan = get_task_day_plan(db, today=reference)
+
     linked_tasks = {
         row.task_id
         for row in db.query(EmailTaskLink.task_id)
         .filter(EmailTaskLink.task_id.is_not(None))
         .all()
     }
-    tasks = (
-        db.query(Task)
-        .options(joinedload(Task.client))
-        .filter(Task.status != "concluido")
-        .filter(
-            or_(
-                Task.prazo <= through,
-                Task.id.in_(linked_tasks) if linked_tasks else Task.id == -1,
-            )
-        )
-        .order_by(Task.prazo.asc().nullslast(), Task.id.asc())
-        .all()
-    )
-    for task in tasks:
-        overdue = task.prazo is not None and task.prazo < reference
-        due_today = task.prazo == reference
-        if overdue:
-            reason, rank = f"Tarefa incompleta atrasada desde {task.prazo:%d/%m/%Y}.", 0
-        elif due_today:
-            reason, rank = "Prazo explícito para hoje.", 1
-        elif task.prazo:
-            reason, rank = f"Prazo explícito próximo: {task.prazo:%d/%m/%Y}.", 3
-        else:
-            reason, rank = (
-                "Tarefa aberta sem prazo; aparece após os compromissos datados.",
-                4,
-            )
+    for plan_item in task_plan.items:
+        if plan_item.due_date is not None and plan_item.due_date > through and plan_item.task_id not in linked_tasks:
+            continue
         items.append(
             TodayItem(
                 source_type="task",
-                source_id=task.id,
-                title=task.titulo,
-                href=f"/web/board/{task.id}/edit",
-                reason=reason,
-                due_date=task.prazo,
-                rank=rank,
-                email_origin=task.id in linked_tasks,
+                source_id=plan_item.task_id,
+                title=plan_item.title,
+                href=plan_item.href,
+                reason=plan_item.reason,
+                due_date=plan_item.due_date,
+                rank=0 if plan_item.section_key == "overdue" else 1 if plan_item.section_key == "today" else 3 if plan_item.due_date else 4,
+                email_origin=plan_item.task_id in linked_tasks,
             )
         )
 
@@ -195,6 +309,7 @@ def get_today_agenda(
         today=reference,
         through=through,
         items=items,
+        task_plan=task_plan,
         summary=TodaySummary(
             overdue=sum(
                 item.due_date is not None and item.due_date < reference

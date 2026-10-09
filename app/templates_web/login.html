@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · AD Balanças</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #18232d; background: #f3f4f5; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; }
+    main { width: min(100%, 420px); padding: 30px; border: 1px solid #dfe4e8; border-radius: 16px; background: #fff; box-shadow: 0 16px 48px #183f621c; }
+    h1 { margin: 0; color: #183f62; font-size: 24px; }
+    p { color: #64717d; line-height: 1.5; }
+    label { display: grid; gap: 6px; margin-top: 16px; font-weight: 650; }
+    input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #cbd2d8; border-radius: 8px; font: inherit; }
+    input:focus { outline: 3px solid #27735540; border-color: #277355; }
+    button { width: 100%; min-height: 46px; margin-top: 22px; border: 0; border-radius: 8px; background: #183f62; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    .error { margin-top: 16px; padding: 10px 12px; border-radius: 8px; color: #8b202b; background: #fdecee; }
+    .brand { margin-bottom: 18px; color: #277355; font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">AD Balanças · acesso interno</div>
+    <h1>Entrar</h1>
+    <p>Use sua conta autorizada para acessar a aplicação.</p>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="/login" autocomplete="on">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label for="email">E-mail</label>
+      <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+      <label for="password">Senha</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Entrar</button>
+    </form>
+  </main>
+</body>
+</html>

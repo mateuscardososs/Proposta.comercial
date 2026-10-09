@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from app.assistant.dates import normalize_text
-from app.assistant.provider import ProviderToolResult
+from app.assistant.provider import ProviderResponseError, ProviderToolResult
 
 
 def references_prior_email_context(message: str) -> bool:
@@ -158,6 +158,67 @@ def validate_execution_claims(
     )
     if _positive_claim(normalized, unsupported_action_patterns):
         raise ValueError("A resposta alegou uma operacao sem evidencia da ferramenta correspondente.")
+
+
+def validate_conversation_claims(
+    message: str,
+    *,
+    tool_results: Sequence[ProviderToolResult],
+    current_message: str,
+    historical_email_evidence: Callable[[], bool],
+) -> None:
+    """Validate conversation claims; historical evidence is fetched lazily by the caller."""
+    internal_markers = (
+        "HISTORICO_JSON=",
+        "CAPACIDADES_JSON=",
+        "ULTIMA_RESPOSTA_ASSISTENTE=",
+        "ACAO_PENDENTE_JSON=",
+        "RESULTADOS_FERRAMENTAS_JSON=",
+        "PEDIDO_ATUAL=",
+        "INSTRUCAO_DE_SAIDA=",
+    )
+    if any(marker in message for marker in internal_markers):
+        raise ProviderResponseError("Resposta expos contexto interno do provedor.")
+    try:
+        normalized_message = normalize_text(message)
+        historical_label = bool(
+            re.search(
+                r"\b(?:resultado|consulta|mensagens?|e[- ]?mails?)\s+(?:anterior|anteriores)\b|"
+                r"\bapresentad[oa]s? anteriormente\b",
+                normalized_message,
+            )
+        )
+        validate_execution_claims(
+            message,
+            tool_results=tool_results,
+            allow_historical_email_claim=(
+                historical_label and historical_email_evidence()
+            ),
+        )
+        has_current_email_evidence = any(result.tool == "consultar_emails" for result in tool_results)
+        if (
+            not has_current_email_evidence
+            and references_prior_email_context(current_message)
+            and historical_email_evidence()
+            and not historical_label
+        ):
+            raise ValueError("Fatos historicos de e-mail devem ser identificados como resultado anterior.")
+    except ValueError as exc:
+        raise ProviderResponseError(str(exc)) from exc
+    normalized = normalize_text(message)
+    ungrounded_claims = (
+        r"\b(criei|alterei|atualizei|consultei|executei|exclui|apaguei|salvei|registrei)\b",
+        r"\b(tarefa|acao|registro)s?\s+(foi|foram)\s+(criad[ao]s?|alterad[ao]s?|excluid[ao]s?)\b",
+        r"\btarefas?\b.{0,80}\b(?:sera|serao|vai ser|vao ser)\s+criad[ao]s?\b",
+        r"\b(encontrei|localizei)\b.{0,80}\btarefas?\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in ungrounded_claims):
+        if not tool_results or re.search(
+            r"\b(criei|alterei|atualizei|executei|exclui|apaguei|salvei|registrei)\b|"
+            r"\btarefas?\b.{0,80}\b(?:sera|serao|vai ser|vao ser)\s+criad[ao]s?\b",
+            normalized,
+        ):
+            raise ProviderResponseError("Resposta conversacional alegou uma operacao ou consulta nao executada.")
 
 
 def _positive_claim(normalized: str, patterns: Sequence[str]) -> bool:

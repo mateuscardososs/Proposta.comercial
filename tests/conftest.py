@@ -13,6 +13,7 @@ os.environ["OUTPUT_DIR"] = str(Path(gettempdir()) / "proposta_comercial_test_out
 os.environ["TEMPLATE_DOC_PATH"] = str(
     Path(gettempdir()) / "proposta_comercial_test_templates" / "proposta_template.docx"
 )
+os.environ["AUTH_ENABLED"] = "false"
 
 from app.db import Base, SessionLocal, engine, ensure_service_history_guards_for_engine  # noqa: E402
 

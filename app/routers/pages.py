@@ -1,197 +1,74 @@
 from __future__ import annotations
 
 from datetime import datetime
-from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import and_, func, not_, or_
-from sqlalchemy.orm import Session, joinedload
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
-from app.assistant.email.classification import OPERATIONAL_CATEGORIES
+from app.assistant.email import classification as _email_classification
+from app.assistant.email.contracts import EmailMessageRecord
+from app.assistant.email.extraction import extract_operational_fields
 from app.config import get_settings
 from app.db import get_db
 from app.models import (
-    Client,
+    EmailActionDraft,
     EmailSyncState,
-    EmailTaskLink,
     InboxEmail,
-    Proposal,
-    ServiceCall,
     User,
 )
+from app.routers import proposal_form, web_clients, web_proposals, web_rendering
 from app.routers.users import hash_password
+from app.routers.web_rendering import render_template
 from app.schemas import (
-    ProposalCreate,
-    ProposalItemCreate,
-    ScheduleItemCreate,
-    TaskCreate,
     UserCreate,
 )
 from app.services import (
-    board_service,
     dashboard_service,
-    proposal_service,
-    suggestion_service,
 )
+from app.services import message_workbench_service as _message_workbench_service
+from app.services.daily_schedule_service import build_daily_schedule
+from app.services.email_review_service import ensure_email_action_draft
+from app.services.message_workbench_service import get_message_workbench
 from app.services.today_service import get_today_agenda
-from app.utils.currency import format_brl
-from app.utils.dates import format_date_br
-from app.utils.formatters import decimal_from_str
 
 router = APIRouter(tags=["pages"])
 settings = get_settings()
 
-
-def render_template(request: Request, template_name: str, context: dict) -> object:
-    templates = request.app.state.templates
-    base_context = {
-        "request": request,
-        "format_brl": format_brl,
-        "format_date_br": format_date_br,
-    }
-    base_context.update(context)
-    return templates.TemplateResponse(template_name, base_context)
-
-
-def _default_form_data() -> dict[str, object]:
-    return {
-        "client_id": "",
-        "user_id": "",
-        "atencao": "",
-        "ref_cliente": "",
-        "objeto_tipo": "manutencao_calibracao",
-        "objeto_texto": "",
-        "canal": "",
-        "contato_nome": "",
-        "contato_datahora": "",
-        "equipamento_nome": "",
-        "equipamento_texto": "",
-        "local_servico": "",
-        "km_ida": "0",
-        "km_volta": "0",
-        "km_valor": str(settings.default_km_value),
-        "alim_tecnicos": "1",
-        "alim_refeicoes": "0",
-        "alim_valor": "0",
-        "condicao_pagamento_dias": "0",
-        "imposto_percentual": "0",
-        "itens": [{"descricao": "", "unidade": "UN", "qtd": "1", "valor_unit": "0"}],
-        "schedule_items": [{"dia_label": "", "descricao": "", "horas_servico": ""}],
-    }
-
-
-def _proposal_to_payload(source: Proposal, user_id: int | None = None) -> ProposalCreate:
-    return ProposalCreate(
-        client_id=source.client_id,
-        user_id=user_id or source.user_id,
-        atencao=source.atencao,
-        ref_cliente=source.ref_cliente,
-        objeto_tipo=source.objeto_tipo,
-        objeto_texto=source.objeto_texto,
-        canal=source.canal,
-        contato_nome=source.contato_nome,
-        contato_datahora=source.contato_datahora,
-        equipamento_nome=source.equipamento_nome,
-        equipamento_texto=source.equipamento_texto,
-        local_servico=source.local_servico,
-        km_ida=source.km_ida,
-        km_volta=source.km_volta,
-        km_valor=source.km_valor,
-        alim_tecnicos=source.alim_tecnicos,
-        alim_refeicoes=source.alim_refeicoes,
-        alim_valor=source.alim_valor,
-        condicao_pagamento_dias=source.condicao_pagamento_dias,
-        imposto_percentual=source.imposto_percentual,
-        itens=[
-            ProposalItemCreate(
-                descricao=item.descricao,
-                unidade=item.unidade,
-                qtd=item.qtd,
-                valor_unit=item.valor_unit,
-            )
-            for item in source.items
-        ],
-        schedule_items=[
-            ScheduleItemCreate(
-                dia_label=item.dia_label,
-                descricao=item.descricao,
-                horas_servico=item.horas_servico,
-            )
-            for item in source.schedule_items
-        ],
-    )
-
-
-def _prefill_from_last(last: Proposal, fallback: dict[str, object]) -> dict[str, object]:
-    prefill = dict(fallback)
-    prefill.update(
-        {
-            "client_id": str(last.client_id),
-            "user_id": str(last.user_id),
-            "atencao": last.atencao,
-            "ref_cliente": last.ref_cliente,
-            "objeto_tipo": last.objeto_tipo,
-            "objeto_texto": last.objeto_texto,
-            "canal": last.canal,
-            "contato_nome": last.contato_nome,
-            "contato_datahora": last.contato_datahora,
-            "equipamento_nome": last.equipamento_nome,
-            "equipamento_texto": last.equipamento_texto,
-            "local_servico": last.local_servico,
-            "km_ida": str(last.km_ida),
-            "km_volta": str(last.km_volta),
-            "km_valor": str(last.km_valor),
-            "alim_tecnicos": str(last.alim_tecnicos),
-            "alim_refeicoes": str(last.alim_refeicoes),
-            "alim_valor": str(last.alim_valor),
-            "condicao_pagamento_dias": str(last.condicao_pagamento_dias),
-            "imposto_percentual": str(last.imposto_percentual),
-            "itens": [
-                {
-                    "descricao": item.descricao,
-                    "unidade": item.unidade,
-                    "qtd": str(item.qtd),
-                    "valor_unit": str(item.valor_unit),
-                }
-                for item in last.items
-            ]
-            or fallback["itens"],
-            "schedule_items": [
-                {
-                    "dia_label": item.dia_label,
-                    "descricao": item.descricao,
-                    "horas_servico": item.horas_servico,
-                }
-                for item in last.schedule_items
-            ]
-            or fallback["schedule_items"],
-        }
-    )
-    return prefill
-
-
-def _build_new_proposal_redirect_url(
-    request: Request,
-    warning: str,
-    revision_from: int | None = None,
-) -> str:
-    base = str(request.url_for("web_proposal_new"))
-    params = [f"warning={quote_plus(warning)}"]
-    if revision_from:
-        params.append(f"revision_from={revision_from}")
-    return f"{base}?{'&'.join(params)}"
-
-
-def _required_positive_int(value: object, label: str) -> int:
-    try:
-        parsed = int(str(value).strip())
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{label} invalido.") from exc
-    if parsed <= 0:
-        raise ValueError(f"{label} invalido.")
-    return parsed
+# Preserve historical module-level imports without duplicating implementation.
+ProposalCreate = proposal_form.ProposalCreate
+ProposalItemCreate = proposal_form.ProposalItemCreate
+ScheduleItemCreate = proposal_form.ScheduleItemCreate
+OPERATIONAL_CATEGORIES = _email_classification.OPERATIONAL_CATEGORIES
+EmailTaskLink = _message_workbench_service.EmailTaskLink
+and_ = _message_workbench_service.and_
+not_ = _message_workbench_service.not_
+or_ = _message_workbench_service.or_
+decimal_from_str = proposal_form.decimal_from_str
+board_service = web_proposals.board_service
+proposal_service = web_proposals.proposal_service
+suggestion_service = web_proposals.suggestion_service
+format_brl = web_rendering.format_brl
+format_date_br = web_rendering.format_date_br
+clients_page = web_clients.clients_page
+client_new_page = web_clients.client_new_page
+client_new_submit = web_clients.client_new_submit
+client_detail_page = web_clients.client_detail_page
+client_edit_submit = web_clients.client_edit_submit
+_default_form_data = web_proposals._default_form_data
+_proposal_to_payload = web_proposals._proposal_to_payload
+_prefill_from_last = web_proposals._prefill_from_last
+_build_new_proposal_redirect_url = web_proposals._build_new_proposal_redirect_url
+_required_positive_int = web_proposals._required_positive_int
+proposals_page = web_proposals.proposals_page
+import_proposals_page = web_proposals.import_proposals_page
+proposal_new_page = web_proposals.proposal_new_page
+proposal_new_submit = web_proposals.proposal_new_submit
+proposal_detail_page = web_proposals.proposal_detail_page
+proposal_duplicate_submit = web_proposals.proposal_duplicate_submit
+proposal_revision_submit = web_proposals.proposal_revision_submit
 
 
 @router.get("/", name="web_index")
@@ -203,6 +80,13 @@ def index(request: Request, db: Session = Depends(get_db)) -> object:
         today=today,
         lookahead_days=settings.today_lookahead_days,
         timezone=settings.assistant_timezone,
+    )
+    suggested_schedule = build_daily_schedule(
+        db,
+        today=today,
+        now=datetime.now(ZoneInfo(settings.assistant_timezone)),
+        timezone=settings.assistant_timezone,
+        task_plan=agenda.task_plan,
     )
     today_sections = {
         "attention": [item for item in agenda.items if item.rank <= 1][:6],
@@ -216,6 +100,7 @@ def index(request: Request, db: Session = Depends(get_db)) -> object:
         {
             "summary": summary,
             "agenda": agenda,
+            "suggested_schedule": suggested_schedule,
             "today_sections": today_sections,
             "full_width": True,
             "title": "Hoje",
@@ -225,58 +110,15 @@ def index(request: Request, db: Session = Depends(get_db)) -> object:
 
 @router.get("/web/mensagens", name="web_messages")
 def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
-    state = (
-        db.query(EmailSyncState)
-        .filter_by(
-            provider=settings.email_provider,
-            mailbox_key=settings.email_sync_mailbox_key,
-        )
-        .one_or_none()
+    workbench = get_message_workbench(
+        db, provider=settings.email_provider, mailbox_key=settings.email_sync_mailbox_key,
     )
-    base_query = db.query(InboxEmail).filter_by(
-        provider=settings.email_provider,
-        mailbox_key=settings.email_sync_mailbox_key,
-    )
-    operational_filter = and_(
-        InboxEmail.category.in_(OPERATIONAL_CATEGORIES),
-        InboxEmail.confidence_band.in_(("medium", "high")),
-    )
-    informational_filter = InboxEmail.category == "informational"
-    review_filter = not_(or_(operational_filter, informational_filter))
-
-    def latest_messages(query):
-        return (
-            query.order_by(InboxEmail.received_at.desc(), InboxEmail.id.desc())
-            .limit(100)
-            .all()
-        )
-
-    operational_messages = latest_messages(base_query.filter(operational_filter))
-    informational_messages = latest_messages(base_query.filter(informational_filter))
-    review_messages = latest_messages(base_query.filter(review_filter))
-    messages = operational_messages + informational_messages + review_messages
-    message_references = list({message.reference for message in messages})
-    task_links = (
-        db.query(EmailTaskLink)
-        .filter(
-            EmailTaskLink.provider == settings.email_provider,
-            EmailTaskLink.mailbox_key == settings.email_sync_mailbox_key,
-            EmailTaskLink.reference.in_(message_references),
-            EmailTaskLink.task_id.is_not(None),
-        )
-        .all()
-        if message_references else []
-    )
-    task_ids_by_reference = {link.reference: link.task_id for link in task_links}
-    for message in messages:
-        message.task_id = task_ids_by_reference.get(message.reference)
-    message_summary = {
-        "new": base_query.filter(InboxEmail.seen.is_(False)).count(),
-        "priority": base_query.filter(InboxEmail.priority.in_(("high", "critical"))).count(),
-        "review": base_query.filter(review_filter).count(),
-        "operational": base_query.filter(operational_filter).count(),
-        "informational": base_query.filter(informational_filter).count(),
-    }
+    state = workbench["sync_state"]
+    operational_messages = workbench["operational_messages"]
+    informational_messages = workbench["informational_messages"]
+    review_messages = workbench["review_messages"]
+    action_drafts_by_email = workbench["action_drafts_by_email"]
+    message_summary = workbench["message_summary"]
     if settings.email_provider == "synthetic":
         provider_configured = True
     elif settings.email_provider == "imap_yahoo":
@@ -331,6 +173,19 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
                 "informational": "Informativo/outros",
                 "other_review": "Revisar classificação",
             },
+            "action_suggestions": {
+                "customer_quote_request": "Preparar tarefa para avaliar o pedido de orçamento, mediante confirmação.",
+                "vendor_quotation": "Conferir a cotação recebida do fornecedor; não cria tarefa automaticamente.",
+                "purchase_order": "Conferir o pedido/ordem de compra e confirmar antes de criar tarefa.",
+                "invoice_request": "Conferir a solicitação; emissão/envio de nota não está disponível.",
+                "invoice_received": "Conferir a nota e validar se corresponde a uma conta a pagar.",
+                "accounts_payable": "Revisar os dados e confirmar antes de criar lançamento a pagar.",
+                "accounts_receivable": "Classificação para revisão; não cria lançamento financeiro.",
+                "payment_proof": "Conferir comprovante; não baixa nem altera pagamento.",
+                "service_request": "Conferir o chamado; criar tarefa somente após confirmação.",
+                "pending_reply": "Verificar manualmente se é necessária uma resposta.",
+            },
+            "action_drafts_by_email": action_drafts_by_email,
             "message_summary": message_summary,
             "sync_state": state,
             "sync_enabled": settings.email_sync_enabled,
@@ -389,98 +244,58 @@ async def message_review(message_id: int, request: Request, db: Session = Depend
         raise HTTPException(status_code=404, detail="Mensagem não encontrada.")
     if category not in allowed:
         raise HTTPException(status_code=400, detail="Categoria inválida.")
+    active_draft = (
+        db.query(EmailActionDraft)
+        .filter(
+            EmailActionDraft.inbox_email_id == message.id,
+            EmailActionDraft.status.in_(("confirmed", "linked")),
+        )
+        .first()
+    )
+    if active_draft:
+        raise HTTPException(status_code=409, detail="A categoria não pode mudar após a ação vinculada.")
+    for draft in (
+        db.query(EmailActionDraft)
+        .filter_by(inbox_email_id=message.id, status="pending")
+        .all()
+    ):
+        draft.status = "cancelled"
     message.category = category
-    message.review_status = "reviewed"
+    message.confidence_band = "high"
+    message.destination = (
+        "task"
+        if category in {"customer_quote_request", "purchase_order", "service_request"}
+        else "classification_only" if category == "informational" else "review"
+    )
+    record = EmailMessageRecord(
+        reference=message.reference,
+        thread_reference=message.thread_reference,
+        folder_role="inbox",
+        sender=message.sender,
+        recipients=(),
+        subject=message.subject,
+        received_at=message.received_at.replace(tzinfo=ZoneInfo(settings.assistant_timezone)),
+        seen=message.seen,
+        text=message.summary,
+    )
+    fields = extract_operational_fields(record, category)
+    if message.extracted_fields is None:
+        fields["uncertainty"] = [
+            *list(fields.get("uncertainty", [])),
+            "O corpo completo não está retido; a prévia usa apenas o resumo já armazenado.",
+        ]
+    # Re-extract against the stored summary only; the full email body is never persisted.
+    message.extracted_fields = fields
     message.classification_reason = (message.classification_reason + "; categoria revisada manualmente")[:2000]
+    message.review_status = "reviewed"
+    draft = ensure_email_action_draft(db, message, reopen_cancelled=True)
+    if draft is not None and draft.status == "pending":
+        message.review_status = "pending"
     db.commit()
     return RedirectResponse(url=request.url_for("web_messages"), status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.get("/web/clients", name="web_clients")
-def clients_page(request: Request, db: Session = Depends(get_db)) -> object:
-    clients = db.query(Client).order_by(Client.razao_social.asc()).all()
-    proposal_counts = dict(db.query(Proposal.client_id, func.count(Proposal.id)).group_by(Proposal.client_id).all())
-    service_counts = dict(db.query(ServiceCall.client_id, func.count(ServiceCall.id)).group_by(ServiceCall.client_id).all())
-    return render_template(
-        request,
-        "clients.html",
-        {"clients": clients, "proposal_counts": proposal_counts, "service_counts": service_counts},
-    )
-
-
-@router.get("/web/clients/new", name="web_client_new")
-def client_new_page(request: Request) -> object:
-    return render_template(request, "client_form.html", {"client": None, "action_url": "/web/clients/new"})
-
-
-@router.post("/web/clients/new")
-async def client_new_submit(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    form = await request.form()
-    client = Client(
-        razao_social=str(form.get("razao_social", "")).strip(),
-        cnpj=str(form.get("cnpj", "")).strip(),
-        endereco_linha1=str(form.get("endereco_linha1", "")).strip(),
-        endereco_linha2=str(form.get("endereco_linha2", "")).strip(),
-        cep=str(form.get("cep", "")).strip(),
-        cidade_uf=str(form.get("cidade_uf", "")).strip(),
-        pais=str(form.get("pais", "Brasil")).strip() or "Brasil",
-        caixa_postal=str(form.get("caixa_postal", "")).strip(),
-        telefone=str(form.get("telefone", "")).strip(),
-        site=str(form.get("site", "")).strip(),
-        contato_padrao=str(form.get("contato_padrao", "")).strip(),
-    )
-    if not client.razao_social:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Razao social is required")
-    db.add(client)
-    db.commit()
-    return RedirectResponse(url=request.url_for("web_clients"), status_code=status.HTTP_303_SEE_OTHER)
-
-
-@router.get("/web/clients/{client_id}", name="web_client_detail")
-def client_detail_page(client_id: int, request: Request, db: Session = Depends(get_db)) -> object:
-    client = db.query(Client).filter(Client.id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
-    proposals = db.query(Proposal).filter(Proposal.client_id == client_id).order_by(Proposal.data_geracao.desc(), Proposal.id.desc()).limit(10).all()
-    services = db.query(ServiceCall).filter(ServiceCall.client_id == client_id).order_by(ServiceCall.opened_on.desc(), ServiceCall.id.desc()).limit(10).all()
-    return render_template(
-        request,
-        "client_form.html",
-        {
-            "client": client,
-            "action_url": f"/web/clients/{client_id}/edit",
-            "proposals": proposals,
-            "services": services,
-        },
-    )
-
-
-@router.post("/web/clients/{client_id}/edit")
-async def client_edit_submit(client_id: int, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    client = db.query(Client).filter(Client.id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
-    form = await request.form()
-    fields = [
-        "razao_social",
-        "cnpj",
-        "endereco_linha1",
-        "endereco_linha2",
-        "cep",
-        "cidade_uf",
-        "pais",
-        "caixa_postal",
-        "telefone",
-        "site",
-        "contato_padrao",
-    ]
-    for field in fields:
-        setattr(client, field, str(form.get(field, "")).strip())
-    if not client.razao_social:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Razao social is required")
-    db.add(client)
-    db.commit()
-    return RedirectResponse(url=request.url_for("web_clients"), status_code=status.HTTP_303_SEE_OTHER)
+router.include_router(web_clients.router)
 
 
 @router.get("/web/users", name="web_users")
@@ -497,13 +312,21 @@ def user_new_page(request: Request) -> object:
 @router.post("/web/users/new")
 async def user_new_submit(request: Request, db: Session = Depends(get_db)) -> object:
     form = await request.form()
-    payload = UserCreate(
-        nome=str(form.get("nome", "")).strip(),
-        cargo=str(form.get("cargo", "")).strip(),
-        email=str(form.get("email", "")).strip(),
-        senha=str(form.get("senha", "123456")).strip() or "123456",
-        ativo=True if form.get("ativo") == "on" else False,
-    )
+    try:
+        payload = UserCreate(
+            nome=str(form.get("nome", "")).strip(),
+            cargo=str(form.get("cargo", "")).strip(),
+            email=str(form.get("email", "")).strip(),
+            senha=str(form.get("senha", "")),
+            ativo=form.get("ativo") == "on",
+        )
+    except ValidationError:
+        return render_template(
+            request,
+            "user_form.html",
+            {"error": "A senha precisa ter pelo menos 12 caracteres."},
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
     if db.query(User).filter(User.email == payload.email).first():
         return render_template(request, "user_form.html", {"error": "Email ja existe."})
     user = User(
@@ -518,251 +341,4 @@ async def user_new_submit(request: Request, db: Session = Depends(get_db)) -> ob
     return RedirectResponse(url=request.url_for("web_users"), status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.get("/web/proposals", name="web_proposals")
-def proposals_page(request: Request, db: Session = Depends(get_db)) -> object:
-    proposals = db.query(Proposal).options(joinedload(Proposal.client), joinedload(Proposal.user)).order_by(Proposal.data_geracao.desc(), Proposal.id.desc()).all()
-    return render_template(request, "proposals.html", {"proposals": proposals})
-
-
-@router.get("/import-proposals", name="web_import_proposals")
-def import_proposals_page(request: Request, db: Session = Depends(get_db)) -> object:
-    users = db.query(User).filter(User.ativo.is_(True)).order_by(User.nome.asc()).all()
-    default_user_id = users[0].id if users else None
-    return render_template(
-        request,
-        "import_proposals.html",
-        {
-            "users": users,
-            "default_user_id": default_user_id,
-        },
-    )
-
-
-@router.get("/web/proposals/new", name="web_proposal_new")
-def proposal_new_page(
-    request: Request,
-    client_id: int | None = None,
-    load_last: int = 0,
-    revision_from: int | None = None,
-    warning: str | None = None,
-    db: Session = Depends(get_db),
-) -> object:
-    clients = db.query(Client).order_by(Client.razao_social.asc()).all()
-    users = db.query(User).filter(User.ativo.is_(True)).order_by(User.nome.asc()).all()
-
-    form_data = _default_form_data()
-    create_mode = "new"
-    base_proposal_id = ""
-    revision_source = None
-
-    if users:
-        form_data["user_id"] = str(users[0].id)
-    if client_id:
-        form_data["client_id"] = str(client_id)
-
-    if revision_from:
-        source = proposal_service.get_proposal_with_details(db, proposal_id=revision_from)
-        if source:
-            form_data = _prefill_from_last(source, form_data)
-            create_mode = "revision"
-            base_proposal_id = str(source.id)
-            revision_source = source
-        else:
-            warning = "Proposta base para revisao nao encontrada."
-    elif client_id and load_last == 1:
-        last = suggestion_service.get_last_proposal_for_client(db, client_id=client_id)
-        if last:
-            form_data = _prefill_from_last(last, form_data)
-        else:
-            warning = "Nenhuma proposta anterior encontrada para este cliente."
-
-    return render_template(
-        request,
-        "proposal_form.html",
-        {
-            "clients": clients,
-            "users": users,
-            "form_data": form_data,
-            "warning": warning or "",
-            "create_mode": create_mode,
-            "base_proposal_id": base_proposal_id,
-            "revision_source": revision_source,
-        },
-    )
-
-
-@router.post("/web/proposals/new")
-async def proposal_new_submit(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    form = await request.form()
-    mode = str(form.get("mode", "new")).strip().lower()
-    if mode not in {"new", "revision"}:
-        mode = "new"
-    revision_from_raw = str(form.get("base_proposal_id", "")).strip()
-    base_proposal_id: int | None = None
-    if mode == "revision":
-        try:
-            base_proposal_id = _required_positive_int(revision_from_raw, "Proposta base")
-        except ValueError as exc:
-            return RedirectResponse(
-                url=_build_new_proposal_redirect_url(
-                    request,
-                    warning=str(exc),
-                    revision_from=int(revision_from_raw) if revision_from_raw.isdigit() else None,
-                ),
-                status_code=status.HTTP_303_SEE_OTHER,
-            )
-
-    try:
-        client_id = _required_positive_int(form.get("client_id"), "Cliente")
-        user_id = _required_positive_int(form.get("user_id"), "Responsavel")
-    except ValueError as exc:
-        return RedirectResponse(
-            url=_build_new_proposal_redirect_url(request, warning=str(exc), revision_from=base_proposal_id),
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-
-    items: list[ProposalItemCreate] = []
-    schedule_items: list[ScheduleItemCreate] = []
-    try:
-        descricoes = form.getlist("item_descricao")
-        unidades = form.getlist("item_unidade")
-        qtds = form.getlist("item_qtd")
-        valores = form.getlist("item_valor_unit")
-        schedule_dias = form.getlist("schedule_dia_label")
-        schedule_descricoes = form.getlist("schedule_descricao")
-        schedule_horas = form.getlist("schedule_horas_servico")
-
-        for index, descricao in enumerate(descricoes):
-            if not str(descricao).strip():
-                continue
-            unidade = str(unidades[index]).strip() if index < len(unidades) else "UN"
-            qtd_value = str(qtds[index]) if index < len(qtds) else "0"
-            valor_value = str(valores[index]) if index < len(valores) else "0"
-            items.append(
-                ProposalItemCreate(
-                    descricao=str(descricao).strip(),
-                    unidade=unidade or "UN",
-                    qtd=decimal_from_str(qtd_value, default="0.00"),
-                    valor_unit=decimal_from_str(valor_value, default="0.00"),
-                )
-            )
-
-        for index, dia_label in enumerate(schedule_dias):
-            descricao = str(schedule_descricoes[index]).strip() if index < len(schedule_descricoes) else ""
-            horas = str(schedule_horas[index]).strip() if index < len(schedule_horas) else ""
-            dia = str(dia_label).strip()
-            if not dia and not descricao and not horas:
-                continue
-            schedule_items.append(
-                ScheduleItemCreate(
-                    dia_label=dia,
-                    descricao=descricao,
-                    horas_servico=horas,
-                )
-            )
-
-        payload = ProposalCreate(
-            client_id=client_id,
-            user_id=user_id,
-            atencao=str(form.get("atencao", "")).strip(),
-            ref_cliente=str(form.get("ref_cliente", "")).strip(),
-            objeto_tipo=str(form.get("objeto_tipo", "manutencao_calibracao")).strip(),
-            objeto_texto=str(form.get("objeto_texto", "")).strip(),
-            canal=str(form.get("canal", "")).strip(),
-            contato_nome=str(form.get("contato_nome", "")).strip(),
-            contato_datahora=str(form.get("contato_datahora", "")).strip(),
-            equipamento_nome=str(form.get("equipamento_nome", "")).strip(),
-            equipamento_texto=str(form.get("equipamento_texto", "")).strip(),
-            local_servico=str(form.get("local_servico", "")).strip(),
-            km_ida=decimal_from_str(str(form.get("km_ida", "0"))),
-            km_volta=decimal_from_str(str(form.get("km_volta", "0"))),
-            km_valor=decimal_from_str(str(form.get("km_valor", "2.95"))),
-            alim_tecnicos=int(str(form.get("alim_tecnicos", "1")) or "1"),
-            alim_refeicoes=int(str(form.get("alim_refeicoes", "0")) or "0"),
-            alim_valor=decimal_from_str(str(form.get("alim_valor", "0"))),
-            condicao_pagamento_dias=int(str(form.get("condicao_pagamento_dias", "0")) or "0"),
-            imposto_percentual=decimal_from_str(str(form.get("imposto_percentual", "0"))),
-            itens=items,
-            schedule_items=schedule_items,
-        )
-    except ValueError as exc:
-        return RedirectResponse(
-            url=_build_new_proposal_redirect_url(request, warning=str(exc), revision_from=base_proposal_id),
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-
-    try:
-        created = proposal_service.create_proposal(
-            db,
-            payload=payload,
-            mode=mode,
-            base_proposal_id=base_proposal_id,
-        )
-        _, pdf_error = proposal_service.generate_documents(db, proposal_id=created.id, settings=settings)
-
-        if form.get("create_kanban_card") == "1":
-            task_payload = TaskCreate(
-                titulo=f"Proposta #{created.numero}/{created.revisao} - {created.client.razao_social if created.client else 'Cliente'}",
-                descricao=f"Gerada automaticamente.\nObjeto: {created.objeto_texto}",
-                status="aguardando_cliente",
-                client_id=created.client_id,
-                proposal_id=created.id,
-                user_id=created.user_id,
-                prazo=None,
-            )
-            board_service.create_task(db, task_payload)
-    except (ValueError, FileNotFoundError) as exc:
-        return RedirectResponse(
-            url=_build_new_proposal_redirect_url(request, warning=str(exc), revision_from=base_proposal_id),
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-
-    detail_url = str(request.url_for("web_proposal_detail", proposal_id=created.id))
-    if pdf_error:
-        detail_url = f"{detail_url}?warning={quote_plus(pdf_error)}"
-    return RedirectResponse(url=detail_url, status_code=status.HTTP_303_SEE_OTHER)
-
-
-@router.get("/web/proposals/{proposal_id}", name="web_proposal_detail")
-def proposal_detail_page(
-    proposal_id: int,
-    request: Request,
-    warning: str | None = None,
-    db: Session = Depends(get_db),
-) -> object:
-    proposal = proposal_service.get_proposal_with_details(db, proposal_id=proposal_id)
-    if not proposal:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proposal not found")
-    return render_template(
-        request,
-        "proposal_detail.html",
-        {
-            "proposal": proposal,
-            "docx_url": f"/output/{proposal.docx_path}" if proposal.docx_path else "",
-            "pdf_url": f"/output/{proposal.pdf_path}" if proposal.pdf_path else "",
-            "warning": warning or "",
-        },
-    )
-
-
-@router.post("/web/proposals/{proposal_id}/duplicate", name="web_proposal_duplicate")
-def proposal_duplicate_submit(proposal_id: int, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    source = proposal_service.get_proposal_with_details(db, proposal_id)
-    if not source:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proposal not found")
-    payload = _proposal_to_payload(source)
-    created = proposal_service.create_proposal(db, payload=payload, mode="new")
-    _, pdf_error = proposal_service.generate_documents(db, proposal_id=created.id, settings=settings)
-    detail_url = str(request.url_for("web_proposal_detail", proposal_id=created.id))
-    if pdf_error:
-        detail_url = f"{detail_url}?warning={quote_plus(pdf_error)}"
-    return RedirectResponse(url=detail_url, status_code=status.HTTP_303_SEE_OTHER)
-
-
-@router.post("/web/proposals/{proposal_id}/revision", name="web_proposal_revision")
-def proposal_revision_submit(proposal_id: int, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    source = proposal_service.get_proposal_with_details(db, proposal_id)
-    if not source:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proposal not found")
-    target_url = f"{request.url_for('web_proposal_new')}?revision_from={source.id}"
-    return RedirectResponse(url=target_url, status_code=status.HTTP_303_SEE_OTHER)
+router.include_router(web_proposals.router)

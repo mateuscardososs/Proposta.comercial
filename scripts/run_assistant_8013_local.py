@@ -2,23 +2,52 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from dotenv import dotenv_values
 
 from scripts.assistant_8013_runtime import (
+    AUTH_SESSION_SECRET_FILE,
     DATABASE_URL_FILE,
     DEFAULT_OLLAMA_MODEL,
     PROJECT_ROOT,
     installed_ollama_models,
     prepare_database_url_from_container,
     prepare_runtime_settings_from_container,
+    read_private_auth_session_secret,
     read_private_database_url,
     read_private_runtime_settings,
     runtime_environment,
     verify_database,
 )
+
+LOCAL_REPORT_CONVERTER_IMAGE = "adbalancas-propostas-local:20261003-finance"
+
+
+def _configure_local_report_pdf_converter() -> None:
+    if os.getenv("TECHNICAL_REPORT_PDF_CONVERTER_IMAGE"):
+        return
+    libreoffice_cmd = os.getenv("LIBREOFFICE_CMD", "soffice")
+    if shutil.which(libreoffice_cmd):
+        return
+    docker = shutil.which("docker")
+    if not docker:
+        return
+    try:
+        result = subprocess.run(
+            [docker, "image", "inspect", LOCAL_REPORT_CONVERTER_IMAGE],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if result.returncode == 0:
+        os.environ["TECHNICAL_REPORT_PDF_CONVERTER_IMAGE"] = LOCAL_REPORT_CONVERTER_IMAGE
 
 
 def _load_local_configuration() -> dict[str, str]:
@@ -44,8 +73,18 @@ def _load_local_configuration() -> dict[str, str]:
     return {key: value for key, value in base_values.items() if value is not None}
 
 
-def _select_installed_model(base_values: dict[str, str]) -> str:
+def _select_installed_model(
+    base_values: dict[str, str], provider: str | None = None
+) -> str:
     configured = os.getenv("OLLAMA_MODEL") or base_values.get("OLLAMA_MODEL", "")
+    selected_provider = (
+        provider
+        or os.getenv("LLM_PROVIDER")
+        or base_values.get("LLM_PROVIDER", "gemini")
+    ).strip().casefold()
+    if selected_provider != "ollama":
+        return configured or DEFAULT_OLLAMA_MODEL
+
     installed = installed_ollama_models()
     if configured:
         if configured not in installed:
@@ -78,7 +117,9 @@ def _verify_voice_assets(environment: dict[str, str]) -> None:
 def run() -> None:
     base_values = _load_local_configuration()
     database_url = read_private_database_url(DATABASE_URL_FILE)
-    model = _select_installed_model(base_values)
+    os.environ["AUTH_SESSION_SECRET"] = read_private_auth_session_secret(AUTH_SESSION_SECRET_FILE)
+    os.environ["AUTH_ENABLED"] = "true"
+    model = _select_installed_model(base_values, provider=os.getenv("LLM_PROVIDER"))
     environment = runtime_environment(
         database_url,
         repository_root=PROJECT_ROOT,
@@ -86,6 +127,7 @@ def run() -> None:
     )
     _verify_voice_assets(environment)
     os.environ.update(environment)
+    _configure_local_report_pdf_converter()
     os.environ["APP_ENV_FILE"] = str(PROJECT_ROOT / ".env")
 
     from app.config import get_settings
@@ -101,8 +143,12 @@ def run() -> None:
         raise RuntimeError("A criacao automatica existente esta desativada na configuracao.")
 
     verify_database(settings.database_url)
+    from app.db import SessionLocal
+    from app.security.auth import assert_auth_ready
+
+    assert_auth_ready(SessionLocal)
     print("8013 local: voz habilitada; PostgreSQL propostas_db validado em loopback.")
-    print("Ollama local e modelo instalado validados; sem fallback externo.")
+    print(f"Provedor de texto ativo: {settings.llm_provider}.")
 
     import uvicorn
 

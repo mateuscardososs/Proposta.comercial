@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-
 CapabilityState = Literal["not_implemented", "not_configured", "available", "unavailable"]
 
 
@@ -51,7 +50,7 @@ class CapabilityRegistry:
                 name="finance_write", state="not_implemented", detail="Alteracao financeira nao implementada."
             ),
             "document_write": Capability(
-                name="document_write", state="not_implemented", detail="Alteracao de documentos nao implementada."
+                name="document_write", state="available", detail="Relatório técnico de serviço concluído, com prévia e confirmação explícita."
             ),
             "service_write": Capability(
                 name="service_write", state="available", detail="Registra eventos e lembretes de servico somente apos confirmacao."

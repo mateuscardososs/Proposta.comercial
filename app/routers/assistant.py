@@ -27,6 +27,7 @@ from app.assistant.contracts import (
     AssistantHistory,
     AssistantMessageRequest,
     AssistantReply,
+    AssistantReportPreviewEditRequest,
     VoiceSpeechRequest,
     VoiceStatus,
     VoiceTranscriptionResponse,
@@ -34,6 +35,7 @@ from app.assistant.contracts import (
 from app.assistant.email.imap import YahooImapEmailReader
 from app.assistant.email.provider import EmailReader
 from app.assistant.email.synthetic import SyntheticEmailReader, synthetic_messages
+from app.assistant.gemini import GeminiProvider
 from app.assistant.ollama import OllamaProvider
 from app.assistant.provider import AssistantProvider
 from app.assistant.service import AssistantService
@@ -67,6 +69,15 @@ _synthesis_executor = BoundedVoiceExecutor(name="voice-tts", max_pending=1)
 def get_assistant_provider() -> AssistantProvider:
     settings = get_settings()
     capabilities = _capability_registry(settings)
+    if settings.llm_provider == "gemini":
+        return GeminiProvider(
+            api_key=settings.gemini_api_key.get_secret_value(),
+            model=settings.gemini_model,
+            connect_timeout=settings.gemini_connect_timeout,
+            read_timeout=settings.gemini_read_timeout,
+            max_output_tokens=settings.ollama_max_output_tokens,
+            capabilities=capabilities.provider_context(),
+        )
     return OllamaProvider(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
@@ -161,6 +172,11 @@ def _service(
         email_reader=email_reader,
         capabilities=_capability_registry(settings),
         email_history_retention_days=settings.email_cache_retention_days,
+        email_provider=settings.email_provider.strip().casefold(),
+        email_mailbox_key=settings.email_sync_mailbox_key,
+        email_freshness_seconds=settings.email_sync_interval_seconds * 2,
+        today_lookahead_days=settings.today_lookahead_days,
+        output_dir=settings.output_dir,
     )
 
 
@@ -196,8 +212,7 @@ def assistant_voice_status() -> VoiceStatus:
         if not piper_available:
             missing.append("sintese")
         message = (
-            f"Componentes locais de {' e '.join(missing)} indisponiveis. "
-            "O assistente por texto continua disponivel."
+            f"Componentes locais de {' e '.join(missing)} indisponiveis. O assistente por texto continua disponivel."
         )
     return VoiceStatus(
         enabled=settings.voice_enabled,
@@ -221,7 +236,10 @@ async def assistant_voice_transcription(
 ) -> VoiceTranscriptionResponse:
     settings = get_settings()
     if not settings.voice_enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="A voz esta desativada.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="A voz esta desativada.",
+        )
 
     path = await _store_temporary_audio(audio, settings.voice_max_upload_bytes)
 
@@ -260,8 +278,7 @@ async def assistant_voice_transcription(
             timeout=settings.voice_transcription_timeout_seconds,
         )
         logger.info(
-            "assistant_voice stage=transcription outcome=success queue_wait_ms=%d "
-            "duration_ms=%d audio_duration_ms=%d",
+            "assistant_voice stage=transcription outcome=success queue_wait_ms=%d duration_ms=%d audio_duration_ms=%d",
             round(execution.queue_wait_seconds * 1000),
             round(execution.value.transcription_seconds * 1000),
             round(execution.value.audio_duration_seconds * 1000),
@@ -300,7 +317,10 @@ async def assistant_voice_speech(
 ) -> Response:
     settings = get_settings()
     if not settings.voice_enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="A voz esta desativada.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="A voz esta desativada.",
+        )
     text = spoken_text(payload.text, payload.kind)
     try:
         execution = await _synthesis_executor.submit_with_metrics(
@@ -391,6 +411,25 @@ def assistant_cancel(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
+@router.post(
+    "/api/assistant/actions/{action_id}/report-preview",
+    response_model=AssistantReply,
+)
+def assistant_edit_report_preview(
+    action_id: int,
+    payload: AssistantReportPreviewEditRequest,
+    db: Session = Depends(get_db),
+) -> AssistantReply:
+    try:
+        return _service(db).edit_service_report_preview(
+            action_id,
+            payload.confirmation_token,
+            payload.fields,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
 async def _store_temporary_audio(upload: UploadFile, max_bytes: int) -> Path:
     descriptor, raw_path = tempfile.mkstemp(prefix="assistant-voice-", suffix=".audio")
     path = Path(raw_path)
@@ -431,7 +470,5 @@ def _whisper_is_available(settings: object) -> bool:
 def _piper_is_available(settings: object) -> bool:
     model_path = settings.voice_piper_model_path
     return (
-        importlib.util.find_spec("piper") is not None
-        and model_path.is_file()
-        and Path(f"{model_path}.json").is_file()
+        importlib.util.find_spec("piper") is not None and model_path.is_file() and Path(f"{model_path}.json").is_file()
     )

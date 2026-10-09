@@ -2,7 +2,7 @@
 
 Aplicação web interna para organizar o trabalho comercial e operacional da AD Balanças: clientes, propostas, tarefas, serviços, mensagens de e-mail e lançamentos financeiros. O sistema usa FastAPI, páginas renderizadas com Jinja2 e SQLAlchemy; os fluxos existentes foram ampliados gradualmente e não dependem de um frontend separado.
 
-> **Segurança:** ainda não há autenticação efetiva protegendo as páginas e APIs. Use somente em computadores confiáveis e mantenha a aplicação e o PostgreSQL vinculados a `127.0.0.1`. Não publique o serviço na rede ou na internet.
+> **Segurança:** o projeto agora exige autenticação por sessão quando habilitado; a instância local 8013 deve permanecer na versão anterior até o primeiro administrador ser provisionado e seu login validado pelo procedimento interativo. Mantenha aplicação e PostgreSQL em `127.0.0.1`; não publique o serviço na rede ou na internet.
 
 ## O que o projeto faz
 
@@ -22,11 +22,14 @@ Aplicação web interna para organizar o trabalho comercial e operacional da AD 
 
 ### Acompanhamento de serviços
 
-- Registro de um chamado por atendimento, com eventos separados para visita/inspeção, início de execução, conclusão ou correção de informação.
+- Registro de um chamado por atendimento, com eventos append-only separados para visita/inspeção, início de execução, conclusão, verificação de retorno ou correção de informação.
 - Inspeção não equivale a reparo: a execução técnica só fica concluída com evento explícito de conclusão.
 - O histórico de eventos é preservado; correções são acrescentadas ao histórico e a projeção do estado atual é reconstruída de forma determinística.
 - As etapas administrativas têm estados próprios: relatório, proposta, envio da proposta, nota fiscal e recebimento. Assim, serviço tecnicamente concluído pode continuar administrativamente aberto.
 - Lembretes dessas etapas podem ser vinculados ao quadro. O sistema não gera nem envia propostas e não emite nota fiscal automaticamente.
+- Após a conclusão técnica, a tela de detalhes e o Assistente por texto/voz permitem revisar campos do chamado e confirmar a geração de relatório técnico em DOCX e PDF. A conversa usa o mesmo serviço, modelo DOCX e rotas de download já existentes; não há um segundo gerador. Cliente/equipamento, problema, análise, trabalho, datas e verificações vêm do cadastro e dos eventos efetivos; ausências ficam destacadas para revisão, sem texto técnico inventado.
+- O Assistente resolve apenas chamados concluídos; se houver mais de um, pergunta qual usar. A prévia pode ser editada no chat ou corrigida em linguagem natural. Toda correção troca o token de confirmação anterior. DOCX/PDF só são criados depois da confirmação, e os links de ambos aparecem na conversa.
+- A confirmação grava um snapshot imutável, mantém referências aos eventos de origem e atualiza somente a etapa administrativa de relatório com histórico — sem acrescentar evento técnico nem alterar os existentes. Repetir a mesma solicitação ou confirmação reconcilia a ação; novas versões confirmadas preservam as anteriores. Relatórios são salvos em `output/service-reports/` e não são enviados automaticamente.
 
 ### Contas a pagar e a receber
 
@@ -39,21 +42,33 @@ Aplicação web interna para organizar o trabalho comercial e operacional da AD 
 
 - A página **E-mails e mensagens** mostra mensagens consultadas/sincronizadas, separando fila operacional, revisão e informativos, com categoria, evidências resumidas, prioridade sugerida e estado de sincronização.
 - Existe provedor sintético para desenvolvimento e adaptador Yahoo via IMAP, configurável e desativado por padrão. O acesso Yahoo é somente leitura: seleciona pastas em modo read-only e usa leitura que não altera flags; não envia, move nem exclui mensagens.
-- O sincronizador periódico é opcional e tem intervalo configurável. A sincronização inicia em um marco de ativação e usa identificadores estáveis para que releituras/retries não dupliquem mensagens ou tarefas; não é uma importação irrestrita do histórico antigo.
+- O sincronizador periódico é opcional e tem intervalo configurável. A sincronização inicia em um marco de ativação e usa identificadores estáveis para evitar duplicar mensagens e rascunhos em releituras/retries; não é uma importação irrestrita do histórico antigo.
 - A classificação usa evidência do assunto/corpo para distinguir, entre outras categorias, solicitação de orçamento de cliente, cotação de fornecedor, pedido de compra, serviço, cobrança, nota fiscal, comprovante, resposta pendente e informativo. O corpo integral não é persistido no cache da caixa.
-- Somente categorias operacionais elegíveis classificadas com alta confiança podem originar tarefa automática, quando essa opção está habilitada. Tarefas preservam a referência de origem. Contas, pagamentos e notas fiscais ficam para conferência/revisão; não geram baixa, pagamento ou emissão fiscal automática. Mensagens duvidosas são direcionadas à revisão.
+- A sincronização não cria tarefas nem lançamentos financeiros. Pedidos de orçamento (e outras categorias operacionais elegíveis) viram prévias/rascunhos revisáveis; a tarefa só é criada após confirmação explícita e preserva o vínculo idempotente com o e-mail. Cotação comercial enviada por fornecedor não é tratada como pedido de orçamento do cliente.
+- Contas a pagar e notas recebidas podem gerar proposta estruturada de lançamento pendente. Valor, fornecedor, datas e número da nota só são preenchidos com evidência explícita; campos ausentes ou ambíguos ficam destacados, e uma nota recebida exige confirmar que existe obrigação a pagar. Só a confirmação explícita cria o lançamento e seu histórico; nenhuma conta é paga, baixada ou emitida automaticamente. Mensagens incertas permanecem na revisão.
+- A extração determinística guarda apenas campos estruturados e evidências genéricas, não o corpo completo. O Gemini não acessa o banco nem autoriza gravações; ele não é necessário para classificar/extrair esses campos. Ler pelo Yahoo continua somente leitura.
 - O painel não prova cobertura completa de Enviados: a avaliação de resposta pendente depende de essa pasta estar acessível e sincronizada. A marca “lido” é a flag do servidor, não prova que uma pessoa compreendeu a mensagem.
 
 ### Assistente por texto e voz
 
-- A página **Assistente** mantém histórico e entende pedidos em português para consultar o quadro/agenda, consultar serviços e, se o leitor estiver configurado, consultar e-mails. Também prepara tarefas e registros de eventos/lembretes de serviço para confirmação.
-- O Ollama é o **interpretador de linguagem local**: transforma a fala ou texto em um comando estruturado permitido e ajuda a formular respostas naturais. Ele não acessa o banco diretamente e não grava dados por conta própria.
+- A página **Assistente** mantém histórico e entende pedidos em português para consultar o quadro/agenda, consultar serviços/retornos e, se o leitor estiver configurado, consultar e-mails. Também prepara tarefas e registros de eventos/lembretes de serviço para confirmação; uma data de retorno confirmada cria uma tarefa vinculada ao evento, sem duplicar em retries.
+- Após conclusão técnica, a tela do chamado e o Assistente por texto/voz oferecem a mesma prévia editável e confirmação para gerar relatório técnico DOCX/PDF; a proposta continua no próprio fluxo. Gemini/Ollama interpretam a solicitação, mas o serviço existente busca dados e gera os arquivos determinística e idempotentemente. A geração e a etapa administrativa não alteram eventos técnicos. Os links de download retornam no chat. A conversão usa LibreOffice configurado. No launcher local da 8013, se ele não estiver instalado no host, pode ser usado o conversor já existente na imagem local do projeto: é uma execução efêmera sem rede e com montagem apenas da pasta temporária daquele documento. Sem um conversor disponível, nenhum relatório é registrado. Documentos nunca são enviados automaticamente.
+- O Gemini é o **interpretador de linguagem padrão** pela API; Ollama local permanece como alternativa selecionável. O provedor transforma fala transcrita ou texto em comando estruturado permitido e ajuda a formular respostas naturais. Nenhum deles acessa o banco diretamente ou grava dados por conta própria.
 - Os pedidos conhecidos de consulta (por exemplo, agenda e algumas intenções de e-mail) também têm roteamento determinístico no backend. Quando necessário, a aplicação consulta os serviços e o banco reais; a resposta fica fundamentada nos resultados dessa solicitação, não em uma afirmação livre do modelo.
-- Existe uma interface `AssistantProvider`; o adaptador atualmente implementado é Ollama. As regras de domínio e validações ficam na aplicação, então trocar o provedor no futuro não deve exigir reescrever o fluxo de tarefas/serviços. Nesta versão não há API paga nem fallback automático para nuvem.
+- Existe uma interface `AssistantProvider`, com adaptadores Gemini e Ollama selecionáveis por `LLM_PROVIDER`. Gemini é o padrão; para processamento exclusivamente local, defina `LLM_PROVIDER=ollama`. As regras de domínio e validações ficam na aplicação e não há fallback automático entre provedores. Gemini requer chave, conectividade externa e plano aprovado; o conteúdo enviado à API deixa de ser exclusivamente local.
 - Comandos e argumentos são validados por esquemas tipados e por uma lista explícita de ferramentas. Não são aceitos SQL, shell ou execução de código gerado pelo modelo. Resposta estrutural inválida não autoriza uma gravação; o backend pode fazer uma única tentativa controlada de reparo e encerra com erro compreensível se ela falhar.
 - Consultas de tarefa, serviço e e-mail são executadas por serviços específicos do backend. O assistente só deve dizer que consultou quando houver evidência de resultado, distinguindo sucesso, vazio confirmado, falha, parcial e capacidade não configurada.
 - Criações manuais passam por rascunho e confirmação explícita antes de gravar; correções invalidam a confirmação anterior. A persistência usa identificadores de requisição/ação para reconciliar repetição e evitar duplicidade. Cliente ausente ou ambíguo não bloqueia a tarefa: mantém-se o nome informado, sem inventar cliente ou ID, e o vínculo fica pendente de revisão.
-- O modelo não envia e-mails, não altera mensagens, não paga/baixa contas e não emite nota fiscal. Capacidades indisponíveis ou não implementadas devem ser explicadas; não devem ser convertidas silenciosamente em outra ação.
+- O modelo do Assistente não envia e-mails, não altera mensagens, não paga/baixa contas e não emite nota fiscal. A aba Promoções tem transporte SMTP separado e só pode enviar depois de configuração própria e confirmação explícita da campanha.
+
+### Promoções por e-mail
+
+- A aba **Promoções** combina descrição livre com prompt-base fixo para gerar imagem, assunto e corpo usando Gemini. O período é opcional; a aplicação valida números e condições para reduzir risco de conteúdo comercial inventado.
+- Imagem e mensagem têm prévias editáveis. A imagem pode ser regenerada com uma referência visual PNG/JPEG opcional ou substituída; o texto comercial continua revisável independentemente da arte.
+- A ficha de cada cliente permite cadastrar contatos de campanha. Autorização começa desativada e exige e-mail válido, origem e data registrados; clientes antigos não são incluídos automaticamente. Revogações têm histórico append-only.
+- Rascunho e seleção de destinatários não enviam nada. O envio requer `PROMOTION_SMTP_*` configurado separadamente do IMAP Yahoo, confirmação explícita e revalidação de consentimento. O resultado fica registrado por campanha e destinatário.
+- Cada mensagem é individual. Repetições não reenviam destinatários concluídos; um resultado SMTP ambíguo fica para revisão, sem retry automático. Não existe envio de campanhas nos testes.
+- Veja [documentação de campanhas](docs/promocoes-campanhas.md) para variáveis de ambiente, privacidade, migração, consentimento e limites.
 
 #### Como a IA é usada
 
@@ -64,7 +79,7 @@ Microfone → STT local (faster-whisper) → texto ───┤
                                    FastAPI / Assistente
                      roteamento + histórico + capacidades disponíveis
                                                   ↓
-                         Ollama local via AssistantProvider
+                  Gemini API ou Ollama local via AssistantProvider
                     comando estruturado com argumentos validados
                                                   ↓
            ferramenta permitida → serviços da aplicação → banco real
@@ -85,7 +100,23 @@ Exemplos do que se pode pedir:
 
 #### Configuração do interpretador
 
-O modelo não é fixado pelo código. Configure o nome exato que `ollama list` mostrar:
+Gemini é o provedor padrão; Ollama local continua disponível como alternativa. Com Gemini, o backend envia ao Google o texto da conversa e o contexto necessário para interpretar o pedido. A seleção por `LLM_PROVIDER` não altera roteamento determinístico, confirmações, serviços de banco nem ferramentas autorizadas. STT e TTS continuam independentes e locais. Não há fallback automático entre provedores.
+
+O modelo não é fixado em vários pontos do código. Para Ollama, configure o nome exato que `ollama list` mostrar. Para o Gemini, configure `GEMINI_MODEL`; o valor inicial de referência é `gemini-3.1-flash-lite`, definido em um único padrão de configuração e sobrescrevível por ambiente. Antes de enviar dados reais da empresa, gere uma chave nova (a chave anteriormente colada deve ser considerada comprometida), confirme que a conta/projeto e o plano têm termos de tratamento de dados adequados ao uso empresarial e aprove o envio de conteúdo ao serviço externo. Não use plano gratuito com dados reais sem verificar seus termos: a documentação atual informa tratamento diferente de dados entre níveis. O smoke test, se usado, envia somente uma pergunta sintética.
+
+| Variável | Padrão | Para que serve |
+|---|---|---|
+| `LLM_PROVIDER` | `gemini` | Provedor de interpretação: `gemini` ou `ollama`. Valor inválido é rejeitado na configuração. |
+| `GEMINI_API_KEY` | vazio | Chave lida no backend e enviada no cabeçalho HTTPS; nunca é retornada à interface ou registrada nos logs. |
+| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Modelo configurável. Consulte a lista oficial antes de atualizar o identificador. |
+| `GEMINI_CONNECT_TIMEOUT` | `3` segundos | Limite para conexão à API Gemini. |
+| `GEMINI_READ_TIMEOUT` | `60` segundos | Limite de espera pela API. |
+
+Guarde uma chave nova em `.env.gemini.local` (explicitamente ignorado pelo Git) ou em um gerenciador de segredos do sistema. Edite o arquivo local com um editor, sem colocar o valor em comandos, histórico do shell ou argumentos de processo; `.env.example` mantém a chave vazia. Revogue a chave anteriormente exposta. Para iniciar o servidor com esse arquivo, use `APP_ENV_FILE=.env.gemini.local python run.py`. Para voltar ao modo local, defina `LLM_PROVIDER=ollama` e configure `OLLAMA_BASE_URL` e `OLLAMA_MODEL`. Ausência de chave, autorização inválida, modelo ausente, cota, timeout e resposta inválida são apresentados como erros; nunca há fallback silencioso.
+
+O modelo Gemini usado como referência foi escolhido por ser apresentado pela documentação oficial como opção estável, leve e de baixo custo relativo; disponibilidade, preço, limites e termos podem mudar. Consulte [modelos oficiais](https://ai.google.dev/gemini-api/docs/models), [preços e níveis de dados](https://ai.google.dev/gemini-api/docs/pricing) e [boas práticas para chaves](https://ai.google.dev/gemini-api/docs/api-key) antes de cada adoção. O adaptador chama a API pelo backend via HTTPS, envia a declaração das ferramentas autorizadas e valida os argumentos novamente nos contratos Pydantic existentes; o modelo não recebe acesso ao banco, shell ou sistema de arquivos.
+
+Para Ollama, configure o endereço e o modelo local:
 
 | Variável | Padrão | Para que serve |
 |---|---|---|
@@ -170,15 +201,15 @@ O teste real controlado do Ollama documentado cobre um caso específico de inter
 - Python 3.12, FastAPI, Uvicorn, SQLAlchemy 2 e Pydantic Settings.
 - Jinja2, HTML/CSS/JavaScript do próprio projeto.
 - PostgreSQL para execução com Docker Compose; SQLite é o padrão da execução nativa quando `DATABASE_URL` não é definido.
-- `docxtpl` para DOCX e LibreOffice headless para PDF; `pdfplumber` para leitura de PDFs legados.
-- Ollama local para interpretação; opcionalmente faster-whisper e Piper para voz local.
+- `docxtpl`/`python-docx` para DOCX e LibreOffice headless para PDF; no launcher local da 8013, a imagem de conversão pode ser selecionada por `TECHNICAL_REPORT_PDF_CONVERTER_IMAGE` e executada localmente, sem rede. `pdfplumber` lê PDFs legados.
+- Gemini API por padrão ou Ollama local alternativo para interpretação; faster-whisper e Piper locais são opcionais para voz.
 - Yahoo IMAP opcional para leitura de e-mail.
 
 ## Requisitos
 
 - Python 3.12.
-- Para gerar PDF: LibreOffice instalado (ou use o container, que o instala).
-- Para o assistente: Ollama em execução e um modelo local instalado, com nome configurado em `OLLAMA_MODEL`.
+- Para gerar PDF: LibreOffice instalado. No launcher local da 8013, a imagem local existente do projeto pode servir como conversor isolado, se disponível; para outra execução, configure `LIBREOFFICE_CMD` ou `TECHNICAL_REPORT_PDF_CONVERTER_IMAGE`. A conversão é limitada a 120 segundos e não usa serviços externos.
+- Para o assistente: Gemini por padrão exige `GEMINI_API_KEY`, acesso à rede e modelo configurado em `GEMINI_MODEL`; alternativamente, Ollama em execução com modelo local em `OLLAMA_MODEL`.
 - Para voz: dependências de `requirements-voice.txt` e arquivos de modelo STT/TTS locais. Consulte [`docs/assistente/execucao.md`](docs/assistente/execucao.md) e [`docs/assistente/validacao-voz-local.md`](docs/assistente/validacao-voz-local.md) para preparação e limites.
 - Para usar PostgreSQL via Compose: Docker com Docker Compose.
 
@@ -192,16 +223,13 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Configure variáveis no ambiente ou em um arquivo `.env` local, ignorado pelo Git. O mínimo para usar Ollama já iniciado no mesmo computador é:
+Configure a chave em `.env.gemini.local` ou em um gerenciador de segredos local e use:
 
 ```bash
-export APP_HOST=127.0.0.1
-export APP_PORT=8000
-export OLLAMA_BASE_URL=http://127.0.0.1:11434
-export OLLAMA_MODEL='<nome-de-um-modelo-local-instalado>'
-export ASSISTANT_TIMEZONE=America/Recife
-python run.py
+APP_ENV_FILE=.env.gemini.local APP_HOST=127.0.0.1 APP_PORT=8000 python run.py
 ```
+
+Isso mantém o serviço na máquina local. Para rodar sem enviar conversas à nuvem, selecione `LLM_PROVIDER=ollama` e configure o endereço/modelo Ollama.
 
 Acesse `http://127.0.0.1:8000/`. Verificação de saúde: `/healthz`; documentação interativa da API: `/docs`.
 
@@ -225,7 +253,7 @@ Por padrão, o provedor de e-mail e a sincronização ficam desativados. Para us
 APP_ENV_FILE=.env.yahoo.local python run.py
 ```
 
-Habilite a integração apenas quando realmente quiser iniciar consulta/sincronização. Consulte [`docs/assistente/desenho-email.md`](docs/assistente/desenho-email.md) e [`docs/assistente/piloto-email-tarefas.md`](docs/assistente/piloto-email-tarefas.md). O modo deve permanecer somente leitura.
+Habilite a integração apenas quando realmente quiser iniciar consulta/sincronização. Consulte [`docs/assistente/desenho-email.md`](docs/assistente/desenho-email.md), [`docs/assistente/pendencias-revisaveis-email.md`](docs/assistente/pendencias-revisaveis-email.md) e [`docs/assistente/piloto-email-tarefas.md`](docs/assistente/piloto-email-tarefas.md). O modo deve permanecer somente leitura.
 
 ## Execução nativa no Windows
 
@@ -237,13 +265,14 @@ py -3.12 -m venv .venv
 python -m pip install -r requirements.txt
 $env:APP_HOST = "127.0.0.1"
 $env:APP_PORT = "8000"
-$env:OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-$env:OLLAMA_MODEL = "<nome-de-um-modelo-local-instalado>"
+$env:APP_ENV_FILE = ".env.gemini.local"
+$env:APP_HOST = "127.0.0.1"
+$env:LLM_PROVIDER = "gemini"
 $env:ASSISTANT_TIMEZONE = "America/Recife"
 python run.py
 ```
 
-O destino Windows não deve depender de GPU dedicada. O modelo Ollama, Whisper e Piper precisam ser escolhidos/testados nesse hardware; a velocidade medida em um Mac não representa o desempenho no Windows. Veja [`docs/assistente/execucao.md`](docs/assistente/execucao.md).
+O destino Windows não deve depender de GPU dedicada. Gemini requer rede e plano apropriado; alternativamente, o modelo Ollama, Whisper e Piper precisam ser escolhidos/testados nesse hardware. Veja [`docs/assistente/execucao.md`](docs/assistente/execucao.md).
 
 ## Execução com Docker Compose
 
@@ -262,7 +291,7 @@ docker compose down
 
 Os dados do PostgreSQL ficam no volume `postgres_data`; arquivos gerados ficam em `output/` e o modelo de proposta em `doc_templates/`. **Não use `docker compose down -v` em um ambiente com dados a preservar:** isso remove o volume do banco.
 
-No Docker, `OLLAMA_BASE_URL` normalmente aponta para `http://host.docker.internal:11434`, pois o Ollama roda no host. Não publique a porta do Ollama. STT/TTS exigem que dependências e modelos estejam instalados e acessíveis pelo processo/container; voz vem desativada por padrão no Compose.
+No Docker, Gemini requer `GEMINI_API_KEY` entregue com segurança ao container. Para alternativa Ollama, `OLLAMA_BASE_URL` normalmente aponta para `http://host.docker.internal:11434`, pois o Ollama roda no host; não publique a porta do Ollama. STT/TTS exigem dependências e modelos acessíveis no processo/container; voz vem desativada por padrão no Compose.
 
 ## Rotas úteis
 
@@ -285,7 +314,7 @@ No Docker, `OLLAMA_BASE_URL` normalmente aponta para `http://host.docker.interna
 - O startup cria tabelas ausentes e aplica verificações de compatibilidade previstas pelo código. Faça backup antes de atualizar um banco existente; não trate isso como substituto de um processo formal de migração/rollback.
 - Não exponha `.env`, `.env.yahoo.local`, backups, `output/`, áudios, arquivos de modelo ou documentos com dados de clientes ao Git ou a serviços externos.
 - O histórico de conversa e metadados necessários ao fluxo ficam no banco. O sistema não deve registrar áudio ou credenciais em logs; mensagens de e-mail são armazenadas como projeção mínima, sem corpo integral.
-- Como não há autenticação efetiva, localhost restringe o acesso por interface de rede, mas não substitui controle de acesso entre usuários da mesma máquina. Não hospede em computador compartilhado ou rede corporativa sem implementar e validar autenticação e autorização.
+- O login protege as rotas e os downloads, mas não implementa papéis: todo usuário ativo autenticado tem acesso equivalente. Localhost restringe a interface de rede, mas não substitui autorização granular para computador compartilhado.
 
 ## Testes
 
@@ -303,4 +332,5 @@ No Windows, use `python -m pytest -q` no lugar do caminho Unix `.venv/bin/pytest
 - [`docs/assistente/`](docs/assistente/) — configuração, desenho e relatórios de validação do assistente, voz e e-mail.
 - [`docs/assistente/especificacao-produto-evolucao.md`](docs/assistente/especificacao-produto-evolucao.md) — capacidades existentes e evolução planejada.
 - [`docs/assistente/plano-evolucao.md`](docs/assistente/plano-evolucao.md) — fases futuras; plano não significa funcionalidade já implementada.
+- [`docs/autenticacao.md`](docs/autenticacao.md) — login, CSRF, proteção de arquivos e bootstrap do administrador.
 - `docs/superpowers/` — especificações e planos históricos de mudanças.
