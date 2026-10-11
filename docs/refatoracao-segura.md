@@ -1,5 +1,9 @@
 # Refatoração segura — 7 a 9 de outubro de 2026
 
+Continuação de 11/10, em nova branch após o merge: ver
+[refatoração dos contatos promocionais](refatoracao-contatos-promocionais.md).
+As métricas abaixo são históricas da rodada anterior, não o resultado mais recente.
+
 ## Escopo e preservação
 
 Trabalho na branch `refactor/safe-modularization`, criada a partir de
