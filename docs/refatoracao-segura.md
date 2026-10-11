@@ -3,6 +3,10 @@
 Continuação de 11/10, em nova branch após o merge: ver
 [refatoração dos contatos promocionais](refatoracao-contatos-promocionais.md).
 As métricas abaixo são históricas da rodada anterior, não o resultado mais recente.
+Etapa seguinte: [parser comercial de PDF](refatoracao-parser-pdf.md), também
+em 11/10, sem atualização operacional ou nova publicação.
+Na mesma branch, [composição dos relatórios técnicos](refatoracao-projecao-relatorio.md)
+foi separada posteriormente, mantendo a geração transacional no serviço original.
 
 ## Escopo e preservação
 
