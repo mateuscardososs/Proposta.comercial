@@ -66,7 +66,8 @@ def _render_pdf_pages(pdf_path: Path) -> Iterator[bytes]:
             if len(document) > TESSERACT_MAX_PAGES:
                 raise LocalOCRUnavailable("ocr_page_limit")
             for page_number in range(len(document)):
-                with document.get_page(page_number) as page:
+                page = document.get_page(page_number)
+                try:
                     bitmap = page.render(scale=TESSERACT_DPI / 72, rev_byteorder=True)
                     try:
                         image = bitmap.to_pil().copy()
@@ -76,6 +77,8 @@ def _render_pdf_pages(pdf_path: Path) -> Iterator[bytes]:
                         yield image_payload
                     finally:
                         bitmap.close()
+                finally:
+                    page.close()
     except LocalOCRUnavailable:
         raise
     except Exception as exc:

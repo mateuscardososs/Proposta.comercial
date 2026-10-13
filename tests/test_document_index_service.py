@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import date, datetime, timezone
@@ -27,6 +28,7 @@ from app.services.document_index_service import (
     reindex_registered_documents,
 )
 from app.services.document_search_service import search_document_index
+from app.services.local_pdf_ocr import _render_pdf_pages
 
 
 def _pdf(text: str) -> bytes:
@@ -54,6 +56,78 @@ def _pdf(text: str) -> bytes:
         f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF".encode()
     )
     return bytes(payload)
+
+
+@pytest.mark.parametrize("fail_render", [False, True])
+def test_pdfium_page_and_bitmap_are_explicitly_closed(monkeypatch, tmp_path, fail_render):
+    class FakeImage:
+        def copy(self):
+            return self
+
+        def save(self, output, *, format):
+            assert format == "PNG"
+            output.write(b"synthetic-png")
+
+    class FakeBitmap:
+        closed = False
+
+        def to_pil(self):
+            return FakeImage()
+
+        def close(self):
+            self.closed = True
+
+    class FakePage:
+        closed = False
+
+        def __init__(self, bitmap):
+            self.bitmap = bitmap
+
+        def render(self, **_kwargs):
+            if fail_render:
+                raise RuntimeError("synthetic render failure")
+            return self.bitmap
+
+        def close(self):
+            self.closed = True
+
+    class FakeDocument:
+        closed = False
+
+        def __init__(self, page):
+            self.page = page
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+        def __len__(self):
+            return 1
+
+        def get_page(self, _page_number):
+            return self.page
+
+        def close(self):
+            self.closed = True
+
+    bitmap = FakeBitmap()
+    page = FakePage(bitmap)
+    document = FakeDocument(page)
+    monkeypatch.setitem(
+        sys.modules, "pypdfium2", SimpleNamespace(PdfDocument=lambda _path: document)
+    )
+
+    if fail_render:
+        with pytest.raises(LocalOCRUnavailable, match="ocr_render_failed"):
+            list(_render_pdf_pages(tmp_path / "synthetic.pdf"))
+        assert not bitmap.closed
+    else:
+        assert list(_render_pdf_pages(tmp_path / "synthetic.pdf")) == [b"synthetic-png"]
+        assert bitmap.closed
+    assert page.closed
+    assert document.closed
 
 
 def _proposal(db, root: Path) -> Proposal:

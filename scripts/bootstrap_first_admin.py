@@ -5,6 +5,8 @@ import os
 import re
 import secrets
 import stat
+from collections.abc import Mapping
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
@@ -18,6 +20,9 @@ from scripts.assistant_8013_runtime import (
     save_private_auth_session_secret,
     verify_database,
 )
+
+DOCKER_SECRET_DIR = Path("/run/secrets")
+DOCKER_LOCAL_CONFIG_DIR = Path("/run/local-config")
 
 
 def _prompt_user() -> tuple[str, str, str]:
@@ -40,6 +45,40 @@ def _ensure_secret_file() -> str:
     secret = secrets.token_urlsafe(48)
     save_private_auth_session_secret(secret)
     return secret
+
+
+def docker_bootstrap_environment(
+    current: Mapping[str, str],
+    *,
+    secret_dir: Path = DOCKER_SECRET_DIR,
+    config_dir: Path = DOCKER_LOCAL_CONFIG_DIR,
+) -> dict[str, str] | None:
+    """Load the same private runtime configuration used by the app container."""
+    database_url_file = secret_dir / "database-url"
+    if not database_url_file.exists():
+        return None
+
+    auth_secret_file = secret_dir / "auth-session-secret"
+    runtime_settings_file = secret_dir / "runtime-settings.json"
+    required_files = (auth_secret_file, runtime_settings_file)
+    if any(not path.is_file() for path in required_files):
+        raise RuntimeError("Os segredos necessários ao bootstrap Docker não estão completos.")
+    if stat.S_IMODE(auth_secret_file.stat().st_mode) != 0o600:
+        raise RuntimeError("O segredo de sessão montado pelo Docker precisa ter permissão 0600.")
+
+    from scripts.container_runtime import build_runtime_environment
+
+    try:
+        return build_runtime_environment(
+            current,
+            database_url=database_url_file.read_text(encoding="utf-8").strip(),
+            auth_secret=auth_secret_file.read_text(encoding="utf-8").strip(),
+            runtime_json=runtime_settings_file.read_text(encoding="utf-8"),
+            base_config=(config_dir / ".env").read_text(encoding="utf-8"),
+            yahoo_config=(config_dir / ".env.yahoo.local").read_text(encoding="utf-8"),
+        )
+    except OSError as exc:
+        raise RuntimeError("A configuração privada do bootstrap Docker não está acessível.") from exc
 
 
 def _validate_auth_flow(session_factory, secret: str, email: str, password: str) -> None:
@@ -84,11 +123,22 @@ def _validate_auth_flow(session_factory, secret: str, email: str, password: str)
 
 
 def main() -> int:
-    database_url = read_private_database_url()
+    container_environment = docker_bootstrap_environment(os.environ)
+    session_secret: str | None = None
+    if container_environment is not None:
+        os.environ.update(container_environment)
+        database_url = container_environment["DATABASE_URL"]
+        session_secret = container_environment["AUTH_SESSION_SECRET"]
+        session_secret_file = DOCKER_SECRET_DIR / "auth-session-secret"
+    else:
+        database_url = read_private_database_url()
+        os.environ["DATABASE_URL"] = database_url
+        os.environ["AUTH_ENABLED"] = "true"
+        os.environ["APP_ENV_FILE"] = str(PROJECT_ROOT / ".env")
+        session_secret_file = AUTH_SESSION_SECRET_FILE
     verify_database(database_url)
-    os.environ["DATABASE_URL"] = database_url
-    os.environ["AUTH_ENABLED"] = "true"
-    os.environ["APP_ENV_FILE"] = str(PROJECT_ROOT / ".env")
+    if session_secret is None:
+        session_secret = _ensure_secret_file()
 
     from app.db import SessionLocal, engine
     from app.models import User
@@ -98,8 +148,6 @@ def main() -> int:
     if not engine.dialect.name == "postgresql":
         raise RuntimeError("O bootstrap da 8013 exige PostgreSQL; nenhuma conta foi criada.")
     name, email, password = _prompt_user()
-    secret = _ensure_secret_file()
-
     with SessionLocal() as db:
         active_argon_user = db.query(User.id).filter(User.ativo.is_(True), User.senha_hash.like("$argon2id$%")).first()
         if active_argon_user:
@@ -119,14 +167,14 @@ def main() -> int:
         user_id = user.id
 
     assert_auth_ready(SessionLocal)
-    _validate_auth_flow(SessionLocal, secret, email, password)
+    _validate_auth_flow(SessionLocal, session_secret, email, password)
     del password
 
-    metadata = AUTH_SESSION_SECRET_FILE.stat()
+    metadata = session_secret_file.stat()
     if stat.S_IMODE(metadata.st_mode) != 0o600:
         raise RuntimeError("A chave de sessão não tem permissões privadas; não inicie a aplicação.")
     print(f"Administrador inicial cadastrado e fluxo local de login validado (registro {user_id}).")
-    print("A chave de sessão foi guardada fora do Git com permissão 0600; nenhum segredo foi exibido.")
+    print("A chave de sessão permanece em arquivo privado com permissão 0600; nenhum segredo foi exibido.")
     print("Agora a instância 8013 pode ser iniciada pelo launcher local.")
     return 0
 
