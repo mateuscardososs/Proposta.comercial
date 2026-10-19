@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     email_sync_lookback_days: int = Field(default=30, ge=1, le=90)
     email_sync_batch_size: int = Field(default=30, ge=1, le=100)
     email_sync_mailbox_key: str = "primary"
+    whatsapp_webhook_enabled: bool = False
+    whatsapp_app_secret: SecretStr = SecretStr("")
+    whatsapp_verify_token: SecretStr = SecretStr("")
+    whatsapp_webhook_max_payload_bytes: int = Field(default=1_048_576, ge=1024, le=8 * 1024 * 1024)
+    whatsapp_webhook_max_messages: int = Field(default=100, ge=1, le=500)
+    whatsapp_message_preview_chars: int = Field(default=400, ge=1, le=400)
     today_lookahead_days: int = Field(default=7, ge=1, le=31)
     llm_provider: Literal["ollama", "gemini"] = "gemini"
     gemini_api_key: SecretStr = SecretStr("")

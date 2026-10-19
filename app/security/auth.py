@@ -14,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.routing import Match
 
+from app.assistant.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH
 from app.models import User
 from app.security.passwords import is_argon2id_hash
 
@@ -67,6 +68,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         path = request.url.path
         if path == "/healthz" and request.method in {"GET", "HEAD"}:
+            return await call_next(request)
+        if path == WHATSAPP_WEBHOOK_PATH and request.method in {"GET", "POST"}:
+            # This exact public endpoint is protected by Meta's challenge/HMAC checks.
             return await call_next(request)
         if path == "/login" and request.method in {"GET", "HEAD", "POST"}:
             if request.method == "POST" and not self._csrf_valid(request, require_header=False):

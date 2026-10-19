@@ -191,7 +191,7 @@ O teste real controlado do Ollama documentado cobre um caso específico de inter
 
 ## O que não está implementado
 
-- Integração com WhatsApp (incluindo WhatsApp Business Platform), calendário externo ou envio de respostas por e-mail.
+- Envio de respostas pelo WhatsApp ou integração com calendário externo.
 - Envio automático de e-mail, alteração de mensagens, pagamento/baixa financeira automática ou emissão de nota fiscal.
 - Autenticação/autorização efetiva para proteger as páginas e APIs. O cadastro de usuários é usado como dado de responsável, não como um sistema de login.
 - Agenda com blocos de horário ou duração estimada; hoje é uma lista priorizada sem inventar horários.
@@ -204,6 +204,7 @@ O teste real controlado do Ollama documentado cobre um caso específico de inter
 - `docxtpl`/`python-docx` para DOCX e LibreOffice headless para PDF; no launcher local da 8013, a imagem de conversão pode ser selecionada por `TECHNICAL_REPORT_PDF_CONVERTER_IMAGE` e executada localmente, sem rede. `pdfplumber` lê PDFs legados.
 - Gemini API por padrão ou Ollama local alternativo para interpretação; faster-whisper e Piper locais são opcionais para voz.
 - Yahoo IMAP opcional para leitura de e-mail.
+- Webhook oficial do WhatsApp Business Platform, desativado por padrão e limitado a itens para revisão.
 
 ## Requisitos
 
@@ -312,6 +313,8 @@ No Docker, Gemini requer `GEMINI_API_KEY` entregue com segurança ao container. 
 - `/web/users` — cadastro de responsáveis
 - `/import-proposals` — importação assistida de propostas PDF
 - `/healthz` e `/docs` — saúde e API
+
+O recebimento opcional do WhatsApp usa somente a Cloud API oficial da Meta, compartilha a fila `E-mails e mensagens` e não responde nem cria registros operacionais automaticamente. A instância local loopback não recebe chamadas da Meta; a configuração, os campos separados do Yahoo e essa limitação estão em [`docs/whatsapp-webhook.md`](docs/whatsapp-webhook.md).
 
 ## Dados, privacidade e operação segura
 
