@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from app.config import Settings
 from scripts.assistant_8013_runtime import (
     AUTH_SESSION_SECRET_FILE,
     DATABASE_URL_FILE,
@@ -25,6 +26,15 @@ from scripts.assistant_8013_runtime import (
 )
 
 LOCAL_REPORT_CONVERTER_IMAGE = "adbalancas-propostas-local:20261003-finance"
+
+
+def validate_local_settings(settings: Settings) -> None:
+    if not settings.voice_enabled:
+        raise RuntimeError("VOICE_ENABLED nao foi aplicado a configuracao local.")
+    if settings.email_provider != "imap_yahoo":
+        raise RuntimeError("A configuracao Yahoo nao esta ativa na instancia 8013.")
+    if not settings.email_sync_enabled or settings.email_sync_interval_seconds != 900:
+        raise RuntimeError("A sincronizacao Yahoo nao preserva o intervalo de 900 s.")
 
 
 def _configure_local_report_pdf_converter() -> None:
@@ -133,14 +143,7 @@ def run() -> None:
     from app.config import get_settings
 
     settings = get_settings()
-    if not settings.voice_enabled:
-        raise RuntimeError("VOICE_ENABLED nao foi aplicado a configuracao local.")
-    if settings.email_provider != "imap_yahoo":
-        raise RuntimeError("A configuracao Yahoo nao esta ativa na instancia 8013.")
-    if not settings.email_sync_enabled or settings.email_sync_interval_seconds != 900:
-        raise RuntimeError("A sincronizacao Yahoo nao preserva o intervalo de 900 s.")
-    if not settings.email_auto_task_creation_enabled:
-        raise RuntimeError("A criacao automatica existente esta desativada na configuracao.")
+    validate_local_settings(settings)
 
     verify_database(settings.database_url)
     from app.db import SessionLocal

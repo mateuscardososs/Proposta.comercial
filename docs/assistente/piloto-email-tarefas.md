@@ -30,7 +30,7 @@ OUTPUT_DIR="/tmp/adbalancas-email-pilot-20261002/output" \
 TEMPLATE_DOC_PATH="/tmp/adbalancas-email-pilot-20261002/templates/proposta_template.docx" \
 APP_HOST="127.0.0.1" APP_PORT="8012" APP_RELOAD="false" \
 EMAIL_PROVIDER="imap_yahoo" EMAIL_SYNC_ENABLED="true" \
-EMAIL_AUTO_TASK_CREATION_ENABLED="true" EMAIL_SYNC_INTERVAL_SECONDS="900" \
+EMAIL_SYNC_INTERVAL_SECONDS="900" \
 EMAIL_SYNC_BATCH_SIZE="30" EMAIL_SYNC_MAILBOX_KEY="adbalancas-piloto-20261002" \
 OLLAMA_MODEL="qwen3:4b-instruct-2507-q4_K_M" VOICE_ENABLED="false" \
 PYTHONPATH=. .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8012
@@ -50,7 +50,7 @@ A primeira consulta ocorre após a persistência da fronteira de ativação; as 
 
 - Sem autenticação efetiva no app: manter loopback e nunca publicar a porta.
 - A classificação é determinística e conservadora; itens não reconhecidos seguem para revisão. O modelo não lê a caixa inteira nem autoriza ações.
-- Tarefas automáticas entram em `A fazer` como triagem, não significam proposta, serviço, emissão fiscal, pagamento ou compromisso aceito.
+- A sincronização cria somente rascunhos revisáveis. Tarefas sugeridas só entram em `A fazer` após confirmação humana; `EMAIL_AUTO_TASK_CREATION_ENABLED` é uma opção legada sem efeito e não habilita gravação automática.
 - Dados do cache permanecem no banco isolado até exclusão local. O sincronizador não importa mensagens anteriores à ativação; há dados mínimos de remetente, assunto, resumo limitado, data, estado/classificação e referência opaca para auditoria.
 - A sincronização é de uma instância/processo; não executar múltiplos workers com a mesma caixa de piloto.
 

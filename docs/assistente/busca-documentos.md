@@ -31,8 +31,9 @@ registro remove sua projeção na próxima reconciliação. O backup do banco in
   disponibiliza a estrutura Vision; a execução usa `swift` e `scripts/ocr_pdf_vision.swift`. Se Swift/Vision
   não estiver disponível, falhar ou não reconhecer texto, o documento/página não é considerado pesquisável;
   a resposta informa a consulta parcial em vez de alegar ausência de evidência.
-- No Windows, páginas sem camada de texto são rasterizadas localmente com pypdfium2/PDFium opcional e reconhecidas
-  pelo executável Tesseract no idioma `por`. O processo recebe argumentos como lista (`shell=False`); as
+- No Windows e no container Linux, páginas sem camada de texto são rasterizadas localmente com pypdfium2/PDFium
+  e reconhecidas pelo executável Tesseract no idioma `por`. O dispatcher usa os caminhos de configuração
+  `TESSERACT_CMD` e `TESSERACT_DATA_DIR`; o Docker define os caminhos instalados na imagem. O processo recebe argumentos como lista (`shell=False`); as
   imagens temporárias ficam numa pasta temporária e são removidas também após falhas. Há limites de 500
   páginas, 200 DPI e 90 segundos totais por PDF. A aplicação não baixa nem instala componentes em execução.
   Sem Tesseract, o idioma `por` ou pypdfium2/PDFium, o arquivo fica não pesquisável/parcial e a consulta informa a
@@ -49,8 +50,8 @@ registro remove sua projeção na próxima reconciliação. O backup do banco in
 ## Limites
 
 A recuperação é lexical e extrativa, não uma interpretação semântica ampla. OCR depende dos componentes
-locais da plataforma: Apple Vision/Swift no macOS e Tesseract, `por` e pypdfium2/PDFium no Windows. Em sistemas sem
-adaptador local, PDFs escaneados não são marcados como pesquisáveis. A busca cobre somente arquivos registrados no sistema, não
+locais da plataforma: Apple Vision/Swift no macOS e Tesseract, `por` e pypdfium2/PDFium no Windows e no
+container Linux. Em sistemas sem adaptador local ou componentes disponíveis, PDFs escaneados não são marcados como pesquisáveis. A busca cobre somente arquivos registrados no sistema, não
 pastas arbitrárias nem anexos de e-mail. O importador legado `/api/import-proposals` não mantém o PDF
 original; documentos ausentes não podem ser reconstruídos.
 

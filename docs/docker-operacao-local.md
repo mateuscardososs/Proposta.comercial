@@ -1,5 +1,24 @@
 # Operação local da aplicação em Docker
 
+## Senha do PostgreSQL no Compose
+
+O Compose não possui senha padrão: ele falha durante a validação se
+`POSTGRES_PASSWORD` não estiver configurada. Para uma instalação nova, crie um
+arquivo local ignorado pelo Git, por exemplo `.env.postgres.local`, e preencha-o
+no editor com a senha privada definida para o PostgreSQL. Restrinja as
+permissões do arquivo e não coloque o valor em comandos, histórico do shell ou
+documentação versionada. Use `docker compose --env-file .env.postgres.local`
+em todos os comandos Compose.
+
+Esse arquivo separado não é montado no container da aplicação. Em uma instalação
+existente, mantenha o valor já usado na inicialização do volume e a URL privada
+de conexão correspondentes; apenas editar a variável não altera a senha de um
+banco já inicializado. Não tente rotacionar a credencial como parte de uma
+atualização comum. Se o valor atual não estiver disponível, pare antes de
+iniciar ou recriar serviços e recupere-o pelo procedimento privado aprovado.
+Esta validação ocorre na leitura da configuração e não inicia containers nem
+conecta ao banco.
+
 ## Topologia
 
 - A aplicação publica `127.0.0.1:8013` e escuta `8000` dentro do container.
@@ -35,8 +54,8 @@ Não há credencial padrão. Antes da primeira subida, rode no terminal local:
 cd /Users/mateuscardoso/dev/pai/Proposta.comercial
 export ADBALANCAS_UID="$(id -u)"
 export ADBALANCAS_GID="$(id -g)"
-docker compose -p propostacomercial up -d db
-docker compose -p propostacomercial run --rm --no-deps --build --entrypoint python app -m scripts.bootstrap_first_admin
+docker compose --env-file .env.postgres.local -p propostacomercial up -d db
+docker compose --env-file .env.postgres.local -p propostacomercial run --rm --no-deps --build --entrypoint python app -m scripts.bootstrap_first_admin
 ```
 
 O comando executa o bootstrap em um container descartável, usando o PostgreSQL
@@ -54,7 +73,7 @@ No macOS, no terminal local, após o administrador inicial estar provisionado:
 cd /Users/mateuscardoso/dev/pai/Proposta.comercial
 export ADBALANCAS_UID="$(id -u)"
 export ADBALANCAS_GID="$(id -g)"
-docker compose -p propostacomercial up -d --no-deps --build app
+docker compose --env-file .env.postgres.local -p propostacomercial up -d --no-deps --build app
 ```
 
 Esse comando substitui o container antigo `propostas_app` pela imagem atual,
@@ -62,7 +81,7 @@ mantendo o container e o volume do PostgreSQL fora da operação. Para iniciar
 todo o stack gerenciado pelo Compose após o bootstrap, use:
 
 ```bash
-docker compose -p propostacomercial up -d --build
+docker compose --env-file .env.postgres.local -p propostacomercial up -d --build
 ```
 
 A definição do banco continua usando o volume existente
@@ -77,7 +96,7 @@ persistentes/privados.
 Para parar somente a aplicação:
 
 ```bash
-docker compose -p propostacomercial stop app
+docker compose --env-file .env.postgres.local -p propostacomercial stop app
 ```
 
 URLs locais: `http://127.0.0.1:8013/login` e
@@ -94,8 +113,10 @@ seguida do intervalo configurado. Não é chamada manual. O SMTP de campanhas n�
 é iniciado pelo worker.
 
 O container Linux não oferece Apple Vision. A busca de PDFs digitalizados usa
-Tesseract local em português e PDFium; o caminho Apple Vision nativo do macOS
-permanece fora do container. A voz usa CPU, cache local existente, faster-whisper
+Tesseract local em português (`por`) e PDFium quando o executável, os dados de
+idioma e o renderizador estão disponíveis; sem eles, o documento é reportado
+como não pesquisável/parcial, sem instalação automática. O caminho Apple Vision
+nativo do macOS permanece fora do container. A voz usa CPU, cache local existente, faster-whisper
 e Piper; a imagem não baixa os modelos automaticamente.
 
 O health check e a disponibilidade de pacotes/modelos não comprovam o login,

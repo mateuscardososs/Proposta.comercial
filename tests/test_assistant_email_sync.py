@@ -82,7 +82,7 @@ def _quote(reference="synthetic-quote-1"):
     )
 
 
-def test_sync_creates_one_linked_task_and_retry_is_idempotent(db):
+def test_sync_creates_review_draft_and_retry_is_idempotent(db):
     reader = FakeReader([_quote()])
     sync = EmailSyncService(
         db,
@@ -187,7 +187,7 @@ def test_legacy_deleted_task_link_is_not_recreated_by_email_retry(db):
     assert db.query(EmailActionDraft).one().status == "linked_deleted"
 
 
-def test_existing_task_link_remains_authoritative_if_automation_is_later_disabled(db):
+def test_existing_confirmed_task_link_remains_authoritative_on_retry(db):
     reader = FakeReader([_quote("synthetic-flag-off")])
     existing = Task(titulo="Tarefa existente", descricao="", status="a_fazer", ordem=0)
     db.add(existing)

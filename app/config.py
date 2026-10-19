@@ -65,7 +65,13 @@ class Settings(BaseSettings):
     email_cache_retention_days: int = 14
     email_body_preview_chars: int = 4000
     email_sync_enabled: bool = False
-    email_auto_task_creation_enabled: bool = False
+    email_auto_task_creation_enabled: bool = Field(
+        default=False,
+        description=(
+            "Opção legada sem efeito: a sincronização cria apenas rascunhos e exige "
+            "confirmação humana para gravar tarefas. Mantida para compatibilidade."
+        ),
+    )
     email_sync_interval_seconds: int = Field(default=900, ge=60, le=86400)
     email_sync_lookback_days: int = Field(default=30, ge=1, le=90)
     email_sync_batch_size: int = Field(default=30, ge=1, le=100)

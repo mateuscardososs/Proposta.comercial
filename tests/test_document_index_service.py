@@ -386,7 +386,7 @@ def test_assistant_does_not_claim_absence_when_local_ocr_is_unavailable(db, tmp_
     assert "não encontrei evidência suficiente" not in reply.message.lower()
 
 
-def test_platform_ocr_selection_preserves_apple_vision_and_uses_tesseract_on_windows(monkeypatch, tmp_path):
+def test_platform_ocr_selection_preserves_apple_vision_and_uses_tesseract_on_windows_and_linux(monkeypatch, tmp_path):
     import app.services.document_index_service as index_service
 
     calls: list[str] = []
@@ -395,8 +395,16 @@ def test_platform_ocr_selection_preserves_apple_vision_and_uses_tesseract_on_win
 
     assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Darwin") == ["mac"]
     assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Windows") == ["windows"]
-    assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Linux") is None
-    assert calls == ["vision", "tesseract"]
+    assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Linux") == ["windows"]
+    assert calls == ["vision", "tesseract", "tesseract"]
+
+
+def test_linux_ocr_uses_portuguese_language_metadata(monkeypatch):
+    import app.services.document_index_service as index_service
+
+    monkeypatch.setattr(index_service.platform, "system", lambda: "Linux")
+
+    assert index_service._ocr_language() == "por"
 
 
 def test_windows_tesseract_uses_portuguese_and_returns_page_text(monkeypatch, tmp_path):
