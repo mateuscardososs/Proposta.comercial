@@ -56,3 +56,19 @@ def test_runtime_settings_copy_only_non_secret_email_options():
     assert settings["EMAIL_SYNC_MAILBOX_KEY"] == "adbalancas-piloto-20261002"
     assert "EMAIL_IMAP_USERNAME" not in settings
     assert "EMAIL_IMAP_APP_PASSWORD" not in settings
+
+
+def test_legacy_email_auto_task_flag_does_not_block_local_startup():
+    from app.config import Settings
+    from scripts.run_assistant_8013_local import validate_local_settings
+
+    settings = Settings(
+        _env_file=None,
+        voice_enabled=True,
+        email_provider="imap_yahoo",
+        email_sync_enabled=True,
+        email_sync_interval_seconds=900,
+        email_auto_task_creation_enabled=False,
+    )
+
+    validate_local_settings(settings)

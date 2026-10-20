@@ -24,6 +24,7 @@ from app.routers import (
     proposals,
     services,
     users,
+    whatsapp_webhook,
 )
 from app.security.auth import (
     LoginRateLimiter,
@@ -41,6 +42,7 @@ ensure_directory(settings.template_doc_path.parent)
 ensure_directory(settings.technical_report_template_path.parent)
 
 app = FastAPI(title=settings.app_name)
+app.state.settings = settings
 app.state.auth_session_factory = SessionLocal
 app.state.auth_login_window_seconds = settings.auth_login_window_seconds
 app.state.login_rate_limiter = LoginRateLimiter(
@@ -120,3 +122,4 @@ app.include_router(financeiro.router)
 app.include_router(email_review.router)
 app.include_router(assistant.router)
 app.include_router(promotions.router)
+app.include_router(whatsapp_webhook.router)

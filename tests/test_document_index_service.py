@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import date, datetime, timezone
@@ -27,6 +28,7 @@ from app.services.document_index_service import (
     reindex_registered_documents,
 )
 from app.services.document_search_service import search_document_index
+from app.services.local_pdf_ocr import _render_pdf_pages
 
 
 def _pdf(text: str) -> bytes:
@@ -54,6 +56,78 @@ def _pdf(text: str) -> bytes:
         f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF".encode()
     )
     return bytes(payload)
+
+
+@pytest.mark.parametrize("fail_render", [False, True])
+def test_pdfium_page_and_bitmap_are_explicitly_closed(monkeypatch, tmp_path, fail_render):
+    class FakeImage:
+        def copy(self):
+            return self
+
+        def save(self, output, *, format):
+            assert format == "PNG"
+            output.write(b"synthetic-png")
+
+    class FakeBitmap:
+        closed = False
+
+        def to_pil(self):
+            return FakeImage()
+
+        def close(self):
+            self.closed = True
+
+    class FakePage:
+        closed = False
+
+        def __init__(self, bitmap):
+            self.bitmap = bitmap
+
+        def render(self, **_kwargs):
+            if fail_render:
+                raise RuntimeError("synthetic render failure")
+            return self.bitmap
+
+        def close(self):
+            self.closed = True
+
+    class FakeDocument:
+        closed = False
+
+        def __init__(self, page):
+            self.page = page
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+        def __len__(self):
+            return 1
+
+        def get_page(self, _page_number):
+            return self.page
+
+        def close(self):
+            self.closed = True
+
+    bitmap = FakeBitmap()
+    page = FakePage(bitmap)
+    document = FakeDocument(page)
+    monkeypatch.setitem(
+        sys.modules, "pypdfium2", SimpleNamespace(PdfDocument=lambda _path: document)
+    )
+
+    if fail_render:
+        with pytest.raises(LocalOCRUnavailable, match="ocr_render_failed"):
+            list(_render_pdf_pages(tmp_path / "synthetic.pdf"))
+        assert not bitmap.closed
+    else:
+        assert list(_render_pdf_pages(tmp_path / "synthetic.pdf")) == [b"synthetic-png"]
+        assert bitmap.closed
+    assert page.closed
+    assert document.closed
 
 
 def _proposal(db, root: Path) -> Proposal:
@@ -312,7 +386,7 @@ def test_assistant_does_not_claim_absence_when_local_ocr_is_unavailable(db, tmp_
     assert "não encontrei evidência suficiente" not in reply.message.lower()
 
 
-def test_platform_ocr_selection_preserves_apple_vision_and_uses_tesseract_on_windows(monkeypatch, tmp_path):
+def test_platform_ocr_selection_preserves_apple_vision_and_uses_tesseract_on_windows_and_linux(monkeypatch, tmp_path):
     import app.services.document_index_service as index_service
 
     calls: list[str] = []
@@ -321,8 +395,16 @@ def test_platform_ocr_selection_preserves_apple_vision_and_uses_tesseract_on_win
 
     assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Darwin") == ["mac"]
     assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Windows") == ["windows"]
-    assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Linux") is None
-    assert calls == ["vision", "tesseract"]
+    assert local_ocr_for_platform(tmp_path / "scan.pdf", system="Linux") == ["windows"]
+    assert calls == ["vision", "tesseract", "tesseract"]
+
+
+def test_linux_ocr_uses_portuguese_language_metadata(monkeypatch):
+    import app.services.document_index_service as index_service
+
+    monkeypatch.setattr(index_service.platform, "system", lambda: "Linux")
+
+    assert index_service._ocr_language() == "por"
 
 
 def test_windows_tesseract_uses_portuguese_and_returns_page_text(monkeypatch, tmp_path):

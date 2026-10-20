@@ -62,3 +62,15 @@ O comportamento foi preservado literalmente em `task_drafts.py`. Corrigir em
 tarefa funcional separada, com conflito simulado e confirmação/retry concorrente,
 preservando a unicidade da ação e evitando nova gravação de tarefa. Não contornar
 o hash nem aceitar tokens sem validação.
+
+## RF-06 — detalhes de falha no log da importação legada
+
+Observado apenas no código, sem consultar logs ou documentos operacionais:
+`pdf_import_service.parse_pdf_bytes_safe` e o router de importação registram
+filename, texto da exceção e traceback. Os backends podem fornecer detalhes
+técnicos que não devem ser tratados como metadados públicos seguros.
+
+A política preexistente foi preservada nesta extração. Uma correção funcional
+separada deve usar etapa/tipo de erro e identificador seguro, sem registrar
+nome/conteúdo de documento ou mensagem bruta do backend. Testar com exceções
+sintéticas contendo dados sensíveis e verificar ausência no log; sem dados reais.

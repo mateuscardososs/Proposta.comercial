@@ -43,8 +43,8 @@ class EmailSyncService:
         self.lookback_days = max(1, min(90, lookback_days))
         self.batch_size = max(1, min(100, batch_size))
         self.provider_name = provider_name
-        # Kept for constructor compatibility. Email sync now creates only review drafts;
-        # operational records always require a separate human confirmation.
+        # Obsolete compatibility option. Sync always creates review drafts only;
+        # operational records require separate human confirmation.
         self.auto_task_creation_enabled = auto_task_creation_enabled
 
     def sync_once(self, *, now: datetime | None = None) -> SyncSummary:

@@ -58,17 +58,17 @@ class _Counters:
 
 
 def local_ocr_for_platform(pdf_path: Path, *, system: str | None = None) -> list[str] | None:
-    """Keep Apple Vision on macOS and select Tesseract only for Windows."""
+    """Use Apple Vision on macOS and local Portuguese Tesseract elsewhere."""
     current_platform = system or platform.system()
     if current_platform == "Darwin":
         return local_vision_ocr(pdf_path)
-    if current_platform == "Windows":
+    if current_platform in {"Windows", "Linux"}:
         return local_tesseract_ocr(pdf_path)
     return None
 
 
 def _ocr_language() -> str:
-    return "por" if platform.system() == "Windows" else "pt-BR"
+    return "pt-BR" if platform.system() == "Darwin" else "por"
 
 
 def _source_records(db: Session) -> list[tuple[str, int, str, str]]:

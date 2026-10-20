@@ -191,7 +191,7 @@ O teste real controlado do Ollama documentado cobre um caso específico de inter
 
 ## O que não está implementado
 
-- Integração com WhatsApp (incluindo WhatsApp Business Platform), calendário externo ou envio de respostas por e-mail.
+- Envio de respostas pelo WhatsApp ou integração com calendário externo.
 - Envio automático de e-mail, alteração de mensagens, pagamento/baixa financeira automática ou emissão de nota fiscal.
 - Autenticação/autorização efetiva para proteger as páginas e APIs. O cadastro de usuários é usado como dado de responsável, não como um sistema de login.
 - Agenda com blocos de horário ou duração estimada; hoje é uma lista priorizada sem inventar horários.
@@ -204,6 +204,7 @@ O teste real controlado do Ollama documentado cobre um caso específico de inter
 - `docxtpl`/`python-docx` para DOCX e LibreOffice headless para PDF; no launcher local da 8013, a imagem de conversão pode ser selecionada por `TECHNICAL_REPORT_PDF_CONVERTER_IMAGE` e executada localmente, sem rede. `pdfplumber` lê PDFs legados.
 - Gemini API por padrão ou Ollama local alternativo para interpretação; faster-whisper e Piper locais são opcionais para voz.
 - Yahoo IMAP opcional para leitura de e-mail.
+- Webhook oficial do WhatsApp Business Platform, desativado por padrão e limitado a itens para revisão.
 
 ## Requisitos
 
@@ -212,6 +213,12 @@ O teste real controlado do Ollama documentado cobre um caso específico de inter
 - Para o assistente: Gemini por padrão exige `GEMINI_API_KEY`, acesso à rede e modelo configurado em `GEMINI_MODEL`; alternativamente, Ollama em execução com modelo local em `OLLAMA_MODEL`.
 - Para voz: dependências de `requirements-voice.txt` e arquivos de modelo STT/TTS locais. Consulte [`docs/assistente/execucao.md`](docs/assistente/execucao.md) e [`docs/assistente/validacao-voz-local.md`](docs/assistente/validacao-voz-local.md) para preparação e limites.
 - Para usar PostgreSQL via Compose: Docker com Docker Compose.
+- O Compose exige `POSTGRES_PASSWORD` explícita e não fornece credencial padrão.
+  Mantenha-a em `.env.postgres.local` (ignorado pelo Git e não montado na app) e
+  use `docker compose --env-file .env.postgres.local ...`. Para um volume
+  existente, preserve a credencial original e a URL privada correspondente; a
+  configuração não altera automaticamente a senha de um PostgreSQL já inicializado.
+  Consulte [`docs/docker-operacao-local.md`](docs/docker-operacao-local.md).
 
 ## Execução nativa em macOS/Linux
 
@@ -276,17 +283,17 @@ O destino Windows não deve depender de GPU dedicada. Gemini requer rede e plano
 
 ## Execução com Docker Compose
 
-O Compose fornece PostgreSQL 16 e a aplicação com LibreOffice. A porta do banco e a porta web são publicadas no loopback (`127.0.0.1`). Ajuste as variáveis de ambiente de acordo com `docker-compose.yml`; não use as credenciais padrão de desenvolvimento em operação com dados reais.
+O Compose fornece PostgreSQL 16 e a aplicação com LibreOffice. A porta do banco e a porta web são publicadas no loopback (`127.0.0.1`). `POSTGRES_PASSWORD` é obrigatória e não tem fallback. Configure-a privadamente em `.env.postgres.local` e use esse arquivo nos comandos Compose; os detalhes estão em [`docs/docker-operacao-local.md`](docs/docker-operacao-local.md).
 
 ```bash
-docker compose up --build -d
-docker compose ps
+docker compose --env-file .env.postgres.local -p propostacomercial up --build -d
+docker compose --env-file .env.postgres.local -p propostacomercial ps
 ```
 
-Por padrão, acesse `http://127.0.0.1:8000/`; verifique `/healthz`. Para encerrar sem remover os dados:
+Na configuração local principal, acesse `http://127.0.0.1:8013/login`; verifique `/healthz`. Para encerrar sem remover os dados:
 
 ```bash
-docker compose down
+docker compose --env-file .env.postgres.local -p propostacomercial down
 ```
 
 Os dados do PostgreSQL ficam no volume `postgres_data`; arquivos gerados ficam em `output/` e o modelo de proposta em `doc_templates/`. **Não use `docker compose down -v` em um ambiente com dados a preservar:** isso remove o volume do banco.
@@ -306,6 +313,8 @@ No Docker, Gemini requer `GEMINI_API_KEY` entregue com segurança ao container. 
 - `/web/users` — cadastro de responsáveis
 - `/import-proposals` — importação assistida de propostas PDF
 - `/healthz` e `/docs` — saúde e API
+
+O recebimento opcional do WhatsApp usa somente a Cloud API oficial da Meta, compartilha a fila `E-mails e mensagens` e não responde nem cria registros operacionais automaticamente. A instância local loopback não recebe chamadas da Meta; a configuração, os campos separados do Yahoo e essa limitação estão em [`docs/whatsapp-webhook.md`](docs/whatsapp-webhook.md).
 
 ## Dados, privacidade e operação segura
 

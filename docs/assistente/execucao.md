@@ -152,21 +152,12 @@ O timeout maior e apenas um ponto inicial para a CPU do destino; deve ser reduzi
 
 ## Docker Desktop no Mac ou Windows
 
-O Compose mantem FastAPI, PostgreSQL e LibreOffice em containers e espera o Ollama nativo no host:
-
-```powershell
-$env:OLLAMA_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
-docker compose up --build
-```
-
-Dentro do container, `OLLAMA_BASE_URL` assume `http://host.docker.internal:11434`. Essa rota ainda nao foi validada nesta etapa: o Ollama testado esta preso ao loopback do host, e o bridge do Docker Desktop pode nao alcanca-lo. Nao altere o Ollama para escutar em todas as interfaces sem uma avaliacao de firewall e autenticacao; execute o FastAPI nativamente ate definir uma configuracao Docker segura.
-
-O Compose publica a aplicacao em `http://127.0.0.1:8000`. Alterar esse bind para `0.0.0.0` e bloqueado operacionalmente enquanto nao houver autenticacao.
-
-A imagem Docker atual instala somente `requirements.txt` e deixa `VOICE_ENABLED=false`.
-Para voz em container sera necessario instalar `requirements-voice.txt` na imagem e
-montar `.models/assistant_voice` como volume somente leitura. Essa variante nao foi
-validada. No Mac e no Windows, use FastAPI, Ollama e voz nativamente por enquanto.
+As instruções atuais da instância Docker, incluindo senha PostgreSQL obrigatória,
+porta, provedor de texto, voz e mounts, estão em
+[`docs/docker-operacao-local.md`](../docker-operacao-local.md). Não use comandos
+Compose antigos desta página: a imagem principal atual não usa Ollama como
+provedor de texto, e os comandos genéricos não fornecem o arquivo privado
+`--env-file .env.postgres.local` exigido pelo Compose.
 
 ## Banco e compatibilidade
 

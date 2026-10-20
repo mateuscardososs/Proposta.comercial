@@ -6,6 +6,12 @@ __pycache__
 .env
 .env.gemini.local
 .env.yahoo.local
+# Private Compose interpolation for the local PostgreSQL volume.
+.env.postgres.local
+# Runtime databases and audit artifacts stay local.
+*.sqlite3
+propostas.db
+propostas_app/audit_tmp/
 output/
 *.pdf
 *.docx

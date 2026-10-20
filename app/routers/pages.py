@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.assistant.email import classification as _email_classification
 from app.assistant.email.contracts import EmailMessageRecord
 from app.assistant.email.extraction import extract_operational_fields
+from app.assistant.whatsapp_webhook import WHATSAPP_MAILBOX, WHATSAPP_PROVIDER
 from app.config import get_settings
 from app.db import get_db
 from app.models import (
@@ -113,12 +114,32 @@ def messages_page(request: Request, db: Session = Depends(get_db)) -> object:
     workbench = get_message_workbench(
         db, provider=settings.email_provider, mailbox_key=settings.email_sync_mailbox_key,
     )
+    whatsapp_workbench = get_message_workbench(
+        db, provider=WHATSAPP_PROVIDER, mailbox_key=WHATSAPP_MAILBOX,
+    )
     state = workbench["sync_state"]
-    operational_messages = workbench["operational_messages"]
-    informational_messages = workbench["informational_messages"]
-    review_messages = workbench["review_messages"]
-    action_drafts_by_email = workbench["action_drafts_by_email"]
-    message_summary = workbench["message_summary"]
+    def combine_messages(key: str) -> list[InboxEmail]:
+        return sorted(
+            [*workbench[key], *whatsapp_workbench[key]],
+            key=lambda message: (message.received_at, message.id),
+            reverse=True,
+        )
+
+    operational_messages = combine_messages("operational_messages")
+    informational_messages = combine_messages("informational_messages")
+    review_messages = combine_messages("review_messages")
+    action_drafts_by_email = {
+        **workbench["action_drafts_by_email"],
+        **whatsapp_workbench["action_drafts_by_email"],
+    }
+    message_summary = {
+        key: (
+            workbench["message_summary"][key]
+            if key == "new"  # WhatsApp does not expose the IMAP read/unread flag shown here.
+            else workbench["message_summary"][key] + whatsapp_workbench["message_summary"][key]
+        )
+        for key in workbench["message_summary"]
+    }
     if settings.email_provider == "synthetic":
         provider_configured = True
     elif settings.email_provider == "imap_yahoo":
